@@ -604,7 +604,7 @@ function LlmProviderForm({ config, presets, onSubmit, onCancel, onError }: LlmPr
       )}
 
       <div className="flex items-center justify-end gap-3 pt-1">
-        <button type="button" onClick={onCancel} className="btn-glass px-3.5 py-2 text-xs font-medium">
+        <button type="button" onClick={onCancel} className="btn-glass px-3.5 py-2 text-[13px] font-medium">
           取消
         </button>
         <button

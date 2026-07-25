@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 
-import { Breadcrumb } from "@/components/breadcrumb";
+import { PageNav } from "@/components/page-nav";
 import { SearchIcon } from "@/components/icons";
 import { PosterCard } from "@/components/poster-card";
 import { fetchDiscoverPage } from "@/lib/api/discover";
@@ -102,16 +102,18 @@ export function Top250View() {
   };
 
   return (
-    <div className="scroll-thin flex-1 overflow-y-auto px-6 pb-12 pt-5">
+    <div className="scroll-thin flex-1 overflow-y-auto px-6 pb-12">
+      {/* 顶栏：返回发现电影（保留豆瓣数据源视角）+ 吸顶榜单名；
+          容器已有 px-6，用 -mx-6 让吸顶蒙版铺满整宽 */}
+      <PageNav
+        items={[
+          { label: "发现电影", href: "/discover/movie?source=douban" },
+          { label: "豆瓣电影 Top 250" },
+        ]}
+        className="-mx-6"
+      />
       <header className="mx-auto max-w-[1500px]">
-        {/* 面包屑：发现电影 › 豆瓣电影 Top 250（回跳保留豆瓣数据源视角） */}
-        <Breadcrumb
-          items={[
-            { label: "发现电影", href: "/discover/movie?source=douban" },
-            { label: "豆瓣电影 Top 250" },
-          ]}
-        />
-        <div className="mt-5 flex flex-col justify-between gap-5 sm:flex-row sm:items-end">
+        <div className="mt-1 flex flex-col justify-between gap-5 sm:flex-row sm:items-end">
           <div>
             <p className="text-xs font-semibold tracking-[0.18em] text-[var(--accent-2)]">
               DOUBAN RANKING

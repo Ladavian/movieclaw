@@ -24,10 +24,12 @@ export interface LibraryStats {
   /** 在账文件总数（含待识别） */
   file_count: number;
   total_size_bytes: number;
-  /** 待识别文件数 */
+  /** 待识别文件数（不含已忽略） */
   unidentified_count: number;
   /** 标记 missing 的文件数（缺失清单入口） */
   missing_count: number;
+  /** 用户忽略过的文件数（不再参与识别，可在已忽略清单恢复） */
+  ignored_count: number;
 }
 
 export interface MediaLibrary {
@@ -54,13 +56,51 @@ export interface MediaLibrary {
   organize_progress: ScanProgress | null;
   /** 最近一次整理结论（整理对话框的完成页数据源） */
   last_organize: LastOrganize | null;
+  /**
+   * 整库元数据刷新状态；没在刷为 null。随库列表一并下发，媒体库首页的
+   * 卡片因此不必额外请求就能显示刷新进度。
+   */
+  metadata_refresh: MetadataRefreshProgress | null;
   created_at: string;
   updated_at: string;
 }
 
-/** 扫描实时进度。 */
+/**
+ * 扫描类任务的阶段（后端 library_scan.ScanPhase；organizing 为整理任务复用）。
+ * 一次「扫描」内部分好几段，每段的分子分母不同——文案必须按阶段选，
+ * 否则文件扫完后还要跑几分钟图片资产，界面会僵在「已处理 = 总数」上。
+ */
+export type ScanPhase =
+  | "walking" // 盘点根路径下的文件（分母未知）
+  | "ingesting" // 逐文件走识别链、写台账
+  | "assets" // 收尾补齐图片资产（分母 = 本轮新挂锚的条目数）
+  | "reidentifying" // 单条目重识别（占同一把库级锁，不可中途停止）
+  | "organizing"; // 批量规范化改名
+
+/** 各阶段的界面文案（唯一出处，卡片与详情页共用）。 */
+export const SCAN_PHASE_LABELS: Record<ScanPhase, string> = {
+  walking: "正在盘点文件",
+  ingesting: "正在扫描",
+  assets: "正在补齐海报与剧照",
+  reidentifying: "正在重新识别条目",
+  organizing: "正在整理文件名",
+};
+
+/** 阶段对应的一句补充说明（详情页胶囊用，讲清"现在等的是什么"）。 */
+export const SCAN_PHASE_HINTS: Record<ScanPhase, string> = {
+  walking: "正在统计待处理的文件数",
+  ingesting: "识别到的内容会自动入库",
+  assets: "文件已全部入库，正在下载图片",
+  reidentifying: "完成后条目身份会更新",
+  organizing: "完成后自动刷新",
+};
+
+/** 扫描/整理的实时进度。 */
 export interface ScanProgress {
+  /** 进行中的阶段——决定文案；分子分母随阶段变化 */
+  phase: ScanPhase;
   processed: number;
+  /** 总数；0 表示分母未知（如盘点阶段），前端画不确定态转圈 */
   total: number;
 }
 
@@ -73,6 +113,8 @@ export interface LastScan {
   marked_missing: number;
   /** 疑似写入中暂缓入账的文件数（稍后自动补扫） */
   deferred: number;
+  /** 识别重试数：在位但待识别的文件重走识别链（不算新入账） */
+  retried: number;
   /** 本轮扫描被用户手动停止（未扫完，剩余文件下次扫描继续） */
   cancelled: boolean;
   errors: string[];
@@ -153,13 +195,24 @@ export interface LibraryItem {
   missing_count: number;
   /** 剧集播出状态：airing=在播 / ended=完结；电影或状态未知为 null */
   air_status: "airing" | "ended" | null;
-  /** 已播出但库里没有的正季集数（电影恒 0）——「补齐缺集」的依据 */
+  /** 已播出但所有媒体库里都没有的正季集数（电影恒 0）——「补齐缺集」的依据 */
   missing_episode_count: number;
   /** 最近一次文件入账时间（ISO 字符串），首页「最近添加」排序依据 */
   added_at: string | null;
 }
 
-/** 待识别清单的一行。 */
+/** 收敛器判不了时留下的一个候选（点一下即可认领）。 */
+export interface UnidentifiedCandidate {
+  tmdb_id: number;
+  title: string;
+  year: number | null;
+  /** 该候选对应季的集数——同名双版本（正片 46 集 / 送审版 51 集）靠它一眼区分 */
+  episode_count: number | null;
+  /** 本地证据对它的佐证（年份相同 / 本地 N 集吻合…） */
+  reasons: string[];
+}
+
+/** 待识别清单的一个文件。 */
 export interface UnidentifiedFile {
   id: number;
   library_id: number;
@@ -168,8 +221,38 @@ export interface UnidentifiedFile {
   size_bytes: number;
   season_number: number;
   episode_number: number;
-  /** 识别失败原因（如 TMDB 无法访问 / 片名解析失败）；旧数据可能为 null */
+  /** 识别失败原因整句（悬停/展开查看；清单上只显示标签）；旧数据可能为 null */
   reason: string | null;
+  /** 失败分类：决定标签措辞、配色与可用动作；旧数据为 null */
+  code: UnidentifiedCode | null;
+  candidates: UnidentifiedCandidate[];
+}
+
+/** 识别失败的分类（见 movieclaw_db.models.library_file.UnidentifiedCode）。 */
+export type UnidentifiedCode =
+  | "unparsable"
+  | "tmdb_unreachable"
+  | "ambiguous"
+  | "no_match"
+  | "kind_mismatch";
+
+/** 待识别清单的一组：同一条目目录下的文件（一部剧几十集算一组）。 */
+export interface UnidentifiedGroup {
+  /** 分组键：条目目录绝对路径；裸文件用文件自身路径 */
+  key: string;
+  /** 展示名：条目目录名（裸文件为文件名） */
+  label: string;
+  library_id: number;
+  library_name: string;
+  file_count: number;
+  total_size_bytes: number;
+  /** 组内共同的失败原因整句（悬停查看） */
+  reason: string | null;
+  /** 组内共同的失败分类：决定标签与配色 */
+  code: UnidentifiedCode | null;
+  /** 组内共同的候选：点一下整组认领 */
+  candidates: UnidentifiedCandidate[];
+  files: UnidentifiedFile[];
 }
 
 /** 创建/更新库的请求体。kind 仅创建时生效。 */
@@ -281,10 +364,145 @@ export function startLibraryOrganize(id: number): Promise<{ started: boolean; me
   );
 }
 
-/** 待识别清单（可按库过滤）。 */
-export function listUnidentified(libraryId?: number): Promise<UnidentifiedFile[]> {
+/** 整库刷新中正在处理的一部片（并发若干路，故是列表）。 */
+export interface RefreshActive {
+  media_item_id: number;
+  title: string;
+  /** 当前阶段：拉取 TMDB 档案 / 写入元数据 / 下载图片 / 写入媒体目录 */
+  phase: string;
+}
+
+/** 整库元数据刷新的实时状态（全量重刷很慢，状态尽量完整）。 */
+export interface MetadataRefreshProgress {
+  refreshing: boolean;
+  /** 已完成条目数（含失败） */
+  processed: number;
+  total: number;
+  /** 刮削失败的条目数（多为 TMDB 不可达） */
+  failed: number;
+  /** 已请求停止，正在收尾 */
+  stopping: boolean;
+  /** 正在处理的条目及其阶段 */
+  active: RefreshActive[];
+}
+
+/**
+ * 整库刷新元数据：全部已识别条目**全量重刮**（重拉档案 + 按当前尺寸档位
+ * 重下图片 + 覆盖媒体目录镜像）。后台执行、并发 3 路；重复触发返回 409。
+ */
+export function startLibraryMetadataRefresh(id: number): Promise<{ started: boolean }> {
+  return unwrap(
+    request<ApiEnvelope<{ started: boolean }>>(`/libraries/${id}/metadata/refresh`, {
+      method: "POST",
+    }),
+  );
+}
+
+/** 停止进行中的整库元数据刷新（已刷完的保留）。 */
+export function stopLibraryMetadataRefresh(id: number): Promise<Record<string, never>> {
+  return unwrap(
+    request<ApiEnvelope<Record<string, never>>>(`/libraries/${id}/metadata/refresh/stop`, {
+      method: "POST",
+    }),
+  );
+}
+
+/** 整库元数据刷新进度（刷新进行中轮询用）。 */
+export function getMetadataRefreshProgress(id: number): Promise<MetadataRefreshProgress> {
+  return unwrap(
+    request<ApiEnvelope<MetadataRefreshProgress>>(`/libraries/${id}/metadata/refresh/progress`),
+  );
+}
+
+/** 刷新单个条目的元数据：强制重刮 TMDB 并重新下载图片（后台执行）。 */
+export function refreshItemMetadata(
+  libraryId: number,
+  mediaItemId: number,
+): Promise<{ started: boolean }> {
+  return unwrap(
+    request<ApiEnvelope<{ started: boolean }>>(
+      `/libraries/${libraryId}/items/${mediaItemId}/metadata/refresh`,
+      { method: "POST" },
+    ),
+  );
+}
+
+/** 「更换图片」弹层里的一张候选图。 */
+export interface ArtworkCandidate {
+  /** TMDB 图片路径（选定时原样回传） */
+  file_path: string;
+  /** 缩略预览地址（TMDB 图床绝对地址，展示前需 cachedImageUrl） */
+  preview_url: string;
+  width: number | null;
+  height: number | null;
+  /** 图上文字的语言；null=无文字（背景首选这类） */
+  language: string | null;
+  vote_average: number | null;
+  vote_count: number | null;
+}
+
+/** 条目的候选图集合（排序与自动选图一致）。 */
+export interface ArtworkCandidates {
+  posters: ArtworkCandidate[];
+  backdrops: ArtworkCandidate[];
+  /** 实际在用的图路径——标「当前」用它比对，不能用"列表第一张"推断 */
+  current_poster: string | null;
+  current_backdrop: string | null;
+  /** 已手动选定，刷新不会覆盖 */
+  poster_locked: boolean;
+  backdrop_locked: boolean;
+}
+
+/** 条目的候选海报/背景（「更换图片」弹层数据源）。 */
+export function getArtworkCandidates(
+  libraryId: number,
+  mediaItemId: number,
+): Promise<ArtworkCandidates> {
+  return unwrap(
+    request<ApiEnvelope<ArtworkCandidates>>(
+      `/libraries/${libraryId}/items/${mediaItemId}/artwork/candidates`,
+    ),
+  );
+}
+
+/**
+ * 选定海报/背景：当场落盘并覆盖媒体目录，此后刷新不再覆盖。
+ * `filePath` 传 null = 解锁并恢复自动选图。
+ */
+export function selectArtwork(
+  libraryId: number,
+  mediaItemId: number,
+  kind: "poster" | "backdrop",
+  filePath: string | null,
+): Promise<{ locked: boolean }> {
+  return unwrap(
+    request<ApiEnvelope<{ locked: boolean }>>(
+      `/libraries/${libraryId}/items/${mediaItemId}/artwork/select`,
+      { method: "POST", body: JSON.stringify({ kind, file_path: filePath }) },
+    ),
+  );
+}
+
+/** 待识别清单，按条目目录分组（不含已忽略，可按库过滤）。 */
+export function listUnidentified(libraryId?: number): Promise<UnidentifiedGroup[]> {
   const qs = libraryId != null ? `?library_id=${libraryId}` : "";
-  return unwrap(request<ApiEnvelope<UnidentifiedFile[]>>(`/libraries/unidentified${qs}`));
+  return unwrap(request<ApiEnvelope<UnidentifiedGroup[]>>(`/libraries/unidentified${qs}`));
+}
+
+/** 已忽略清单（用户说过「别再问」的文件），同样按条目目录分组。 */
+export function listIgnored(libraryId?: number): Promise<UnidentifiedGroup[]> {
+  const qs = libraryId != null ? `?library_id=${libraryId}` : "";
+  return unwrap(request<ApiEnvelope<UnidentifiedGroup[]>>(`/libraries/ignored${qs}`));
+}
+
+/** 恢复已忽略的文件：清掉忽略标记，重新参与识别。 */
+export function restoreIgnored(fileIds: number[]): Promise<{ restored: number }> {
+  return unwrap(
+    request<ApiEnvelope<{ restored: number }>>(`/libraries/files/restore`, {
+      method: "POST",
+      body: JSON.stringify({ file_ids: fileIds }),
+    }),
+  );
 }
 
 /** 认领待识别文件：挂到指定 TMDB 条目。 */
@@ -296,6 +514,63 @@ export function claimFile(
     request<ApiEnvelope<Record<string, never>>>(`/libraries/files/${fileId}/claim`, {
       method: "POST",
       body: JSON.stringify(payload),
+    }),
+  );
+}
+
+/** 整组认领：一次把多个待识别文件挂到同一个 TMDB 条目（各自沿用已解析的季集号）。 */
+export function claimFilesBatch(
+  fileIds: number[],
+  tmdbId: number,
+): Promise<{ claimed: number }> {
+  return unwrap(
+    request<ApiEnvelope<{ claimed: number }>>(`/libraries/files/claim-batch`, {
+      method: "POST",
+      body: JSON.stringify({ file_ids: fileIds, tmdb_id: tmdbId }),
+    }),
+  );
+}
+
+/** 身份复核里的一方（现身份 / 建议身份）。 */
+export interface ReviewItemInfo {
+  media_item_id: number;
+  tmdb_id: number | null;
+  title: string;
+  year: number | null;
+  poster_url: string | null;
+}
+
+/** 身份复核清单的一组：识别器升级后新旧结论不一致、等用户拍板的文件。 */
+export interface ReviewGroup {
+  key: string;
+  /** 展示名：条目目录名（裸文件为文件名） */
+  label: string;
+  library_id: number;
+  library_name: string;
+  file_count: number;
+  total_size_bytes: number;
+  file_ids: number[];
+  /** 现挂身份 */
+  current: ReviewItemInfo;
+  /** 新识别器给出的建议身份 */
+  suggestion: ReviewItemInfo;
+}
+
+/** 身份复核清单（可按库过滤）。 */
+export function listIdentityReview(libraryId?: number): Promise<ReviewGroup[]> {
+  const qs = libraryId != null ? `?library_id=${libraryId}` : "";
+  return unwrap(request<ApiEnvelope<ReviewGroup[]>>(`/libraries/review${qs}`));
+}
+
+/** 身份复核拍板：accept=true 采纳建议改挂新条目，false 维持现状；整组生效。 */
+export function resolveIdentityReview(
+  fileIds: number[],
+  accept: boolean,
+): Promise<{ resolved: number }> {
+  return unwrap(
+    request<ApiEnvelope<{ resolved: number }>>(`/libraries/review/resolve`, {
+      method: "POST",
+      body: JSON.stringify({ file_ids: fileIds, accept }),
     }),
   );
 }
@@ -356,6 +631,215 @@ export function clearMissing(
       method: "POST",
       body: JSON.stringify({ library_id: libraryId, media_item_id: mediaItemId ?? null }),
     }),
+  );
+}
+
+/** 一条音轨（ffprobe 探测；字段 null=该项探不出）。 */
+export interface AudioStream {
+  codec: string | null;
+  /** 编码档次（如 DTS-HD MA），比 codec 更贴近用户认知 */
+  profile: string | null;
+  channels: number | null;
+  /** 声道布局（如 5.1(side)） */
+  channel_layout: string | null;
+  /** 语言标签（ISO 639，如 chi/eng） */
+  language: string | null;
+  title: string | null;
+  default: boolean;
+}
+
+/** 一条字幕：内封轨（ffprobe）或外挂文件（目录发现）。 */
+export interface SubtitleStream {
+  /** 内封轨编码（subrip/ass/pgs…）；外挂为文件扩展名 */
+  codec: string | null;
+  language: string | null;
+  title: string | null;
+  forced: boolean;
+  default: boolean;
+  /** 是否外挂字幕文件 */
+  external: boolean;
+  /** 外挂字幕的文件名 */
+  file_name: string | null;
+}
+
+/** 条目详情页的一个物理文件（一个版本 / 一集）。 */
+export interface LibraryItemFile {
+  id: number;
+  file_path: string;
+  file_name: string;
+  size_bytes: number;
+  container: string | null;
+  resolution: string | null;
+  video_codec: string | null;
+  hdr: string | null;
+  bit_depth: number | null;
+  duration_seconds: number | null;
+  bit_rate: number | null;
+  media_source: string | null;
+  release_group: string | null;
+  /** imported（入库管线）/ scanned（存量扫描） */
+  source: string;
+  season_number: number;
+  episode_number: number;
+  /** 文件当前不在磁盘（missing 标记） */
+  missing: boolean;
+  /** 音轨列表；null=尚未探测（ffprobe 缺失或文件不可达） */
+  audio_streams: AudioStream[] | null;
+  /** 字幕列表：内封轨 + 外挂文件 */
+  subtitle_streams: SubtitleStream[];
+  added_at: string;
+}
+
+/** 本地刮削（NFO）的一位演员。 */
+export interface LocalActor {
+  name: string;
+  role: string | null;
+  thumb_url: string | null;
+}
+
+/** 条目的展示元数据：本地 NFO > 库内刮削档案 > TMDB 实时兜底。 */
+export interface LocalMeta {
+  plot: string | null;
+  rating: number | null;
+  runtime_minutes: number | null;
+  genres: string[];
+  directors: string[];
+  actors: LocalActor[];
+  /** 来源 NFO 文件名（source=nfo 时给出） */
+  nfo_name: string;
+  /** 信息出处：nfo=本地刮削 / db=库内档案 / tmdb=实时兜底 */
+  source: "nfo" | "db" | "tmdb";
+}
+
+/**
+ * 条目详情页的完整数据。图片 URL 两种形态：本地美术图是 /libraries/... 的
+ * API 相对路径（resolveRequestUrl 解析），TMDB 图床是 http 绝对地址
+ * （cachedImageUrl 走缓存代理）。
+ */
+export interface LibraryItemDetail {
+  media_item_id: number;
+  kind: MediaType;
+  tmdb_id: number;
+  imdb_id: string | null;
+  title: string;
+  original_title: string;
+  year: number | null;
+  poster_url: string | null;
+  backdrop_url: string | null;
+  /** NFO 本地刮削元数据；目录里没有可用 NFO 时为 null */
+  local_meta: LocalMeta | null;
+  /** 条目在磁盘上的目录（删除确认时展示） */
+  entry_dirs: string[];
+  files: LibraryItemFile[];
+  file_count: number;
+  total_size_bytes: number;
+  /** 季号列表：库内实有 ∪ 元数据季集结构（电影为空） */
+  seasons: number[];
+  /**
+   * 该条目正在后台刮削元数据。状态在服务端，所以离开页面 / 刷新浏览器 /
+   * 换台设备打开，都能看到"还在刮"并等到它结束。
+   */
+  scraping: boolean;
+  /** 刮削当前阶段（与整库刷新同一套文案）；没在刮为 null */
+  scraping_phase: string | null;
+}
+
+/** 剧集分集区的一集（季集结构 + 本地分集刮削 + TMDB 兜底的合并结果）。 */
+export interface LibraryEpisode {
+  episode_number: number;
+  name: string | null;
+  /** 分集简介 */
+  overview: string | null;
+  air_date: string | null;
+  /** 分集剧照：本地缩略图接口相对路径或 TMDB 图床地址；无为 null */
+  still_url: string | null;
+  /** 该集有在位文件；false=缺集或文件缺失（置灰展示） */
+  owned: boolean;
+  /** 该集的台账文件 id（在详情的 files 里查规格） */
+  file_ids: number[];
+}
+
+/** 一季的分集清单。 */
+export interface SeasonEpisodes {
+  season_number: number;
+  episodes: LibraryEpisode[];
+}
+
+/** 剧集条目一季的分集清单（分集横滚区数据源）。 */
+export function getItemEpisodes(
+  libraryId: number,
+  mediaItemId: number,
+  seasonNumber: number,
+): Promise<SeasonEpisodes> {
+  return unwrap(
+    request<ApiEnvelope<SeasonEpisodes>>(
+      `/libraries/${libraryId}/items/${mediaItemId}/episodes?season_number=${seasonNumber}`,
+    ),
+  );
+}
+
+/** 单条目重新识别的结论。 */
+export interface ReidentifyResult {
+  total: number;
+  identified: number;
+  unidentified: number;
+  skipped_missing: number;
+  /** TMDB 网络类失败、保留原身份的文件数（修复网络后可重试） */
+  kept_on_error: number;
+  /** 识别结果与原身份是否不同 */
+  changed: boolean;
+  /** 全部文件收敛到的新条目；识别失败或分裂为多个条目时为 null */
+  new_media_item_id: number | null;
+  new_title: string | null;
+  /** 身份由目录名 tmdbid 标记或 NFO 钉死——结果不满意需先改标记/NFO 或人工认领 */
+  pinned_identity: boolean;
+  message: string;
+}
+
+/** 条目真实删除的结论。 */
+export interface ItemDeleteResult {
+  /** 实际从磁盘删除的目录/文件 */
+  removed_paths: string[];
+  rows_deleted: number;
+  freed_bytes: number;
+  errors: string[];
+}
+
+/** 条目详情：基本信息 + NFO 本地刮削元数据 + 逐文件真实介质规格。 */
+export function getLibraryItemDetail(
+  libraryId: number,
+  mediaItemId: number,
+): Promise<LibraryItemDetail> {
+  return unwrap(
+    request<ApiEnvelope<LibraryItemDetail>>(`/libraries/${libraryId}/items/${mediaItemId}`),
+  );
+}
+
+/**
+ * 从磁盘**彻底删除**条目——整个刮削目录（视频+NFO+海报+字幕）一起清除。
+ * 全站唯一会动磁盘的删除接口，调用前必须经过明确的二次确认。
+ */
+export function deleteLibraryItem(
+  libraryId: number,
+  mediaItemId: number,
+): Promise<ItemDeleteResult> {
+  return unwrap(
+    request<ApiEnvelope<ItemDeleteResult>>(`/libraries/${libraryId}/items/${mediaItemId}`, {
+      method: "DELETE",
+    }),
+  );
+}
+
+/** 重新识别条目：全部在位文件重走识别链（NFO → 名称解析 → TMDB 收敛）。 */
+export function reidentifyLibraryItem(
+  libraryId: number,
+  mediaItemId: number,
+): Promise<ReidentifyResult> {
+  return unwrap(
+    request<ApiEnvelope<ReidentifyResult>>(
+      `/libraries/${libraryId}/items/${mediaItemId}/reidentify`,
+      { method: "POST" },
+    ),
   );
 }
 

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import { ImageLightbox } from "@/components/image-lightbox";
 import { LayersIcon, ListIcon, PhotoIcon } from "@/components/icons";
@@ -29,10 +29,12 @@ import { formatDateTime, formatRelativeTime } from "@/lib/time";
  * 流式过程中的等待感由页头进度条与骨架屏承载。
  *
  * 筛选区采用「频率分层」的三层结构（Airbnb 式抽屉方案）：
- * 1. **常驻工具栏**：影视类型分段切换（视图态，不是普通筛选）+ 分辨率 chips
- *    （唯一高频筛选维度）+ 带角标的「筛选」按钮 + 右对齐的排序控件；
+ * 1. **常驻工具栏**（统一胶囊语言，随结果复杂度自适应收缩）：排序胶囊
+ *    （SortDropdown，键+方向合一）+ 分辨率 chips（命中前 3 平铺）+ 年份/季/
+ *    压制组单维度下拉（FacetDropdown，可选值 ≥2 才出现）+ 纯图标视图切换
+ *    + 带角标的「筛选」按钮；
  * 2. **筛选弹层**：站点/年份/季/集/片源/编码/HDR/音频/压制组按组分区，
- *    chips 多选（组内=或，组间=且），底部实时显示命中数；
+ *    chips 多选（组内=或，组间=且），底部实时显示命中数；服务重度组合场景；
  * 3. **已应用条件回显行**：弹层里激活的条件以可摘除 chip 回显在结果上方，
  *    用户不用打开弹层就知道列表被什么约束着。
  *
@@ -85,13 +87,32 @@ const MEDIA_TYPE_LABEL: Record<string, string> = {
 
 /* —— 排序 —— */
 
-type SortKey = "seeders" | "time" | "size" | "snatched";
+type SortKey =
+  | "seeders"
+  | "time"
+  | "size"
+  | "snatched"
+  | "complete"
+  | "quality"
+  | "free";
 
 const SORT_OPTIONS: { key: SortKey; label: string }[] = [
   { key: "seeders", label: "做种数" },
   { key: "time", label: "发布时间" },
   { key: "size", label: "体积" },
   { key: "snatched", label: "完成数" },
+];
+
+/**
+ * 智能排序键：基于解析属性（attrs）的复合排序，按当前结果集的类型构成
+ * 动态出现在菜单里（见 SearchResults 的 smartSortKeys）：剧集为主时给
+ * 「全集优先」，电影为主时给「画质优先」，「免费优先」常驻。
+ * 语义都是「优先」，选中即降序（升序无意义但仍可手动切换）。
+ */
+const SMART_SORT_OPTIONS: { key: SortKey; label: string }[] = [
+  { key: "complete", label: "全集优先" },
+  { key: "quality", label: "画质优先" },
+  { key: "free", label: "免费优先" },
 ];
 
 interface SortState {
@@ -104,7 +125,10 @@ function readSortFromUrl(): SortState {
   const fallback: SortState = { key: "seeders", dir: "desc" };
   if (typeof window === "undefined") return fallback;
   const [key, dir] = (new URLSearchParams(window.location.search).get("sort") ?? "").split(":");
-  if (SORT_OPTIONS.some((o) => o.key === key) && (dir === "asc" || dir === "desc")) {
+  if (
+    [...SORT_OPTIONS, ...SMART_SORT_OPTIONS].some((o) => o.key === key) &&
+    (dir === "asc" || dir === "desc")
+  ) {
     return { key: key as SortKey, dir };
   }
   return fallback;
@@ -128,17 +152,70 @@ function initialView(posterPreset: boolean): ResultView {
   return "group";
 }
 
-function sortValue(hit: TorrentHit, key: SortKey): number {
+/**
+ * 剧集完整度层级（越大越完整）：4=明确标注全集（"全N集"/COMPLETE 必置
+ * complete=true，见 movieclaw_enrich.inference），3=整季包（有季无集，与
+ * matcher 的整季 pack 判定同口径），2=多集区间，1=单集，0=无季集信息
+ * （电影或解析失败）。同层内再比季数（多季合集靠前）、做种数，见 sortVector。
+ */
+function completenessTier(a: TorrentAttrs | null): number {
+  if (!a) return 0;
+  if (a.complete === true) return 4;
+  if (a.seasons.length > 0 && a.episodes.length === 0) return 3;
+  if (a.episodes.length > 1) return 2;
+  if (a.episodes.length === 1) return 1;
+  return 0;
+}
+
+/** 片源档位（画质排序第二级）：碟源 > WEB > 电视录制 > DVD；键是 enrich 归一化值。 */
+const SOURCE_RANK: Record<string, number> = {
+  "UHD Blu-ray": 7,
+  "Blu-ray": 6,
+  "WEB-DL": 5,
+  BDRip: 4,
+  WEBRip: 3,
+  "HD-DVD": 3,
+  HDTV: 2,
+  HDTVRip: 2,
+  HDRip: 2,
+  TVRip: 1,
+  DVDRip: 1,
+  DVD: 1,
+};
+
+/**
+ * 排序向量：逐级字典序比较（前级相等才看后级）。常规键单元素；智能键是
+ * 「主指标 → 次指标 → 做种数决胜」，保证同档资源仍按热度稳定排列，且缺失
+ * 解析属性的结果自然垫底、不干扰排序。
+ */
+function sortVector(hit: TorrentHit, key: SortKey): number[] {
+  const a = hit.attrs;
   switch (key) {
     case "time":
       // 无发布时间的排最后（升降序都垫底更符合直觉，用 -Infinity 简化处理）
-      return hit.upload_time ? Date.parse(hit.upload_time) : -Infinity;
+      return [hit.upload_time ? Date.parse(hit.upload_time) : -Infinity];
     case "size":
-      return hit.size_bytes;
+      return [hit.size_bytes];
     case "snatched":
-      return hit.snatched;
+      return [hit.snatched];
+    case "complete":
+      return [completenessTier(a), a?.seasons.length ?? 0, hit.seeders];
+    case "quality":
+      // 分辨率数值（"2160p"→2160）为主，片源档位次之（同源 Remux 加半档）
+      return [
+        a?.resolution ? parseInt(a.resolution, 10) || 0 : 0,
+        (a?.media_source ? (SOURCE_RANK[a.media_source] ?? 0) : 0) + (a?.remux ? 0.5 : 0),
+        hit.seeders,
+      ];
+    case "free":
+      // 免费 > 折扣 > 原价；同档「明确无 H&R 考核」者优先（null=站点不提供，不加分）
+      return [
+        hit.free || hit.download_volume_factor === 0 ? 2 : hit.download_volume_factor < 1 ? 1 : 0,
+        hit.hit_and_run === false ? 1 : 0,
+        hit.seeders,
+      ];
     default:
-      return hit.seeders;
+      return [hit.seeders];
   }
 }
 
@@ -587,10 +664,33 @@ export function SearchResults({ query, onResearch }: SearchResultsProps) {
   );
   const sorted = useMemo(() => {
     const dir = sort.dir === "asc" ? 1 : -1;
-    return [...filtered].sort(
-      (x, y) => (sortValue(x, sort.key) - sortValue(y, sort.key)) * dir,
-    );
+    return [...filtered].sort((x, y) => {
+      const vx = sortVector(x, sort.key);
+      const vy = sortVector(y, sort.key);
+      for (let i = 0; i < vx.length; i++) {
+        if (vx[i] !== vy[i]) return (vx[i] - vy[i]) * dir;
+      }
+      return 0;
+    });
   }, [filtered, sort]);
+
+  // 智能排序键的动态注入：按全量结果（而非筛选后）的类型构成决定——
+  // 剧集过半给「全集优先」，电影过半给「画质优先」，「免费优先」常驻。
+  // 用全量口径可避免筛选把菜单项筛没导致选中项凭空消失。
+  const smartSortKeys = useMemo(() => {
+    let tv = 0;
+    let movie = 0;
+    for (const h of items) {
+      if (h.attrs?.media_type === "tv") tv++;
+      else if (h.attrs?.media_type === "movie") movie++;
+    }
+    const keys: SortKey[] = [];
+    const typed = tv + movie;
+    if (typed > 0 && tv >= typed / 2) keys.push("complete");
+    if (typed > 0 && movie > typed / 2) keys.push("quality");
+    keys.push("free");
+    return keys;
+  }, [items]);
   const filtering = hasActiveFilters(filters);
 
   // 已完成站点的状态视图：筛选弹层的「站点」组与条件回显只认已出结果的站点
@@ -694,6 +794,7 @@ export function SearchResults({ query, onResearch }: SearchResultsProps) {
               filters={filters}
               onChange={setFilters}
               sort={sort}
+              smartSortKeys={smartSortKeys}
               onSortChange={setSort}
               resultCount={filtered.length}
               view={view}
@@ -895,6 +996,9 @@ function GroupHeader({
   const unparsed = meta === null;
   const freeCount = rows.filter((h) => h.free || h.download_volume_factor === 0).length;
   const topRes = maxResolution(rows);
+  // 组内存在明确标注全集的资源（"全N集"/COMPLETE）——不切排序也能一眼看到
+  // 哪部剧能一包带走；季包不算（连载中的整季包不等于全集）
+  const hasCompletePack = rows.some((h) => h.attrs?.complete === true);
   const info = unparsed
     ? "按原始名展示"
     : [
@@ -936,6 +1040,7 @@ function GroupHeader({
             最高 {topRes}
           </span>
         )}
+        {hasCompletePack && <span className={COMPLETE_BADGE_CLS}>全集包</span>}
         {freeCount > 0 && (
           <span className="tnum rounded-md bg-[#4ade80]/15 px-1.5 py-0.5 text-[10px] font-semibold text-[#79d193]">
             {freeCount} 个免费
@@ -987,6 +1092,7 @@ function FilterToolbar({
   filters,
   onChange,
   sort,
+  smartSortKeys,
   onSortChange,
   resultCount,
   view,
@@ -997,44 +1103,31 @@ function FilterToolbar({
   filters: Filters;
   onChange: (f: Filters) => void;
   sort: SortState;
+  smartSortKeys: SortKey[];
   onSortChange: (s: SortState) => void;
   resultCount: number;
   view: ResultView;
   onViewChange: (v: ResultView) => void;
 }) {
   const [sheetOpen, setSheetOpen] = useState(false);
+  const sheetRef = useRef<HTMLDivElement>(null);
+  useDismiss(sheetRef, () => setSheetOpen(false), sheetOpen);
   const badge = sheetSelectionCount(filters);
+  // 当前选中的智能键即使不在注入列表里（URL 还原/上次搜索的偏好残留）也要
+  // 保留其选项，否则 select 会显示空白
+  const smartOptions = SMART_SORT_OPTIONS.filter(
+    (o) => smartSortKeys.includes(o.key) || o.key === sort.key,
+  );
 
   return (
     <div className="mt-3 flex flex-wrap items-center gap-3 rounded-2xl border border-white/[0.07] bg-black/[0.14] p-2.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)] backdrop-blur-xl">
       <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">
-        {/* 排序：高频操作，置于工具栏最前 */}
-        <select
-          aria-label="排序依据"
-          className="h-7 rounded-full border border-white/[0.08] bg-black/[0.22] px-3 text-[11px] text-[var(--text-muted)] outline-none transition-colors hover:border-white/[0.15] hover:text-[var(--text)]"
-          value={sort.key}
-          onChange={(e) => onSortChange({ ...sort, key: e.target.value as SortKey })}
-        >
-          {SORT_OPTIONS.map((o) => (
-            <option key={o.key} value={o.key}>
-              按{o.label}
-            </option>
-          ))}
-        </select>
-        <button
-          type="button"
-          title={sort.dir === "desc" ? "当前降序，点击切换为升序" : "当前升序，点击切换为降序"}
-          onClick={() =>
-            onSortChange({ ...sort, dir: sort.dir === "desc" ? "asc" : "desc" })
-          }
-          aria-label={sort.dir === "desc" ? "切换为升序" : "切换为降序"}
-          className={`grid size-7 place-items-center rounded-full border text-[13px] transition-all ${CHIP_IDLE_CLS}`}
-        >
-          {sort.dir === "desc" ? "↓" : "↑"}
-        </button>
+        {/* 排序：高频操作，置于工具栏最前（键与方向合并成一颗胶囊） */}
+        <SortDropdown sort={sort} smartOptions={smartOptions} onChange={onSortChange} />
 
-        {/* 分辨率：唯一的高频筛选维度，常驻 chips */}
-        {facets.resolution.map(({ value, count }) => (
+        {/* 分辨率：最高频的筛选维度，直接平铺 chips；只放命中最多的前 3 个
+            （聚合已按计数降序），长尾分辨率进「筛选」弹层 */}
+        {facets.resolution.slice(0, 3).map(({ value, count }) => (
         <FacetChip
           key={value}
           label={value}
@@ -1045,11 +1138,54 @@ function FilterToolbar({
           }
         />
         ))}
+
+        {/* 高频维度前置成单维度下拉（按重要性排：年份/季/压制组——年份直接
+            区分同名不同作；站点属于来源信息，离下载决策远，留在「筛选」弹层）。
+            只有可选值 ≥2（即真有区分度）才出现：搜具体片名时维度往往只剩单值，
+            下拉毫无决策价值，隐去让工具栏随结果复杂度自适应收缩。
+            全维度组合仍走右侧「筛选」弹层，两边共享同一份筛选状态 */}
+        {facets.years.length >= 2 && (
+          <FacetDropdown
+            label="年份"
+            options={facets.years.map((y) => ({
+              value: y.value,
+              label: String(y.value),
+              count: y.count,
+            }))}
+            active={filters.year}
+            onToggle={(v) => onChange({ ...filters, year: toggleIn(filters.year, v) })}
+          />
+        )}
+        {facets.seasons.length >= 2 && (
+          <FacetDropdown
+            label="季"
+            options={facets.seasons.map((s) => ({
+              value: s.value,
+              label: `第${s.value}季`,
+              count: s.count,
+            }))}
+            active={filters.season}
+            onToggle={(v) => onChange({ ...filters, season: toggleIn(filters.season, v) })}
+          />
+        )}
+        {facets.groups.length >= 2 && (
+          <FacetDropdown
+            label="压制组"
+            options={facets.groups.map((g) => ({
+              value: g.value,
+              label: g.value,
+              count: g.count,
+            }))}
+            active={filters.group}
+            onToggle={(v) => onChange({ ...filters, group: toggleIn(filters.group, v) })}
+          />
+        )}
       </div>
 
       {/* 右侧：视图切换（分组/列表/图览）+ 筛选弹层入口（最后） */}
       <div className="relative ml-auto flex flex-wrap items-center justify-end gap-1.5">
-        {/* 视图分段切换：只切换当次搜索的展示方式，图览的长期默认值在自定义分类里设置 */}
+        {/* 视图分段切换：只切换当次搜索的展示方式，图览的长期默认值在自定义分类里
+            设置。纯图标 + tooltip：设置一次就不常动的偏好，不配占文字标签的宽度 */}
         <div className="flex items-center rounded-full border border-white/[0.08] bg-black/[0.16] p-0.5">
           {(
             [
@@ -1062,49 +1198,217 @@ function FilterToolbar({
               key={v}
               type="button"
               aria-pressed={view === v}
+              aria-label={label}
               title={hint}
               onClick={() => onViewChange(v)}
-              className={`flex h-6 items-center gap-1 rounded-full px-2.5 text-[11px] transition-all ${view === v ? SEGMENT_ACTIVE_CLS : SEGMENT_IDLE_CLS}`}
+              className={`grid h-6 w-8 place-items-center rounded-full transition-all ${view === v ? SEGMENT_ACTIVE_CLS : SEGMENT_IDLE_CLS}`}
             >
               <Icon className="size-3.5" />
-              {label}
             </button>
           ))}
         </div>
 
-        <button
-          type="button"
-          onClick={() => setSheetOpen((v) => !v)}
-          aria-expanded={sheetOpen}
-          className={`flex h-7 items-center gap-1.5 rounded-full border px-3 text-[11px] transition-all ${
-            badge > 0 ? CHIP_ACTIVE_CLS : CHIP_IDLE_CLS
-          }`}
-        >
-          筛选
-          {badge > 0 && (
-            <span className="tnum rounded-full bg-[var(--accent)]/25 px-1.5 text-[10px]">
-              {badge}
-            </span>
-          )}
-          <span className={`text-[9px] opacity-70 transition-transform ${sheetOpen ? "rotate-180" : ""}`}>▾</span>
-        </button>
+        {/* 触发器与弹层同容器：useDismiss 以此为界判定「点外关闭」 */}
+        <div ref={sheetRef} className="relative">
+          <button
+            type="button"
+            onClick={() => setSheetOpen((v) => !v)}
+            aria-expanded={sheetOpen}
+            className={`flex h-7 items-center gap-1.5 rounded-full border px-3 text-[11px] transition-all ${
+              badge > 0 ? CHIP_ACTIVE_CLS : CHIP_IDLE_CLS
+            }`}
+          >
+            筛选
+            {badge > 0 && (
+              <span className="tnum rounded-full bg-[var(--accent)]/25 px-1.5 text-[10px]">
+                {badge}
+              </span>
+            )}
+            <span className={`text-[9px] opacity-70 transition-transform ${sheetOpen ? "rotate-180" : ""}`}>▾</span>
+          </button>
 
-        {sheetOpen && (
-          <FilterSheet
-            sites={sites}
-            facets={facets}
-            filters={filters}
-            onChange={onChange}
-            resultCount={resultCount}
-            onClose={() => setSheetOpen(false)}
-          />
-        )}
+          {sheetOpen && (
+            <FilterSheet
+              sites={sites}
+              facets={facets}
+              filters={filters}
+              onChange={onChange}
+              resultCount={resultCount}
+              onClose={() => setSheetOpen(false)}
+            />
+          )}
+        </div>
       </div>
     </div>
   );
 }
 
 /* —— 第二层：筛选弹层 —— */
+
+/**
+ * 浮层退出交互：Esc 或点击 ref 区域（浮层+触发器）以外即关闭。
+ * 不用全屏遮罩层实现"点外关闭"——工具栏容器带 backdrop-filter，是 fixed
+ * 定位的包含块，遮罩会被困在容器内（只盖住工具栏、盖不住结果区，点结果区
+ * 关不掉弹层，与 Modal 基座踩过的坑同源）；文档级 pointerdown 判定不受
+ * 定位上下文影响，且点外关闭时点击还能落到目标元素上（少点一次）。
+ */
+function useDismiss(
+  ref: React.RefObject<HTMLElement | null>,
+  onClose: () => void,
+  active = true,
+) {
+  useEffect(() => {
+    if (!active) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    const onDown = (e: PointerEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) onClose();
+    };
+    window.addEventListener("keydown", onKey);
+    document.addEventListener("pointerdown", onDown);
+    return () => {
+      window.removeEventListener("keydown", onKey);
+      document.removeEventListener("pointerdown", onDown);
+    };
+  }, [ref, onClose, active]);
+}
+
+/**
+ * 单维度筛选下拉（工具栏高频维度前置用）：点开小面板勾选即生效、点空白/Esc
+ * 即收。多数筛选只碰 1-2 个维度，前置后不必进全维度的「筛选」大弹层——
+ * 大弹层被收窄为重度组合场景的入口，二者共享同一份筛选状态。
+ */
+function FacetDropdown<T extends string | number>({
+  label,
+  options,
+  active,
+  onToggle,
+}: {
+  label: string;
+  options: { value: T; label: string; count: number }[];
+  active: Set<T>;
+  onToggle: (value: T) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const rootRef = useRef<HTMLDivElement>(null);
+  useDismiss(rootRef, () => setOpen(false), open);
+  return (
+    <div ref={rootRef} className="relative">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        aria-expanded={open}
+        className={`flex h-7 items-center gap-1.5 rounded-full border px-3 text-[11px] transition-all ${
+          active.size > 0 ? CHIP_ACTIVE_CLS : CHIP_IDLE_CLS
+        }`}
+      >
+        {label}
+        {active.size > 0 && (
+          <span className="tnum rounded-full bg-[var(--accent)]/25 px-1.5 text-[10px]">
+            {active.size}
+          </span>
+        )}
+        <span className={`text-[9px] opacity-70 transition-transform ${open ? "rotate-180" : ""}`}>
+          ▾
+        </span>
+      </button>
+      {open && (
+        <div className="absolute left-0 top-full z-30 mt-2 max-h-[46vh] w-max max-w-[420px] overflow-y-auto rounded-2xl border border-white/[0.12] bg-[rgba(14,16,22,0.96)] p-3 shadow-2xl backdrop-blur-2xl">
+          <div className="flex flex-wrap gap-1.5">
+            {options.map((o) => (
+              <FacetChip
+                key={o.value}
+                label={o.label}
+                count={o.count}
+                active={active.has(o.value)}
+                onToggle={() => onToggle(o.value)}
+              />
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/**
+ * 排序胶囊：把「排序键 select + 独立方向按钮」合并成一个下拉。
+ * 菜单里点新键 = 选中并重置为降序（所有键的直觉首选方向）；点当前键 = 翻转
+ * 方向（表头排序惯例，菜单底部有文字提示）。胶囊标签实时显示「键名 + 箭头」。
+ * 常规/智能两组，智能组按结果集类型动态注入（见 smartSortKeys）。
+ */
+function SortDropdown({
+  sort,
+  smartOptions,
+  onChange,
+}: {
+  sort: SortState;
+  smartOptions: { key: SortKey; label: string }[];
+  onChange: (s: SortState) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const rootRef = useRef<HTMLDivElement>(null);
+  useDismiss(rootRef, () => setOpen(false), open);
+  const arrow = sort.dir === "desc" ? "↓" : "↑";
+  const label =
+    [...SORT_OPTIONS, ...SMART_SORT_OPTIONS].find((o) => o.key === sort.key)?.label ?? sort.key;
+  const pick = (key: SortKey) => {
+    onChange(
+      key === sort.key
+        ? { key, dir: sort.dir === "desc" ? "asc" : "desc" }
+        : { key, dir: "desc" },
+    );
+    setOpen(false);
+  };
+  const item = (o: { key: SortKey; label: string }) => (
+    <button
+      key={o.key}
+      type="button"
+      onClick={() => pick(o.key)}
+      className={`flex w-full items-center justify-between rounded-lg px-2.5 py-1.5 text-left text-[11px] transition-colors ${
+        o.key === sort.key
+          ? "bg-white/[0.09] text-[var(--text)]"
+          : "text-[var(--text-muted)] hover:bg-white/[0.06] hover:text-[var(--text)]"
+      }`}
+    >
+      {o.label}
+      {o.key === sort.key && <span className="text-[12px]">{arrow}</span>}
+    </button>
+  );
+  return (
+    <div ref={rootRef} className="relative">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        aria-expanded={open}
+        aria-label={`排序：${label}${sort.dir === "desc" ? "降序" : "升序"}`}
+        className={`flex h-7 items-center gap-1.5 rounded-full border px-3 text-[11px] transition-all ${CHIP_IDLE_CLS}`}
+      >
+        {label}
+        <span className="text-[12px]">{arrow}</span>
+        <span className={`text-[9px] opacity-70 transition-transform ${open ? "rotate-180" : ""}`}>
+          ▾
+        </span>
+      </button>
+      {open && (
+        <div className="absolute left-0 top-full z-30 mt-2 w-44 rounded-2xl border border-white/[0.12] bg-[rgba(14,16,22,0.96)] p-1.5 shadow-2xl backdrop-blur-2xl">
+          <p className="px-2.5 pb-1 pt-1.5 text-[10px] text-[var(--text-faint)]">常规</p>
+          {SORT_OPTIONS.map(item)}
+          {smartOptions.length > 0 && (
+            <>
+              <p className="px-2.5 pb-1 pt-2 text-[10px] text-[var(--text-faint)]">智能</p>
+              {smartOptions.map(item)}
+            </>
+          )}
+          <p className="border-t border-white/[0.08] px-2.5 pb-1 pt-2 text-[10px] text-[var(--text-faint)]">
+            点击当前项可切换升降序
+          </p>
+        </div>
+      )}
+    </div>
+  );
+}
 
 function SheetGroup({ title, children }: { title: string; children: React.ReactNode }) {
   return (
@@ -1137,9 +1441,9 @@ function FilterSheet({
 
   return (
     <>
-      {/* 点击空白处关闭 */}
-      <div className="fixed inset-0 z-20" onClick={onClose} />
-      <div className="absolute right-0 top-full z-30 mt-2 max-h-[60vh] w-[560px] max-w-[82vw] overflow-y-auto rounded-2xl border border-white/[0.12] bg-[rgba(14,16,22,0.96)] p-4 shadow-2xl backdrop-blur-2xl">
+      {/* 点外/Esc 关闭由 FilterToolbar 的 useDismiss 承担（触发器与弹层同容器） */}
+      {/* 宽度收着点：右侧浮层少遮结果列表，让「选择即生效」的变化被看见 */}
+      <div className="absolute right-0 top-full z-30 mt-2 max-h-[60vh] w-[480px] max-w-[82vw] overflow-y-auto rounded-2xl border border-white/[0.12] bg-[rgba(14,16,22,0.96)] p-4 shadow-2xl backdrop-blur-2xl">
         <div className="mb-4 flex items-center justify-between">
           <div>
             <p className="text-[13px] font-medium text-[var(--text)]">筛选结果</p>
@@ -1539,6 +1843,14 @@ function posterPromoBadges(hit: TorrentHit): { text: string; cls: string }[] {
   if (hit.hit_and_run) {
     badges.push({ text: "H&R", cls: "bg-[#f59e0b]/90 text-[#3a2600]" });
   }
+  // 全集徽标（海报适配实底变体）：与行内 COMPLETE_BADGE_CLS 同一判定口径
+  const complete = completeLabel(hit.attrs);
+  if (complete) {
+    badges.push({
+      text: complete,
+      cls: "bg-gradient-to-r from-[#4f8cff]/90 to-[#9d6bff]/90 text-white",
+    });
+  }
   return badges;
 }
 
@@ -1795,6 +2107,7 @@ function TorrentRow({
 }) {
   const size = hit.size ?? formatBytes(hit.size_bytes);
   const name = showRawTitles ? null : parsedName(hit);
+  const complete = completeLabel(hit.attrs);
   // 分组模式且片名已解析：片名由组头承担，行标题换成版本规格摘要
   const asSpecRow = grouped && name !== null;
   const spec = asSpecRow && hit.attrs ? specSummary(hit.attrs) : null;
@@ -1849,6 +2162,8 @@ function TorrentRow({
             <span className="shrink-0 rounded-md bg-white/[0.06] px-1.5 py-0.5 text-[10px] font-medium text-[var(--accent-2)]">
               {hit.site_name}
             </span>
+            {/* 全集徽标紧跟站点：属于资源身份而非促销，任何行模式都展示 */}
+            {complete && <span className={COMPLETE_BADGE_CLS}>{complete}</span>}
             <PromoBadges hit={hit} />
             {/* 规格行模式下不再重复属性徽标（规格已在行标题里） */}
             {hit.attrs && !asSpecRow && <AttrBadges attrs={hit.attrs} />}
@@ -2005,9 +2320,9 @@ function AttrBadges({ attrs }: { attrs: TorrentAttrs }) {
 }
 
 /**
- * 季集摘要："S02E03"、"S01-S05"、"E19-E20"、"全集"/"全12集"。
- * 只描述观测值：seasons/episodes 为空时不硬造（complete 单独成词，
- * 观测到总集数时进一步写成"全N集"）。
+ * 季集摘要："S02E03"、"S01-S05"、"E19-E20"。只描述观测值：seasons/episodes
+ * 为空时不硬造；全集包的逐集列表是噪音，complete 时不列集（"全集"信息
+ * 由独立的全集徽标承担，见 completeLabel）。
  */
 function seasonEpLabel(attrs: TorrentAttrs): string | null {
   const pad = (n: number) => String(n).padStart(2, "0");
@@ -2023,11 +2338,23 @@ function seasonEpLabel(attrs: TorrentAttrs): string | null {
     if (attrs.seasons.length) parts.push(range(attrs.seasons, "S"));
     if (attrs.episodes.length && !attrs.complete) parts.push(range(attrs.episodes, "E"));
   }
-  if (attrs.complete) {
-    parts.push(attrs.episodes_total ? `全${attrs.episodes_total}集` : "全集");
-  }
   return parts.length ? parts.join(" ") : null;
 }
+
+/**
+ * 全集徽标文案：明确标注全集（"全N集"/COMPLETE）的资源返回"全N集"/"全集"，
+ * 其余返回 null。所有展示形态（分组行/列表行/海报卡/组头）共用此判定，
+ * 徽标样式也统一走 COMPLETE_BADGE_CLS——全集包是"一把带走"的下载决策关键，
+ * 用区别于普通属性 chip 的渐变描边样式让它跳出来。
+ */
+function completeLabel(attrs: TorrentAttrs | null): string | null {
+  if (attrs?.complete !== true) return null;
+  return attrs.episodes_total ? `全${attrs.episodes_total}集` : "全集";
+}
+
+/** 全集徽标的统一样式（列表/分组/组头）；海报卡用实底变体叠图可读。 */
+const COMPLETE_BADGE_CLS =
+  "rounded-md bg-gradient-to-r from-[#4f8cff]/25 to-[#9d6bff]/25 px-1.5 py-0.5 text-[10px] font-semibold text-[#b9d4ff] ring-1 ring-inset ring-[#6aa7ff]/35";
 
 /* —— 占位 / 空态 —— */
 

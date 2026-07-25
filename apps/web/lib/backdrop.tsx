@@ -47,6 +47,12 @@ interface BackdropContextValue {
   selectBackdrop: (backdropId: string | null) => Promise<void>;
   /** 从图库删除一张图；删的是生效图时自动回退内置默认 */
   deleteBackdrop: (backdropId: string) => Promise<void>;
+  /**
+   * 页面级临时背景覆盖（沉浸模式）：媒体库影片详情页进入时把全站背景
+   * 换成该片剧照，离开时传 null 恢复用户自己的背景。只改运行时状态，
+   * 不落外观设置、不写首帧缓存——刷新/下次启动仍是用户配置的背景。
+   */
+  setOverrideBackdrop: (url: string | null) => void;
 }
 
 const BackdropContext = createContext<BackdropContextValue | null>(null);
@@ -84,14 +90,39 @@ export function BackdropProvider({ children }: { children: React.ReactNode }) {
   const [activeId, setActiveId] = useState<string | null>(null);
   const [items, setItems] = useState<BackdropItem[]>([]);
   const [loading, setLoading] = useState(true);
+  // 页面级临时覆盖（影片详情的沉浸背景）：叠在用户配置之上，离开页面清除
+  const [overrideUrl, setOverrideUrl] = useState<string | null>(null);
+  // 已加载完成、正在覆盖层上展示的图。与 overrideUrl 分离是为了过渡体验：
+  // 图先在内存里加载完才淡入（不铺半解码的图）；清除覆盖时保留这张图
+  // 让覆盖层淡出，而不是图先消失再等透明度归零的"闪一下"
+  const [overrideReady, setOverrideReady] = useState<string | null>(null);
 
   // 内部统一的回写：后端每次写操作都返回最新视图，整体应用并同步 CSS 变量。
+  // 覆盖是独立的淡入图层，这里永远只管用户配置的背景（含首帧缓存）。
   const applyView = useCallback((view: appearanceApi.AppearanceView) => {
     setActiveUrl(view.active_url);
     setActiveId(view.active_id);
     setItems(view.backdrops);
     applyCssVar(view.active_url);
   }, []);
+
+  // 覆盖图预加载：完整加载后才允许淡入
+  useEffect(() => {
+    if (overrideUrl === null) return; // 清除时不重置 ready——覆盖层带着旧图淡出
+    let cancelled = false;
+    const img = new Image();
+    img.onload = () => {
+      if (!cancelled) setOverrideReady(overrideUrl);
+    };
+    img.src = overrideUrl;
+    return () => {
+      cancelled = true;
+    };
+  }, [overrideUrl]);
+
+  // 覆盖层是否可见：目标图已加载完成才亮（首访图慢时，页面先以用户背景
+  // 示人，图到了再柔和浮现——不再有"硬切"的突兀过渡）
+  const overrideVisible = overrideUrl !== null && overrideReady === overrideUrl;
 
   useEffect(() => {
     let cancelled = false;
@@ -135,7 +166,9 @@ export function BackdropProvider({ children }: { children: React.ReactNode }) {
 
   const value = useMemo<BackdropContextValue>(
     () => ({
-      backdrop: activeUrl ?? BACKDROP,
+      // 玻璃面板的折射纹理也走这里：与覆盖层淡入同一时机换图（图加载完成），
+      // 折射内容和背景大图保持一致
+      backdrop: (overrideVisible ? overrideUrl : activeUrl) ?? BACKDROP,
       isCustom: activeUrl != null,
       loading,
       items,
@@ -143,11 +176,41 @@ export function BackdropProvider({ children }: { children: React.ReactNode }) {
       uploadBackdrop,
       selectBackdrop,
       deleteBackdrop,
+      setOverrideBackdrop: setOverrideUrl,
     }),
-    [activeUrl, loading, items, activeId, uploadBackdrop, selectBackdrop, deleteBackdrop],
+    [
+      overrideVisible,
+      overrideUrl,
+      activeUrl,
+      loading,
+      items,
+      activeId,
+      uploadBackdrop,
+      selectBackdrop,
+      deleteBackdrop,
+    ],
   );
 
-  return <BackdropContext.Provider value={value}>{children}</BackdropContext.Provider>;
+  return (
+    <BackdropContext.Provider value={value}>
+      {/* 沉浸覆盖层：叠在 body::before(z0) 之上、全局蒙版(z5)与内容(z10)之下。
+          独立图层 + 透明度过渡 = 图到了柔和浮现、离开页面柔和退场——
+          背景大图的 CSS 变量与首帧缓存完全不被覆盖打扰。
+          （opacity 由 state 驱动，不是 CSS 变量驱动，可以安全做 transition） */}
+      <div
+        aria-hidden="true"
+        className="pointer-events-none fixed inset-0 z-[1] transition-opacity duration-700 ease-out"
+        style={{
+          opacity: overrideVisible ? 1 : 0,
+          backgroundImage: overrideReady ? `url("${overrideReady}")` : undefined,
+          backgroundSize: "cover",
+          backgroundPosition: "center top",
+          backgroundRepeat: "no-repeat",
+        }}
+      />
+      {children}
+    </BackdropContext.Provider>
+  );
 }
 
 /** 读取当前背景图与切换方法。必须在 BackdropProvider 内使用。 */

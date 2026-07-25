@@ -22,7 +22,7 @@ import { useSearchPrefs } from "@/lib/search-prefs";
  * 指针移动时整组重渲染的开销可忽略，直接放 useState 里换取
  * 「其余行实时让位」的动画简洁性。
  *
- * 坐标算法（行高不等也成立——预设行/成人行带第二行说明文字）：
+ * 坐标算法（行高不等也成立——预设行/带说明的分类行有第二行文字）：
  * - 按下时记录每一行的**原始中心 Y**（centers）与被拖行的高度；
  * - 拖动中，被拖行中心 = 原中心 + dy；目标下标 to = 中心在其上方的「其他行」数
  *   ——即把被拖行抽出后应插入的位置；
@@ -43,6 +43,16 @@ interface DragState {
   /** 按下时每一行的中心 Y（视口坐标） */
   centers: number[];
 }
+
+/**
+ * 内置分类的补充说明（展示在分类行名称下方）：只给语义不自明的分类写，
+ * 电影/剧集这类一望即知的不加，避免整列说明文字变成噪音。
+ */
+const CATEGORY_HINT: Partial<Record<TorrentCategory, string>> = {
+  av: "默认隐藏；打开后搜索面板会出现「成人」分类",
+  other:
+    "兜底分类：站点上归不进以上类别的分区（软件、电子书、体育、综艺等，各站范围不同）",
+};
 
 /** 预设编辑器的会话状态：新建（editingId=null）或编辑某个预设。 */
 interface EditorState {
@@ -290,9 +300,9 @@ export function SearchSection() {
                   <p className="text-sm font-medium text-[var(--text)]">
                     {CATEGORY_LABEL[tab.id]}
                   </p>
-                  {tab.id === "av" && (
+                  {CATEGORY_HINT[tab.id] && (
                     <p className="mt-0.5 text-[11px] text-[var(--text-faint)]">
-                      默认隐藏；打开后搜索面板会出现「成人」分类
+                      {CATEGORY_HINT[tab.id]}
                     </p>
                   )}
                 </div>

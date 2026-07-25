@@ -13,7 +13,7 @@ export default async function LibraryDetailPage({
 }) {
   const { id } = await params;
   return (
-    <div className="flex h-full flex-col pt-5">
+    <div className="flex h-full flex-col">
       <LibraryDetailView libraryId={Number(id)} />
     </div>
   );

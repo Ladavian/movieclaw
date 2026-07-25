@@ -11,7 +11,7 @@ import {
   PlayIcon,
   StarIcon,
 } from "@/components/icons";
-import { Breadcrumb } from "@/components/breadcrumb";
+import { PageNav } from "@/components/page-nav";
 import { ImageLightbox, type LightboxAction } from "@/components/image-lightbox";
 import { MediaRow } from "@/components/media-row";
 import { PosterImage } from "@/components/poster-image";
@@ -118,7 +118,7 @@ export function MediaDetailView({
       year: item.year || undefined,
     });
 
-  // 来路面包屑：站内点进来按来的列表页渲染父级；直达/刷新按影片类型兜底
+  // 来路：站内点进来按来的列表页作返回目标；直达/刷新按影片类型兜底
   const trail = [
     ...(getMediaOrigin(source, id) ?? [
       isMovie
@@ -130,9 +130,9 @@ export function MediaDetailView({
 
   return (
     <div className="scroll-thin h-full overflow-y-auto pb-12">
-      {/* —— 1. 来路面包屑 + Hero 大剧照 —— */}
-      <div className="px-6 pt-3">
-        <Breadcrumb items={trail} className="mb-3" />
+      {/* —— 1. 顶栏（返回 + 吸顶标题）+ Hero 大剧照 —— */}
+      <PageNav items={trail} />
+      <div className="px-6">
         <div className="relative h-[42vh] min-h-[280px] overflow-hidden rounded-2xl shadow-[0_24px_70px_-18px_rgba(0,0,0,0.62)] ring-1 ring-white/10">
           <PosterImage
             src={item.backdropUrl}

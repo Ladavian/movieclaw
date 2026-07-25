@@ -13,7 +13,7 @@ export default async function SubscriptionDetailPage({
 }) {
   const { id } = await params;
   return (
-    <div className="flex h-full flex-col pt-5">
+    <div className="flex h-full flex-col">
       <SubscriptionInspectorView id={Number(id)} />
     </div>
   );

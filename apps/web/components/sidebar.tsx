@@ -1,7 +1,7 @@
 "use client";
 
 import Image from "next/image";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 
 import {
@@ -100,30 +100,35 @@ export function Sidebar({
   const body = (
     <>
       {/* 品牌头部。展开：完整字标 + 开合/搜索图标横排；折叠：独立徽标、开合、搜索竖排居中。
-          开合按钮与搜索共用同一套图标按钮样式（⌘K 在两种形态下均可唤起搜索）。 */}
+          开合按钮与搜索共用同一套图标按钮样式（⌘K 在两种形态下均可唤起搜索）。
+          两种形态的 logo 都是「回首页」入口，等同于点击导航里的「新任务」。 */}
       {collapsed ? (
         <div className="flex flex-col items-center gap-2 px-3 pb-3 pt-5">
-          <Image
-            src="/movieclaw-logo-mark-rotor.png"
-            alt="MovieClaw"
-            width={525}
-            height={525}
-            priority
-            className="size-9 object-contain"
-          />
+          <BrandHome onSelect={onSelect}>
+            <Image
+              src="/movieclaw-logo-mark-rotor.png"
+              alt="MovieClaw"
+              width={525}
+              height={525}
+              priority
+              className="size-7 object-contain"
+            />
+          </BrandHome>
           <CollapseToggle collapsed onClick={onToggleCollapse} />
           <SearchCommand onSearch={onSearch} />
         </div>
       ) : (
         <div className="flex items-center justify-between px-4 pb-3 pt-4">
-          <Image
-            src="/movieclaw-logo-rotor.png"
-            alt="MovieClaw"
-            width={1920}
-            height={525}
-            priority
-            className="h-9 w-auto max-w-[132px] object-contain"
-          />
+          <BrandHome onSelect={onSelect}>
+            <Image
+              src="/movieclaw-logo-rotor.png"
+              alt="MovieClaw"
+              width={1920}
+              height={525}
+              priority
+              className="h-8 w-auto max-w-[120px] object-contain"
+            />
+          </BrandHome>
           <div className="flex items-center gap-1">
             <SearchCommand onSearch={onSearch} />
             <CollapseToggle collapsed={false} onClick={onToggleCollapse} />
@@ -145,12 +150,15 @@ export function Sidebar({
                 data-active={activeNav === item.id}
                 onClick={() => onSelect(item.id)}
                 title={collapsed ? item.label : undefined}
-                className={`glass-row nav-item py-2 text-[13px] ${
-                  collapsed ? "justify-center px-0" : "px-3"
-                }`}
+                className={`glass-row nav-item py-2 ${collapsed ? "justify-center px-0" : "px-3"}`}
               >
                 <Icon className="size-[18px] shrink-0" />
-                {!collapsed && <span className="flex-1 font-medium">{item.label}</span>}
+                {/* 字号写在 span 上而非 button 上：globals.css 的 `button { font: inherit }`
+                    是无 @layer 的普通规则，会压过 Tailwind 的 @layer utilities——写在
+                    button 上的 text-[13px] 不生效，会退回 body 的 14px。 */}
+                {!collapsed && (
+                  <span className="flex-1 text-[13px] font-medium">{item.label}</span>
+                )}
               </button>
             );
           })}
@@ -213,6 +221,30 @@ export function Sidebar({
 }
 
 /** 头部的侧栏开合按钮：与搜索触发器同款的方形图标按钮 */
+/**
+ * 品牌 logo 的「回首页」外壳：点击等同于选中导航里的「新任务」（id: new），
+ * 展开态包字标、折叠态包徽标，两处共用同一交互与 hover 反馈。
+ */
+function BrandHome({
+  onSelect,
+  children,
+}: {
+  onSelect: (id: string) => void;
+  children: ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={() => onSelect("new")}
+      aria-label="回到首页"
+      title="回到首页"
+      className="shrink-0 cursor-pointer transition-opacity hover:opacity-75"
+    >
+      {children}
+    </button>
+  );
+}
+
 function CollapseToggle({ collapsed, onClick }: { collapsed: boolean; onClick: () => void }) {
   const label = collapsed ? "展开侧栏" : "收起侧栏";
   return (

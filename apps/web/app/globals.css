@@ -184,10 +184,23 @@ a {
   text-decoration: none;
 }
 
-button {
-  font: inherit;
-  color: inherit;
-  cursor: pointer;
+/*
+ * 按钮只保留「手型光标」这一条 —— Tailwind v4 的 preflight 不再给 button 设
+ * cursor，所以这条必须自己补。
+ *
+ * 必须写在 @layer base 里：无 @layer 的普通规则优先级永远高于任何 @layer，
+ * 而 Tailwind 的工具类都在 @layer utilities。此前这条规则没有 layer，
+ * 导致直接写在 <button> 上的 text-xs / font-semibold / text-[var(--...)] /
+ * disabled:cursor-not-allowed 等工具类全部失效（按钮一律退回继承 body 的
+ * 14px / 400 字重 / 全不透明文字色）。
+ *
+ * 原先这里还有 font: inherit 和 color: inherit —— 与 preflight 完全重复
+ * （见 tailwindcss/preflight.css 的 button 规则），已删除。
+ */
+@layer base {
+  button {
+    cursor: pointer;
+  }
 }
 
 /*

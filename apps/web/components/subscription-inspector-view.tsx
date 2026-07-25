@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { ArrowLeftIcon } from "@/components/icons";
-import { Breadcrumb } from "@/components/breadcrumb";
+import { PageNav } from "@/components/page-nav";
 import { usePageTitle } from "@/lib/use-page-title";
 import { PosterImage } from "@/components/poster-image";
 import { useSubscribeEntry } from "@/components/subscribe-entry";
@@ -126,11 +126,11 @@ export function SubscriptionInspectorView({ id }: { id: number }) {
   };
 
   return (
-    <div className="scroll-thin flex-1 overflow-y-auto px-6 pb-12 pt-3">
-      {/* 面包屑：我的订阅 › 片名（向上回列表；后退交给浏览器返回） */}
-      <Breadcrumb
+    <div className="scroll-thin flex-1 overflow-y-auto px-6 pb-12">
+      {/* 顶栏：返回订阅列表 + 吸顶片名（容器已有 px-6，用 -mx-6 让吸顶蒙版铺满） */}
+      <PageNav
         items={[{ label: "我的订阅", href: "/subscriptions" }, { label: detail.media.title }]}
-        className="mb-3"
+        className="-mx-6"
       />
       {/* —— 1. Hero 氛围横幅：模糊海报铺底 + 订阅摘要 —— */}
       <div className="relative overflow-hidden rounded-2xl bg-[#10131b] shadow-[0_24px_70px_-18px_rgba(0,0,0,0.62)] ring-1 ring-white/10">

@@ -14,3 +14,13 @@ export function cachedImageUrl(url: string): string {
   if (!/^https?:\/\//i.test(url)) return url;
   return resolveRequestUrl(`images/proxy?url=${encodeURIComponent(url)}`);
 }
+
+/**
+ * 后端给出的图片地址的通用解析：http(s) 绝对地址走缓存代理；
+ * API 相对路径（本地刮削资产 /images/assets/...、条目美术图 /libraries/...）
+ * 补上 API base 直连后端。图片可能来自两种形态的展示位统一用它。
+ */
+export function imageUrl(url: string | null): string {
+  if (!url) return "";
+  return /^https?:\/\//i.test(url) ? cachedImageUrl(url) : resolveRequestUrl(url);
+}

@@ -311,3 +311,10 @@ export const ShrinkIcon = (p: IconProps) => (
     <path d="M9 15l-6 6" />
   </Base>
 );
+
+export const RefreshIcon = (p: IconProps) => (
+  <Base {...p}>
+    <path d="M21 12a9 9 0 1 1-2.64-6.36" />
+    <path d="M21 3v6h-6" />
+  </Base>
+);

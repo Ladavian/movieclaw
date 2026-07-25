@@ -660,7 +660,17 @@ function DownloaderForm({ downloader, onSubmit, onCancel, onError }: DownloaderF
                     <span className="truncate text-[13px] text-[var(--text-faint)]">movieclaw 上的路径…</span>
                   )}
                 </button>
-                <span className="shrink-0 text-[var(--text-faint)]">→</span>
+                {/* 箭头即按钮：两边路径一致时点一下把左侧复制到右侧，省去手动输入 */}
+                <button
+                  type="button"
+                  onClick={() => setMapping(index, { remote: mapping.local })}
+                  disabled={!mapping.local}
+                  title="将左侧路径复制到右侧（两边路径一致时使用）"
+                  aria-label="将左侧路径复制到右侧"
+                  className="shrink-0 rounded-lg px-1.5 py-1 text-[var(--text-faint)] transition-colors enabled:hover:bg-white/[0.06] enabled:hover:text-[var(--accent)] disabled:cursor-default"
+                >
+                  →
+                </button>
                 <input
                   type="text"
                   value={mapping.remote}
@@ -701,7 +711,7 @@ function DownloaderForm({ downloader, onSubmit, onCancel, onError }: DownloaderF
       </div>
 
       <div className="flex items-center justify-end gap-3 pt-1">
-        <button type="button" onClick={onCancel} className="btn-glass px-3.5 py-2 text-xs font-medium">
+        <button type="button" onClick={onCancel} className="btn-glass px-3.5 py-2 text-[13px] font-medium">
           取消
         </button>
         <button
@@ -710,7 +720,7 @@ function DownloaderForm({ downloader, onSubmit, onCancel, onError }: DownloaderF
           disabled={busy || !canSubmit}
           className="btn-accent rounded-full px-4.5 py-2 text-[13px] font-semibold disabled:opacity-40"
         >
-          {busy ? "保存中…" : "保存并测试连接"}
+          {busy ? "保存中…" : "保存"}
         </button>
       </div>
 

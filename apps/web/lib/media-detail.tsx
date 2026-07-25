@@ -4,7 +4,7 @@ import { useMemo } from "react";
 import { useRouter } from "next/navigation";
 import type { Route } from "next";
 
-import type { BreadcrumbItem } from "@/components/breadcrumb";
+import type { PageNavItem } from "@/components/page-nav";
 import type { MediaItem, MediaSource } from "@/lib/media-types";
 
 /**
@@ -23,19 +23,19 @@ export function getMediaSeed(source: MediaSource, id: string): MediaItem | undef
 }
 
 /**
- * 来路缓存：点开详情时记下「从哪个列表页来」，详情页面包屑据此渲染父级——
+ * 来路缓存：点开详情时记下「从哪个列表页来」，详情页顶栏返回键据此定目标——
  * 从发现页 / 搜索页 / 订阅页点进同一部影片，向上回到的就是来的那个列表
  * （含查询串原样回跳）。硬刷新 / 分享直达时缓存为空，详情页按影片类型
  * 兜底到「发现电影 / 发现剧集」。与 seedCache 同生命周期、同上限策略。
  */
-const originCache = new Map<string, BreadcrumbItem[]>();
+const originCache = new Map<string, PageNavItem[]>();
 
-export function getMediaOrigin(source: MediaSource, id: string): BreadcrumbItem[] | undefined {
+export function getMediaOrigin(source: MediaSource, id: string): PageNavItem[] | undefined {
   return originCache.get(`${source}:${id}`);
 }
 
-/** 由「点开详情时所在的页面」推导来路面包屑；不认识的来路（如详情页内的相似推荐）返回 null。 */
-function originTrailOf(pathname: string, search: string): BreadcrumbItem[] | null {
+/** 由「点开详情时所在的页面」推导来路；不认识的来路（如详情页内的相似推荐）返回 null。 */
+function originTrailOf(pathname: string, search: string): PageNavItem[] | null {
   const here = pathname + search;
   if (pathname === "/discover/movie") return [{ label: "发现电影", href: here }];
   if (pathname === "/discover/tv") return [{ label: "发现剧集", href: here }];

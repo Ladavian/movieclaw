@@ -26,6 +26,9 @@ export interface PosterCardProps {
   rank?: number;
   /** 悬浮层的操作区变体，默认「订阅影片」 */
   action?: PosterCardAction;
+  /** 点击目标覆盖：传入即直接链接到该地址（媒体库「最近添加」行跳
+   *  库内条目详情），缺省走发现页详情（useMediaDetail.open） */
+  href?: Route;
 }
 
 /**
@@ -69,9 +72,12 @@ export interface PosterVisualItem {
   overview?: string;
 }
 
-export function PosterCard({ item, rank, action }: PosterCardProps) {
+export function PosterCard({ item, rank, action, href }: PosterCardProps) {
   // 点击整卡（含 hover 信息层）进入该影片的详情页
   const { open } = useMediaDetail();
+  if (href) {
+    return <PosterCardVisual item={item} rank={rank} action={action} href={href} />;
+  }
   return (
     <PosterCardVisual
       item={item}

@@ -10,7 +10,6 @@ import {
   FolderIcon,
   GlobeIcon,
   PaletteIcon,
-  PuzzleIcon,
   SearchIcon,
   ServerIcon,
   SparkIcon,
@@ -119,11 +118,10 @@ export const settingsSectionGroups: SettingsSectionGroup[] = [
     ],
   },
   {
-    // 组内按资源接入链路排序：站点 → 插件同步 Cookie → 下载器 → 监听入库
+    // 组内按资源接入链路排序：站点（含插件 Cookie 同步）→ 下载器 → 监听入库
     label: "资源与下载",
     items: [
-      { id: "sites", label: "资源站点", description: "PT 站点接入与鉴权", icon: ServerIcon },
-      { id: "extension", label: "浏览器插件", description: "插件安装、Cookie 同步与活动记录", icon: PuzzleIcon },
+      { id: "sites", label: "资源站点", description: "PT 站点接入、鉴权与插件 Cookie 同步", icon: ServerIcon },
       { id: "downloaders", label: "下载器", description: "qBittorrent / Transmission 接入", icon: DownloadIcon },
       { id: "import-watch", label: "监听导入", description: "监听下载目录，完成后自动整理入库", icon: FolderIcon },
     ],

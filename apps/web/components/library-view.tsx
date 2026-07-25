@@ -7,6 +7,7 @@ import Link from "next/link";
 import { createPortal } from "react-dom";
 
 import { DirectoryPicker } from "@/components/directory-picker";
+import { HScroller } from "@/components/h-scroller";
 import { FilmIcon, FolderIcon, MoreIcon, PlusIcon, TvIcon, XIcon } from "@/components/icons";
 import { LibraryOrganizeDialog } from "@/components/library-organize-dialog";
 import { Modal } from "@/components/modal";
@@ -17,11 +18,11 @@ import {
   type LibraryItem,
   type LibraryPayload,
   type MediaLibrary,
-  type ScanProgress,
   createLibrary,
   deleteLibrary,
   listLibraries,
   listLibraryItems,
+  SCAN_PHASE_LABELS,
   setDefaultLibrary,
   startLibraryScan,
   stopLibraryScan,
@@ -29,7 +30,7 @@ import {
 } from "@/lib/api/libraries";
 import type { Subscription } from "@/lib/api/subscriptions";
 import { formatBytes } from "@/lib/format";
-import { cachedImageUrl } from "@/lib/image-proxy";
+import { imageUrl } from "@/lib/image-proxy";
 import type { MediaItem, MediaType } from "@/lib/media-types";
 
 /** 库类型 → 展示名与图标 */
@@ -42,7 +43,9 @@ export const LIBRARY_KIND_META: Record<MediaType, { label: string; Icon: typeof 
  * 库存条目的悬浮操作三分支（库首页「最近添加」行与单库库存墙共用）：
  *   - 在播剧 → 订阅追新（还会有新集，转化价值最高；已订阅时卡片自动显「已订阅」）；
  *   - 完结剧且已播集有缺口 → 补齐缺集（整季没下过的内容不在文件台账里，
- *     「缺失重下」够不着，建订阅是唯一补齐路径；订阅按 E−H 只补缺的集）；
+ *     「缺失重下」够不着，建订阅是唯一补齐路径；订阅按 E−H 只补缺的集）。
+ *     缺口按跨库判定：同一部剧的集分散在多个库时任一库有即算拥有，与订阅
+ *     生成工单的口径一致，否则会出现「提示补齐但订阅一个工单都不生成」；
  *   - 其余（电影 / 完结齐全 / 播出状态未知）→ 静态「已入库」标识，不给死按钮。
  */
 export function libraryCardAction(item: LibraryItem): PosterCardAction {
@@ -65,7 +68,7 @@ export function effectiveLibraryId(
 }
 
 /**
- * 媒体库页（/library）：全部库的 Emby 风格卡片墙。
+ * 媒体库页（/library）：全部库的 Emby 风格卡片横排。
  *
  * 每张卡是一个库：封面用库内作品的海报做「货架」展示（最多 4 张站立海报
  * 带底部倒影，纯前端 CSS 合成、零后端开销），叠库名/类型/统计；
@@ -86,6 +89,9 @@ export function LibraryView() {
   const [editing, setEditing] = useState<MediaLibrary | "new" | null>(null);
   // 整理文件名对话框的目标库；null = 关闭
   const [organizeTarget, setOrganizeTarget] = useState<MediaLibrary | null>(null);
+  // 刚创建的库：卡片区是横滚，新库排在末位，库一多就落在可视区外——
+  // 用户会以为"没建上"。这里记下 id，列表刷新后把它滚进视野并短暂高亮
+  const [highlightId, setHighlightId] = useState<number | null>(null);
 
   const reload = useCallback(() => {
     setFailed(false);
@@ -109,6 +115,10 @@ export function LibraryView() {
 
   // 有库在扫描/整理时轮询刷新，任务完成即看到最新库存与文件名
   const busyAny = (libraries ?? []).some((l) => l.scanning || l.organizing);
+  // 元数据刷新单独一档：它以分钟计，而本页每轮 reload 还要把每个库的条目
+  // 列表拉一遍，用扫描那档 3 秒会打出上百次无谓请求；5 秒足够让进度环和
+  // "到哪部了"看着在动（完整阶段列表在单库页的面板里）
+  const refreshingAny = (libraries ?? []).some((l) => l.metadata_refresh?.refreshing);
   // 有文件写入中暂缓入账（拷贝/下载进行时 watchdog 已发现，等补扫落定）：
   // 中速轮询让「入库中」徽标与随后的库存变化自动呈现；完全空闲时低频兜底
   // ——后台自发的扫描（实时监控/定时对账）页面开着不动也能感知到
@@ -116,10 +126,20 @@ export function LibraryView() {
     (l) => !l.scanning && !l.organizing && (l.last_scan?.deferred ?? 0) > 0,
   );
   useEffect(() => {
-    const interval = busyAny ? 3000 : importingAny ? 10_000 : 30_000;
+    const interval = busyAny ? 3000 : refreshingAny ? 5000 : importingAny ? 10_000 : 30_000;
     const timer = setInterval(reload, interval);
     return () => clearInterval(timer);
-  }, [busyAny, importingAny, reload]);
+  }, [busyAny, refreshingAny, importingAny, reload]);
+
+  // 新建的库进入列表后滚进视野（依赖 libraries：创建到列表刷新之间隔着
+  // 一次请求，元素这时才存在），高亮 2.5 秒后自行褪去
+  useEffect(() => {
+    if (highlightId === null) return;
+    const el = document.querySelector(`[data-library-card="${highlightId}"]`);
+    el?.scrollIntoView({ behavior: "smooth", inline: "center", block: "nearest" });
+    const timer = setTimeout(() => setHighlightId(null), 2500);
+    return () => clearTimeout(timer);
+  }, [highlightId, libraries]);
 
   // 每个非空库一行「最近添加」：按最近入账时间倒序取前 20，复用发现页的
   // 横滚海报行；悬浮动作按条目三分支（追新/补齐/已入库，见 libraryCardAction）
@@ -134,10 +154,19 @@ export function LibraryView() {
           const actions = new Map(
             recent.map((it) => [String(it.tmdb_id), libraryCardAction(it)]),
           );
+          // 已在库的条目点击进**媒体库条目详情**（本地刮削信息 + 片源规格 +
+          // 条目操作），与单库页库存格同一目标，不再跳发现页的 TMDB 详情
+          const hrefs = new Map(
+            recent.map((it) => [
+              String(it.tmdb_id),
+              `/library/${library.id}/item/${it.media_item_id}` as Route,
+            ]),
+          );
           return {
             library,
             items: recent.map(libraryItemToMediaItem),
             actionOf: (m: MediaItem) => actions.get(m.id) ?? ("owned" as const),
+            hrefOf: (m: MediaItem) => hrefs.get(m.id),
           };
         })
         .filter((row) => row.items.length > 0),
@@ -210,26 +239,35 @@ export function LibraryView() {
         </div>
       )}
 
+      {/* 库卡片横排：库多了不换行堆高，改为一行横滚（与下方「最近添加」
+          同一交互），首屏始终保住「库 → 最近添加」的信息层次 */}
       {libraries !== null && !failed && (
-        <div className="mt-6 grid gap-5 px-6 [grid-template-columns:repeat(auto-fill,minmax(230px,280px))]">
+        <HScroller className="mt-6 gap-5 px-6 pb-1 pt-1">
           {libraries.map((library) => (
-            <LibraryCard
+            <div
               key={library.id}
-              library={library}
-              items={itemsByLibrary.get(library.id) ?? []}
-              onEdit={() => setEditing(library)}
-              onOrganize={() => setOrganizeTarget(library)}
-              onRefresh={reload}
-              onError={setError}
-            />
+              data-library-card={library.id}
+              className={`w-[268px] shrink-0 rounded-2xl transition ${
+                highlightId === library.id ? "ring-2 ring-[var(--accent-2)] ring-offset-4 ring-offset-transparent" : ""
+              }`}
+            >
+              <LibraryCard
+                library={library}
+                items={itemsByLibrary.get(library.id) ?? []}
+                onEdit={() => setEditing(library)}
+                onOrganize={() => setOrganizeTarget(library)}
+                onRefresh={reload}
+                onError={setError}
+              />
+            </div>
           ))}
-        </div>
+        </HScroller>
       )}
 
       {/* —— 最近添加：Emby 首页式分区，每个非空库一行横滚海报 —— */}
       {recentRows.length > 0 && (
         <div className="mt-10 space-y-8">
-          {recentRows.map(({ library, items, actionOf }) => (
+          {recentRows.map(({ library, items, actionOf, hrefOf }) => (
             <MediaRow
               key={library.id}
               row={{
@@ -240,6 +278,7 @@ export function LibraryView() {
               moreHref={`/library/${library.id}` as Route}
               moreLabel="查看全部"
               cardAction={actionOf}
+              cardHref={hrefOf}
             />
           ))}
         </div>
@@ -248,8 +287,12 @@ export function LibraryView() {
       <LibraryFormDialog
         state={editing}
         onClose={() => setEditing(null)}
-        onSaved={() => {
+        onSaved={(saved) => {
+          const isNew = editing === "new";
           setEditing(null);
+          // 新库排在末位（按创建顺序），卡片区又是横滚——库多了新卡片直接
+          // 落在可视区外，用户以为"没建上"。滚进视野并短暂高亮
+          if (isNew) setHighlightId(saved.id);
           reload();
         }}
       />
@@ -289,7 +332,9 @@ function libraryItemToMediaItem(item: LibraryItem): MediaItem {
     extent,
     badges: item.resolutions.slice(0, 1),
     overview: "",
-    posterUrl: item.poster_url ? cachedImageUrl(item.poster_url) : "",
+    // 海报可能是本地刮削资产的相对路径（/images/assets/...），也可能是
+    // TMDB 图床绝对地址——统一经 imageUrl 解析（补 API base / 走缓存代理）
+    posterUrl: imageUrl(item.poster_url),
   };
 }
 
@@ -318,10 +363,12 @@ function LibraryCard({
     .filter((u): u is string => Boolean(u))
     .slice(0, 4);
   const { stats } = library;
-  // 写入中暂缓入账的文件数（watchdog 已发现、等拷贝/下载落定后自动补扫入库）；
-  // 扫描/整理进行中时已有各自的徽标，不重复展示
-  const importing =
-    library.scanning || library.organizing ? 0 : (library.last_scan?.deferred ?? 0);
+  // 扫描/整理/元数据刷新进行中：封面归进度环，其余状态徽标一律让位。
+  // 三种长任务在卡片上同一套呈现——用户不该因为"哪种任务"而看不到进度
+  const refreshingMeta = Boolean(library.metadata_refresh?.refreshing);
+  const busy = library.scanning || library.organizing || refreshingMeta;
+  // 写入中暂缓入账的文件数（watchdog 已发现、等拷贝/下载落定后自动补扫入库）
+  const importing = busy ? 0 : (library.last_scan?.deferred ?? 0);
 
   return (
     <div className="group/lib relative">
@@ -332,43 +379,67 @@ function LibraryCard({
       >
         <div className="relative aspect-[21/10] bg-[#0a0c12]">
           <LibraryCover posters={posters} Icon={meta.Icon} />
-          {(library.scanning || library.organizing) && (
-            <div className="absolute inset-0 z-10 flex items-center justify-center bg-black/55 backdrop-blur-[2px]">
+          {/* 状态徽标叠在封面左下的倒影暗区：那块本就没有信息、又足够暗
+              压得住字；标题行因此永远只有库名，长库名不会被徽标挤没。
+              扫描/整理时封面归进度环，徽标让位（否则隔着蒙版透出来像脏渲染） */}
+          {!busy && (importing > 0 || stats.unidentified_count > 0) && (
+            <div className="absolute inset-x-2.5 bottom-2 flex flex-wrap items-center gap-1.5">
+              {importing > 0 && (
+                <span className="flex items-center gap-1.5 rounded-full border border-[#7dd3fc]/35 bg-black/55 px-2 py-0.5 text-[10px] font-semibold text-[#7dd3fc] backdrop-blur-md">
+                  <span className="size-1.5 animate-pulse rounded-full bg-[#7dd3fc]" />
+                  {importing} 个新文件入库中
+                </span>
+              )}
+              {stats.unidentified_count > 0 && (
+                <span className="rounded-full border border-[#f5c451]/35 bg-black/55 px-2 py-0.5 text-[10px] font-semibold text-[#f5c451] backdrop-blur-md">
+                  {stats.unidentified_count} 个待识别
+                </span>
+              )}
+            </div>
+          )}
+          {busy && (
+            <div className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-1 bg-black/55 backdrop-blur-[2px]">
               <ScanProgressRing
-                progress={library.scanning ? library.scan_progress : library.organize_progress}
+                progress={
+                  library.scanning
+                    ? library.scan_progress
+                    : library.organizing
+                      ? library.organize_progress
+                      : library.metadata_refresh
+                }
               />
+              {/* 进度环只有百分比，说不清在干什么，补一行状态词。扫描内部
+                  分阶段（盘点/入账/补图），阶段变了这里必须跟着变——否则
+                  文件扫完后还要下几分钟图片，环停在 100% 配一句"扫描中"，
+                  看起来就是卡死了 */}
+              <span className="text-[11px] font-semibold text-white/85">
+                {library.scanning
+                  ? (SCAN_PHASE_LABELS[library.scan_progress?.phase ?? "ingesting"] ?? "扫描中")
+                  : library.organizing
+                    ? "整理中"
+                    : "刷新元数据"}
+              </span>
+              {/* 刷新是全量重刷、以分钟计，多给一行"到哪部了"（并发若干路
+                  时取第一部即可，完整列表在单库页的面板里） */}
+              {refreshingMeta && library.metadata_refresh?.active?.[0] && (
+                <span className="max-w-[86%] truncate text-[10.5px] text-white/60">
+                  {library.metadata_refresh.active[0].title} ·{" "}
+                  {library.metadata_refresh.active[0].phase}
+                </span>
+              )}
             </div>
           )}
         </div>
       </Link>
 
-      {/* 库名/徽标：Emby 式放在封面下方居中，不再叠在海报上 */}
-      <div className="mt-2.5 px-2">
-        <div className="flex items-center justify-center gap-2">
-          <h3 className="truncate text-[15px] font-semibold text-white">{library.name}</h3>
-          {library.is_default && (
-            <span className="shrink-0 rounded-full border border-white/[0.14] bg-white/[0.1] px-2 py-0.5 text-[10.5px] font-semibold text-white/80">
-              默认
-            </span>
-          )}
-          {(library.scanning || library.organizing) && (
-            <span className="flex shrink-0 items-center gap-1.5 rounded-full border border-white/[0.14] bg-white/[0.06] px-2 py-0.5 text-[10.5px] font-semibold text-white/80">
-              <span className="size-2.5 animate-spin rounded-full border border-white/30 border-t-white/90" />
-              {library.scanning ? "扫描中" : "整理中"}
-            </span>
-          )}
-          {importing > 0 && (
-            <span className="flex shrink-0 items-center gap-1.5 rounded-full border border-[#7dd3fc]/40 bg-[#7dd3fc]/15 px-2 py-0.5 text-[10.5px] font-semibold text-[#7dd3fc]">
-              <span className="size-1.5 animate-pulse rounded-full bg-[#7dd3fc]" />
-              {importing} 个新文件入库中
-            </span>
-          )}
-          {stats.unidentified_count > 0 && (
-            <span className="shrink-0 rounded-full border border-[#f5c451]/40 bg-[#f5c451]/15 px-2 py-0.5 text-[10.5px] font-semibold text-[#f5c451]">
-              {stats.unidentified_count} 个待识别
-            </span>
-          )}
-        </div>
+      {/* 库名：Emby 式放在封面下方居中，只与「默认」共处一行 */}
+      <div className="mt-2.5 flex items-center justify-center gap-2 px-2">
+        <h3 className="truncate text-[15px] font-semibold text-white">{library.name}</h3>
+        {library.is_default && (
+          <span className="shrink-0 rounded-full border border-white/[0.14] bg-white/[0.1] px-2 py-0.5 text-[10.5px] font-semibold text-white/80">
+            默认
+          </span>
+        )}
       </div>
 
       {/* 管理操作：悬停浮现在右上角（Link 外层，避免点菜单触发跳转） */}
@@ -394,7 +465,8 @@ function LibraryCard({
  * 「反光地面」；0 张=类型图标底纹。卡片 21/10 比例，海报占约 2/3。
  */
 /** 扫描进度环：有分母画百分比，刚起步（进度未知）转圈占位。 */
-function ScanProgressRing({ progress }: { progress: ScanProgress | null }) {
+/** 扫描/整理/元数据刷新共用的进度环（三者的进度都是 已处理/总数）。 */
+function ScanProgressRing({ progress }: { progress: { processed: number; total: number } | null }) {
   const pct =
     progress && progress.total > 0
       ? Math.min(100, Math.round((progress.processed / progress.total) * 100))
@@ -440,7 +512,7 @@ function LibraryCover({ posters, Icon }: { posters: string[]; Icon: typeof FilmI
     <div className="absolute inset-0 overflow-hidden">
       {/* 氛围光：首图放大重模糊 + 提饱和，再整体压暗保证前景对比度 */}
       <img
-        src={cachedImageUrl(posters[0])}
+        src={imageUrl(posters[0])}
         alt=""
         loading="lazy"
         referrerPolicy="no-referrer"
@@ -450,7 +522,7 @@ function LibraryCover({ posters, Icon }: { posters: string[]; Icon: typeof FilmI
       {/* 灯箱底光：首图模糊后以 screen 混合从底边向上发光，颜色天然
           取自海报主色；再叠一个中性地面光斑，像射灯打在舞台地面上 */}
       <img
-        src={cachedImageUrl(posters[0])}
+        src={imageUrl(posters[0])}
         alt=""
         aria-hidden
         loading="lazy"
@@ -466,7 +538,7 @@ function LibraryCover({ posters, Icon }: { posters: string[]; Icon: typeof FilmI
             className="w-[22.5%] shrink-0 transition duration-300 group-hover/lib:-translate-y-1"
           >
             <img
-              src={cachedImageUrl(url)}
+              src={imageUrl(url)}
               alt=""
               loading="lazy"
               referrerPolicy="no-referrer"
@@ -476,7 +548,7 @@ function LibraryCover({ posters, Icon }: { posters: string[]; Icon: typeof FilmI
                 坐标系生效、会跟着 scaleY(-1) 一起翻转，所以这里写 to top，
                 翻转后在屏幕上才是「贴近海报处最实、向下淡出」 */}
             <img
-              src={cachedImageUrl(url)}
+              src={imageUrl(url)}
               alt=""
               aria-hidden
               loading="lazy"
@@ -572,9 +644,14 @@ function LibraryCardMenu({
             >
               编辑库
             </button>
+            {/* 重识别与扫描共用库级锁，但它不接受中途停止（后端会拒绝）：
+                入口置灰并如实标出阶段，不给一个按了没反应的按钮 */}
             <button
               type="button"
-              disabled={library.organizing}
+              disabled={
+                library.organizing ||
+                (library.scanning && library.scan_progress?.phase === "reidentifying")
+              }
               onClick={() => {
                 setMenuPos(null);
                 if (library.scanning) {
@@ -585,7 +662,11 @@ function LibraryCardMenu({
               }}
               className="glass-row px-2.5 py-2 text-[13px] font-medium disabled:opacity-40"
             >
-              {library.scanning ? "停止扫描" : "扫描库"}
+              {!library.scanning
+                ? "扫描库"
+                : library.scan_progress?.phase === "reidentifying"
+                  ? "正在重新识别…"
+                  : "停止扫描"}
             </button>
             <button
               type="button"
@@ -640,7 +721,8 @@ export function LibraryFormDialog({
   /** "new"=新增；库对象=编辑；null=关闭 */
   state: MediaLibrary | "new" | null;
   onClose: () => void;
-  onSaved: () => void;
+  /** 保存成功回调，带上服务端返回的库（新建时调用方据此把新卡片滚进视野） */
+  onSaved: (saved: MediaLibrary) => void;
 }) {
   const library = state === "new" ? null : state;
   const [busy, setBusy] = useState(false);

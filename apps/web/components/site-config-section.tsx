@@ -2,13 +2,10 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 
-import type { Route } from "next";
-import Link from "next/link";
-
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 
-import { ChevronRightIcon, MoreIcon, PlusIcon, PuzzleIcon, ServerIcon } from "@/components/icons";
-import { useExtensionInstalled } from "@/lib/extension-install";
+import { MoreIcon, PlusIcon, ServerIcon } from "@/components/icons";
+import { ExtensionCard } from "@/components/extension-settings";
 import { useBackdrop } from "@/lib/backdrop";
 import type { ConfiguredSite, SiteAuthType, SiteStatus } from "@/lib/api/extension";
 import {
@@ -186,9 +183,6 @@ export function SiteConfigSection() {
         </div>
       </div>
 
-      {/* 插件引导：Cookie 站点推荐用 MovieClaw 浏览器插件管理，免手动粘贴 */}
-      <ExtensionPromoBanner />
-
       {/* 「添加站点」面板：从目录里挑选未配置的站点 */}
       {adding && (
         <AddSitePanel
@@ -240,43 +234,10 @@ export function SiteConfigSection() {
           ))
         )}
       </div>
+
+      {/* 浏览器插件：站点 Cookie 同步的配套工具，安装引导与同步令牌都在这张卡片组里 */}
+      <ExtensionCard />
     </div>
-  );
-}
-
-/**
- * 插件引导横幅：整条可点击，跳「设置 → 浏览器插件」分区。
- * 文案随安装检测（useExtensionInstalled）切换——未安装时引导安装，
- * 已安装时提示直接去站点页面同步；检测中不闪烁，先按未安装文案展示。
- */
-function ExtensionPromoBanner() {
-  const { installed } = useExtensionInstalled();
-
-  return (
-    <Link
-      href={"/settings/extension" as Route}
-      className="css-glass group flex items-center gap-3.5 !rounded-xl px-4 py-3.5 transition-colors hover:!bg-[var(--glass-fill-hover)]"
-    >
-      <span className="icon-chip size-9 shrink-0 !rounded-xl">
-        <PuzzleIcon className="size-[18px]" />
-      </span>
-      <span className="min-w-0 flex-1">
-        <span className="block text-[13px] font-semibold text-[var(--text)]">
-          {installed
-            ? "MovieClaw 浏览器插件已安装"
-            : "推荐：用 MovieClaw 浏览器插件管理站点"}
-        </span>
-        <span className="mt-0.5 block truncate text-[11px] text-[var(--text-muted)]">
-          {installed
-            ? "在站点页面点击工具栏图标即可同步登录 Cookie，并随变化自动保持最新。"
-            : "在站点页面一键同步登录 Cookie（含 httpOnly），免手动粘贴、自动保持最新。"}
-        </span>
-      </span>
-      <span className="flex shrink-0 items-center gap-1 text-xs font-medium text-[var(--text-muted)] transition-colors group-hover:text-[var(--text)]">
-        {installed ? "查看插件" : "前往安装"}
-        <ChevronRightIcon className="size-4" />
-      </span>
-    </Link>
   );
 }
 
@@ -719,14 +680,7 @@ function SiteForm({ item, site, busy, onSubmit }: SiteFormProps) {
             {/* Cookie 恰是插件的用武之地：就地提一句，不打断手动粘贴的用户 */}
             {field === "cookie" && (
               <p className="mb-1.5 text-[11px] text-[var(--text-faint)]">
-                手动粘贴的 Cookie 过期后需重填；推荐用
-                <Link
-                  href={"/settings/extension" as Route}
-                  className="mx-0.5 text-[var(--accent)] hover:underline"
-                >
-                  MovieClaw 浏览器插件
-                </Link>
-                自动同步。
+                手动粘贴的 Cookie 过期后需重填；推荐用本页下方的 MovieClaw 浏览器插件自动同步。
               </p>
             )}
             {fm.kind === "textarea" ? (
