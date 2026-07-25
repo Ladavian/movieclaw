@@ -18,7 +18,7 @@ import movieclaw_api.services.library_scan as scan_mod
 import movieclaw_api.services.library_watch as watch_mod
 import movieclaw_api.services.media_discover as discover_mod
 from movieclaw_api.core.config import get_settings
-from movieclaw_api.services.library_nfo import write_entry_nfo
+from movieclaw_api.services.library_nfo import write_entry_nfo, write_full_nfo
 from movieclaw_api.services.library_scan import scan_library
 from movieclaw_api.services.media_probe import MediaSpec
 from movieclaw_api.services.media_server_notify import notify_media_server_refresh
@@ -139,6 +139,31 @@ def test_write_entry_nfo_and_respect_existing(tmp_path) -> None:
     assert nfo.read_text(encoding="utf-8") == "precious"
 
 
+def test_entry_nfo_refuses_kind_conflicting_dir(tmp_path) -> None:
+    """目录里已有 tvshow.nfo 时，绝不再写 movie.nfo（反之亦然）。
+
+    这是身份判错的强信号（TMDB 的 movie/tv 是两套独立 id 空间，库类型选错
+    时同一个数字在另一侧照样能取到条目），而写错的 NFO 会被下次识别当权威
+    读回、自我固化——宁可不写。
+    """
+    item = MediaItem(
+        kind="movie",
+        tmdb_id=61746,
+        imdb_id=None,
+        title="毫不相干的电影",
+        original_title="Unrelated Movie",
+        year=2006,
+        aliases=[],
+    )
+    entry = tmp_path / "某剧 (2014)"
+    entry.mkdir()
+    (entry / "tvshow.nfo").write_text("<tvshow><tmdbid>61746</tmdbid></tvshow>", encoding="utf-8")
+
+    write_entry_nfo(entry, item)
+    write_full_nfo(entry, item, None)
+    assert not (entry / "movie.nfo").exists()
+
+
 # ---------------------------------------------------------------------------
 # 媒体服务器通知
 # ---------------------------------------------------------------------------
@@ -170,16 +195,17 @@ async def test_media_server_notify(monkeypatch) -> None:
     monkeypatch.setenv("MEDIA_SERVER_URL", "http://emby:8096/")
     monkeypatch.setenv("MEDIA_SERVER_TOKEN", "tok123")
     get_settings.cache_clear()
+    # 实现走统一出口层（transport=egress_transport(...)），假客户端收下即弃
     monkeypatch.setattr(
         "movieclaw_api.services.media_server_notify.httpx.AsyncClient",
-        lambda timeout: _FakeClient(ok=True),
+        lambda timeout, transport=None: _FakeClient(ok=True),
     )
     assert await notify_media_server_refresh() is True
     assert calls[-1] == ("http://emby:8096/Library/Refresh", "tok123")
 
     monkeypatch.setattr(
         "movieclaw_api.services.media_server_notify.httpx.AsyncClient",
-        lambda timeout: _FakeClient(ok=False),
+        lambda timeout, transport=None: _FakeClient(ok=False),
     )
     assert await notify_media_server_refresh() is False  # 失败不抛
     get_settings.cache_clear()

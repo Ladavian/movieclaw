@@ -9,7 +9,9 @@ from movieclaw_api.core.config import get_settings
 from movieclaw_api.schemas.library import derive_air_status
 from movieclaw_db.engine import dispose_db, get_database, init_db
 from movieclaw_db.migrations import run_migrations
-from movieclaw_db.models import FileSource, LibraryFile, MediaItem, MediaSeason, utcnow
+from datetime import date
+
+from movieclaw_db.models import FileSource, LibraryFile, MediaEpisode, MediaItem, utcnow
 from movieclaw_db.repositories.library_repo import LibraryRepository
 
 
@@ -24,16 +26,18 @@ async def db(tmp_path, monkeypatch):
     get_settings.cache_clear()
 
 
-def _season(item_id: int, number: int, air_dates: list[str | None]) -> MediaSeason:
-    """构造一季：按顺序给每集编号 1..N，air_date 逐集指定（None=未定档）。"""
-    return MediaSeason(
-        media_item_id=item_id,
-        season_number=number,
-        episodes=[
-            {"episode_number": i + 1, "name": "", "air_date": d}
-            for i, d in enumerate(air_dates)
-        ],
-    )
+def _season(item_id: int, number: int, air_dates: list[str | None]) -> list[MediaEpisode]:
+    """构造一季的集数据（media_episode 行）：按顺序编号 1..N，
+    air_date 逐集指定（None=未定档）。"""
+    return [
+        MediaEpisode(
+            media_item_id=item_id,
+            season_number=number,
+            episode_number=i + 1,
+            air_date=date.fromisoformat(d) if d else None,
+        )
+        for i, d in enumerate(air_dates)
+    ]
 
 
 def _file(
@@ -44,7 +48,7 @@ def _file(
         media_item_id=item_id,
         season_number=season,
         episode_number=episode,
-        file_path=f"/tv/{item_id}/S{season:02d}E{episode:02d}.mkv",
+        file_path=f"/tv{library_id}/{item_id}/S{season:02d}E{episode:02d}.mkv",
         size_bytes=1,
         source=FileSource.SCANNED,
         missing_since=utcnow() if missing else None,
@@ -73,17 +77,17 @@ async def test_items_air_status_and_missing_episodes(db) -> None:
         session.add_all(
             [
                 # 在播剧：S1 已播 3 集，库里在位 2 集
-                _season(airing.id, 1, ["2020-01-01", "2020-01-08", "2020-01-15"]),
+                *_season(airing.id, 1, ["2020-01-01", "2020-01-08", "2020-01-15"]),
                 _file(library.id, airing.id, 1, 1),
                 _file(library.id, airing.id, 1, 2),
                 # 完结缺集剧：S1 已播 2 集 + 1 集未定档；在位 1 集，另 1 集文件缺失
                 # （missing 不算拥有）→ 缺 1 集。特别季 0 有已播集但不参与统计。
-                _season(ended_gap.id, 1, ["2020-01-01", "2020-01-08", None]),
-                _season(ended_gap.id, 0, ["2020-06-01"]),
+                *_season(ended_gap.id, 1, ["2020-01-01", "2020-01-08", None]),
+                *_season(ended_gap.id, 0, ["2020-06-01"]),
                 _file(library.id, ended_gap.id, 1, 1),
                 _file(library.id, ended_gap.id, 1, 2, missing=True),
                 # 完结齐全剧：S1 已播 2 集全在位
-                _season(ended_full.id, 1, ["2020-01-01", "2020-01-08"]),
+                *_season(ended_full.id, 1, ["2020-01-01", "2020-01-08"]),
                 _file(library.id, ended_full.id, 1, 1),
                 _file(library.id, ended_full.id, 1, 2),
             ]
@@ -101,6 +105,42 @@ async def test_items_air_status_and_missing_episodes(db) -> None:
 
         assert rows[ended_full.id].air_status == "ended"
         assert rows[ended_full.id].missing_episode_count == 0
+
+
+async def test_items_missing_episodes_counts_across_libraries(db) -> None:
+    """缺集按跨库统计：同一部剧的集分散在两个库时，任一库在位即算拥有。
+
+    口径必须与订阅生成工单的 E−H 一致（subscription._owned_units 不按库过滤），
+    否则会出现「海报卡提示补齐缺集，订阅弹窗却说整季已在库、且一个工单都不生成」。
+    """
+    async with db.session() as session:
+        repo = LibraryRepository(session)
+        main = await repo.create(name="剧集库", kind="tv", root_paths=["/tv"])
+        other = await repo.create(name="大陆剧集", kind="tv", root_paths=["/media/tv"])
+        item = MediaItem(kind="tv", tmdb_id=501, title="双库剧", original_title="D", status="Ended")
+        session.add(item)
+        await session.flush()
+        assert main.id and other.id and item.id
+
+        session.add_all(
+            [
+                # S1 已播 3 集：主库只有第 1 集，另外 2 集在「大陆剧集」库里
+                *_season(item.id, 1, ["2020-01-01", "2020-01-08", "2020-01-15"]),
+                _file(main.id, item.id, 1, 1),
+                _file(other.id, item.id, 1, 2),
+                _file(other.id, item.id, 1, 3),
+            ]
+        )
+        await session.flush()
+
+        resp = await list_library_items(main.id, session)
+        row = {r.media_item_id: r for r in resp.data}[item.id]
+
+        # 本库库存仍按本库口径展示（海报墙显示的是这个库里有什么）
+        assert row.file_count == 1
+        assert row.episode_count == 1
+        # 但「补齐缺集」的依据是跨库的：全 3 集都已拥有，不该再提示补齐
+        assert row.missing_episode_count == 0
 
 
 async def test_items_movie_and_unknown_status(db) -> None:
@@ -128,7 +168,7 @@ async def test_items_movie_and_unknown_status(db) -> None:
                     size_bytes=1,
                     source=FileSource.SCANNED,
                 ),
-                _season(unknown.id, 1, ["2020-01-01"]),
+                *_season(unknown.id, 1, ["2020-01-01"]),
                 _file(library.id, unknown.id, 1, 1),
             ]
         )

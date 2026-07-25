@@ -87,15 +87,12 @@ class MediaItem(TimestampMixin, table=True):
 
 
 class MediaSeason(TimestampMixin, table=True):
-    """剧集条目的季——按季订阅的骨架（仅 kind=tv 的条目有行）。
+    """剧集条目的季——按季订阅的骨架 + 季级展示信息（仅 kind=tv 的条目有行）。
 
-    集不单独建表：``wanted_item`` 用 (season_number, episode_number) 数字引用
-    而非外键，单剧只有几百集，所有查询入口都是"某订阅的某几季"，逐季读
-    ``episodes`` JSON 足够（决策与代价见 docs/design/subscription.md 1.6）。
-
-    ``episodes`` 元素形如 ``{"episode_number": 1, "name": "...", "air_date": "2026-01-05"}``，
-    air_date 为 ISO 日期字符串或 null（未定档）。每集播出日期是 wanted 生成
-    （补缺失=已播集、只追未来=订阅后播出的集）与新集追加的判断依据。
+    集数据在 ``media_episode`` 表（docs/design/metadata.md 第 1 节决策）：
+    单集简介可达数百字，几百集的剧塞进一行 JSON 会膨胀到 MB 级，按集
+    upsert / 按季查询都需要真正的行。``wanted_item`` / ``library_file`` 对集的
+    引用仍是 (season_number, episode_number) 数字对，不设外键（约定不变）。
     """
 
     __tablename__ = "media_season"
@@ -122,8 +119,8 @@ class MediaSeason(TimestampMixin, table=True):
     name: str = Field(default="", description="季名；语义空值为空串")
     air_date: date | None = Field(default=None, description="该季首播日期；NULL=未定档/未知")
     episode_count: int | None = Field(default=None, description="TMDB 宣称的集数；NULL=未知")
-    episodes: list = Field(
-        default_factory=list,
-        sa_column=Column(JSON, nullable=False),
-        description="集列表 JSON：[{episode_number, name, air_date}]；空列表=暂无集数据",
-    )
+
+    # -- 季级展示（docs/design/metadata.md 2.3）-----------------------------
+    overview: str | None = Field(default=None, description="季简介；NULL=TMDB 也没有")
+    poster_path: str | None = Field(default=None, description="季海报 TMDB 相对路径")
+    poster_file: str | None = Field(default=None, description="本地季海报资产相对路径")

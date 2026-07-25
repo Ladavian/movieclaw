@@ -45,6 +45,25 @@ class Settings(BaseSettings):
     media_dir: str = Field(default="./data/uploads", alias="MEDIA_DIR")
 
     # ------------------------------------------------------------------
+    # 刮削元数据资产（自足媒体库，docs/design/metadata.md 第 6 节）
+    # ------------------------------------------------------------------
+    # 刮削管线下载的海报/剧照等图片资产目录（事实源，前端经 /images/assets
+    # 直读）。与 SQLite 同在 data/ 下，Docker 挂载 data 一个卷即可整体持久化。
+    metadata_dir: str = Field(default="./data/metadata", alias="METADATA_DIR")
+    # 图片资产的 TMDB 尺寸档位（画质 ↔ 磁盘的取舍，自足媒体库偏画质）：
+    # - 背景做全屏沉浸底图，是最显眼的一张，w1280 在 2K/4K 屏上是放大糊图，
+    #   故取 original（典型 1~3MB/张）；
+    # - 海报详情页 186px、墙 148px，2 倍屏下 w780 足够锐利（典型 200~400KB）；
+    # - 分集剧照是小卡片且一部剧动辄几百集，保持 w300（典型 20~40KB）。
+    # 磁盘吃紧可整体调低（如 w500/w1280/w185）；改动后**整库刷新会自动
+    # 按新档位重下**存量图片（见 media_scrape 的 asset_profile 机制）。
+    # 合法档位见 TMDB configuration 接口：海报 w92~w780/original，
+    # 背景 w300/w780/w1280/original，剧照 w92/w185/w300/original。
+    tmdb_poster_size: str = Field(default="w780", alias="TMDB_POSTER_SIZE")
+    tmdb_backdrop_size: str = Field(default="original", alias="TMDB_BACKDROP_SIZE")
+    tmdb_still_size: str = Field(default="w300", alias="TMDB_STILL_SIZE")
+
+    # ------------------------------------------------------------------
     # 入库后通知媒体服务器刷新（可选，媒体库 L4）
     # ------------------------------------------------------------------
     # 配置后，每次整理入库成功会通知 Emby/Jellyfin 刷新媒体库，新内容即刻

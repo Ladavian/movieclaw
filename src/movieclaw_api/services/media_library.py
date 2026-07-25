@@ -14,7 +14,7 @@ from collections.abc import Sequence
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from movieclaw_db.models import MediaItem, MediaSeason, utcnow
+from movieclaw_db.models import MediaEpisode, MediaItem, MediaMetadata, MediaSeason, utcnow
 from movieclaw_db.repositories import MediaItemRepository
 from movieclaw_media.library import (
     DoubanResolution,
@@ -51,16 +51,19 @@ class MediaLibraryService:
 
         - 已存在：不重复请求 TMDB（元数据保鲜是刷新任务的职责），只回填
           调用方带来的新信息（douban_id、入口标题等别名）；
-        - 不存在：一次拉齐 TMDB 身份信息落库，剧集连同全部季与集列表。
+        - 不存在：一次拉齐 TMDB 档案落库——身份信息（media_item + 季集）
+          与展示元数据（media_metadata / media_episode）同一事务写入，
+          这就是"一次入库刮削"的文本部分（图片资产由 ensure_assets 补齐，
+          docs/design/metadata.md 4.1）。
         """
         existing = await self._repo.get_by_anchor(kind.value, tmdb_id)
         if existing is not None:
             return await self._backfill(existing, douban_id, extra_aliases)
 
         profile = await fetch_media_profile(self._client, kind, tmdb_id, language=self._language)
-        item, seasons = self._to_rows(profile, douban_id, extra_aliases)
+        item, seasons, episodes, metadata = self._to_rows(profile, douban_id, extra_aliases)
         try:
-            item = await self._repo.create_with_seasons(item, seasons)
+            item = await self._repo.create_with_seasons(item, seasons, episodes, metadata)
         except IntegrityError:
             # 并发建档撞唯一锚：让出胜者，读回对方落库的条目
             await self._repo.rollback()
@@ -143,8 +146,10 @@ class MediaLibraryService:
         profile: MediaProfile,
         douban_id: str | None,
         extra_aliases: Sequence[str],
-    ) -> tuple[MediaItem, list[MediaSeason]]:
-        """传输模型 → ORM 行。入口带来的别名（如豆瓣标题）合并进别名集合。"""
+    ) -> tuple[MediaItem, list[MediaSeason], list[MediaEpisode], MediaMetadata]:
+        """传输模型 → ORM 行（身份 + 展示层）。入口带来的别名合并进别名集合。"""
+        from movieclaw_api.services.media_scrape import build_display_rows
+
         aliases = list(profile.aliases)
         merged = self._merge_aliases(aliases, extra_aliases)
         if merged is not None:
@@ -165,15 +170,5 @@ class MediaLibraryService:
             # NULL=立即到期：刷新任务首个 tick 会处理并按 status 分档重排
             next_refresh_at=None,
         )
-        seasons = [
-            MediaSeason(
-                media_item_id=0,  # 落库时由 Repository 用真实 item.id 覆盖
-                season_number=s.season_number,
-                name=s.name,
-                air_date=s.air_date,
-                episode_count=s.episode_count,
-                episodes=[e.model_dump() for e in s.episodes],
-            )
-            for s in profile.seasons
-        ]
-        return item, seasons
+        seasons, episodes, metadata = build_display_rows(profile, self._language)
+        return item, seasons, episodes, metadata

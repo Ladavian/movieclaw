@@ -6,7 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
 
 from movieclaw_db.models.base import utcnow
-from movieclaw_db.models.library_file import LibraryFile
+from movieclaw_db.models.library_file import IdentitySource, LibraryFile
 
 
 class LibraryFileRepository:
@@ -35,8 +35,27 @@ class LibraryFileRepository:
         return list(result.scalars().all())
 
     async def list_unidentified(self, *, library_id: int | None = None) -> list[LibraryFile]:
-        """待识别清单：落了账但没挂上身份锚的文件。"""
-        stmt = select(LibraryFile).where(LibraryFile.media_item_id.is_(None))  # type: ignore[union-attr]
+        """待识别清单：落了账、没挂上身份锚、且用户没忽略过的文件。"""
+        stmt = select(LibraryFile).where(
+            LibraryFile.media_item_id.is_(None),  # type: ignore[union-attr]
+            LibraryFile.ignored_at.is_(None),  # type: ignore[union-attr]
+        )
+        if library_id is not None:
+            stmt = stmt.where(LibraryFile.library_id == library_id)
+        result = await self._session.execute(stmt.order_by(LibraryFile.file_path))
+        return list(result.scalars().all())
+
+    async def list_review(self, *, library_id: int | None = None) -> list[LibraryFile]:
+        """身份复核清单：识别器升级后新旧结论不一致、等用户拍板的行。"""
+        stmt = select(LibraryFile).where(LibraryFile.review_suggestion.is_not(None))  # type: ignore[union-attr]
+        if library_id is not None:
+            stmt = stmt.where(LibraryFile.library_id == library_id)
+        result = await self._session.execute(stmt.order_by(LibraryFile.file_path))
+        return list(result.scalars().all())
+
+    async def list_ignored(self, *, library_id: int | None = None) -> list[LibraryFile]:
+        """已忽略清单：用户说过"别再问"的文件（可一键恢复重新参与识别）。"""
+        stmt = select(LibraryFile).where(LibraryFile.ignored_at.is_not(None))  # type: ignore[union-attr]
         if library_id is not None:
             stmt = stmt.where(LibraryFile.library_id == library_id)
         result = await self._session.execute(stmt.order_by(LibraryFile.file_path))
@@ -89,12 +108,19 @@ class LibraryFileRepository:
         existing.bit_depth = row.bit_depth
         existing.duration_seconds = row.duration_seconds
         existing.bit_rate = row.bit_rate
+        existing.audio_streams = row.audio_streams
+        existing.subtitle_streams = row.subtitle_streams
         existing.media_source = row.media_source
         existing.release_group = row.release_group
         existing.source = row.source
         existing.site_id = row.site_id
         existing.torrent_id = row.torrent_id
         existing.unidentified_reason = row.unidentified_reason
+        existing.unidentified_code = row.unidentified_code
+        existing.unidentified_candidates = row.unidentified_candidates
+        existing.identity_source = row.identity_source
+        existing.resolved_version = row.resolved_version
+        existing.review_suggestion = row.review_suggestion
         existing.missing_since = None  # 再次发现即在位
         existing.updated_at = utcnow()
         await self._session.commit()
@@ -113,16 +139,31 @@ class LibraryFileRepository:
         await self._session.commit()
 
     async def claim_identity(
-        self, file_id: int, *, media_item_id: int, season_number: int, episode_number: int
+        self,
+        file_id: int,
+        *,
+        media_item_id: int,
+        season_number: int,
+        episode_number: int,
+        resolved_version: int | None = None,
     ) -> LibraryFile | None:
-        """人工认领：给未识别文件挂上身份锚。不存在返回 None。"""
+        """人工认领：给未识别文件挂上身份锚。不存在返回 None。
+
+        认领即人工拍板，``identity_source`` 记为 manual——身份对账机制永不
+        自动翻案人工结论。``resolved_version`` 由调用方传当前识别器版本。
+        """
         row = await self._session.get(LibraryFile, file_id)
         if row is None:
             return None
         row.media_item_id = media_item_id
         row.season_number = season_number
         row.episode_number = episode_number
-        row.unidentified_reason = None  # 已有身份，失败原因随之失义
+        row.unidentified_reason = None  # 已有身份，失败原因/分类/候选随之失义
+        row.unidentified_code = None
+        row.unidentified_candidates = None
+        row.identity_source = IdentitySource.MANUAL
+        row.resolved_version = resolved_version
+        row.review_suggestion = None
         row.updated_at = utcnow()
         await self._session.commit()
         await self._session.refresh(row)
@@ -137,11 +178,44 @@ class LibraryFileRepository:
         row.updated_at = utcnow()
         await self._session.commit()
 
-    async def delete(self, file_id: int) -> bool:
-        """删除一条台账（仅供待识别清单的"忽略此文件"，不动磁盘）。"""
-        row = await self._session.get(LibraryFile, file_id)
-        if row is None:
-            return False
-        await self._session.delete(row)
+    async def mark_ignored(self, file_ids: list[int]) -> int:
+        """待识别清单的「忽略」：打标记而非删行，返回实际标记的条数。
+
+        **不能删行**——扫描器判定"新文件"的唯一依据就是台账里有没有这条
+        路径，删了下轮扫描就当新文件重走识别链，认不出照样回清单（对活跃
+        的库连几分钟都撑不住）。打标记后扫描直接秒过，且行还在、可恢复。
+        """
+        marked = 0
+        now = utcnow()
+        for file_id in file_ids:
+            row = await self._session.get(LibraryFile, file_id)
+            if row is None or row.ignored_at is not None:
+                continue
+            row.ignored_at = now
+            row.updated_at = now
+            marked += 1
         await self._session.commit()
-        return True
+        return marked
+
+    async def restore_ignored(self, file_ids: list[int]) -> int:
+        """恢复已忽略的文件：清标记，重新参与识别与待识别清单。"""
+        restored = 0
+        now = utcnow()
+        for file_id in file_ids:
+            row = await self._session.get(LibraryFile, file_id)
+            if row is None or row.ignored_at is None:
+                continue
+            row.ignored_at = None
+            row.updated_at = now
+            restored += 1
+        await self._session.commit()
+        return restored
+
+    async def clear_missing_flag(self, file_id: int) -> None:
+        """清除 missing 标记（已忽略的文件回归时用：忽略状态原样保留）。"""
+        row = await self._session.get(LibraryFile, file_id)
+        if row is None or row.missing_since is None:
+            return
+        row.missing_since = None
+        row.updated_at = utcnow()
+        await self._session.commit()

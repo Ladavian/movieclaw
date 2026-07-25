@@ -39,6 +39,8 @@ _FAKE_SPEC = SimpleNamespace(
     bit_depth=10,
     duration_seconds=3600,
     bit_rate=None,
+    audio_streams=[],
+    subtitle_streams=[],
 )
 
 

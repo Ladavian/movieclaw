@@ -250,11 +250,13 @@ def test_every_route_denies_anonymous_access(client: TestClient) -> None:
             .replace("{subscription_id}", "1")
             .replace("{rule_set_id}", "1")
             .replace("{library_id}", "1")
+            .replace("{media_item_id}", "1")
             .replace("{rule_id}", "1")
             .replace("{file_id}", "1")
             .replace("{run_id}", "test-run")
             .replace("{session_id}", "test-session")
             .replace("{day}", "2026-01-01")
+            .replace("{path}", "1/poster.jpg")
         )
         assert "{" not in url, f"守护测试不认识路径参数，请补充哑值：{path}"
         for method in methods:

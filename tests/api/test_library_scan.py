@@ -8,8 +8,11 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import httpx
 import pytest_asyncio
+from fastapi import BackgroundTasks
 from sqlmodel import select
 
 import movieclaw_api.services.library_scan as scan_mod
@@ -20,7 +23,8 @@ from movieclaw_api.services.media_library import MediaLibraryService
 from movieclaw_api.services.subscription import SubscriptionService
 from movieclaw_db.engine import dispose_db, get_database, init_db
 from movieclaw_db.migrations import run_migrations
-from movieclaw_db.models import LibraryFile, WantedItem
+from movieclaw_db.models import LibraryFile, MediaItem, WantedItem
+from movieclaw_db.models.library_file import IdentitySource, UnidentifiedCode
 from movieclaw_db.repositories.library_repo import LibraryRepository
 from movieclaw_media.models import MediaKind
 from movieclaw_media.tmdb import TmdbClient
@@ -47,6 +51,60 @@ _ROUTES = {
             {"episode_number": 2, "name": "E2", "air_date": "2024-01-08"},
             {"episode_number": 3, "name": "E3", "air_date": "2024-01-15"},
         ],
+    },
+    "/3/tv/201": {
+        "id": 201,
+        "name": "另一部剧",
+        "original_name": "Another Show",
+        "first_air_date": "2024-06-01",
+        "status": "Returning Series",
+        "external_ids": {},
+        "alternative_titles": {"results": []},
+        "translations": {"translations": []},
+        "seasons": [{"season_number": 1}],
+    },
+    "/3/tv/201/season/1": {
+        "name": "第 1 季",
+        "air_date": "2024-06-01",
+        "episodes": [
+            {"episode_number": 1, "name": "E1", "air_date": "2024-06-01"},
+            {"episode_number": 2, "name": "E2", "air_date": "2024-06-08"},
+        ],
+    },
+    # 标记打错数字时会拉到的无关条目：与本地证据标题年份双双不符
+    "/3/tv/999": {
+        "id": 999,
+        "name": "毫不相干的老剧",
+        "original_name": "Totally Unrelated",
+        "first_air_date": "1901-01-01",
+        "status": "Ended",
+        "external_ids": {},
+        "alternative_titles": {"results": []},
+        "translations": {"translations": []},
+        "seasons": [],
+    },
+    # 库类型选错时会拉到的无关电影（tv/81356 是剧集，movie/81356 是这部
+    # 1938 年的德国老片）——类型冲突拦截生效的话它永远不该被请求
+    "/3/movie/81356": {
+        "id": 81356,
+        "title": "13 Stühle",
+        "original_title": "13 Stühle",
+        "release_date": "1938-01-01",
+        "status": "Released",
+        "external_ids": {},
+        "alternative_titles": {"titles": []},
+        "translations": {"translations": []},
+    },
+    # 同一个数字在电影侧的另一部作品：脏 movie.nfo 被误采信时会拉到它
+    "/3/movie/200": {
+        "id": 200,
+        "title": "毫不相干的电影",
+        "original_title": "Unrelated Movie",
+        "release_date": "2006-01-05",
+        "status": "Released",
+        "external_ids": {},
+        "alternative_titles": {"titles": []},
+        "translations": {"translations": []},
     },
     "/3/movie/300": {
         "id": 300,
@@ -140,9 +198,10 @@ async def test_scan_identifies_by_name_and_flags_unknown(db, tmp_path) -> None:
         unknown = [f for f in files if f.media_item_id is None]
         assert len(unknown) == 1 and unknown[0].file_path.endswith("zzqx.mkv")
 
-    # 增量重扫：全部已知，秒过
+    # 增量重扫：已识别的秒过；待识别的自动重试识别（TMDB 恢复的补救通道）
     summary2 = await scan_library(library.id)
-    assert summary2.scanned == 0 and summary2.skipped_known == 3
+    assert summary2.scanned == 0 and summary2.skipped_known == 2
+    assert summary2.retried == 1 and summary2.unidentified == 1
 
 
 async def test_scan_prefers_nfo_identity(db, tmp_path) -> None:
@@ -166,6 +225,281 @@ async def test_scan_prefers_nfo_identity(db, tmp_path) -> None:
         row = (await session.execute(select(LibraryFile))).scalars().one()
         assert row.media_item_id is not None
         assert (row.season_number, row.episode_number) == (0, 0)
+
+
+async def test_tv_files_in_movie_library_refuse_to_identify(db, tmp_path) -> None:
+    """事故回归：剧集文件落在**电影库**里，绝不能按电影建档。
+
+    TMDB 的 movie 与 tv 是两套独立 id 空间——tv/81356 是《性爱自修室》，
+    movie/81356 是 1938 年的德国片《13 Stühle》。库类型选错时，一个完全
+    正确的 [tmdbid=81356] 标记会被按电影拉档并"成功"，整部剧静默挂到一部
+    毫不相干的老电影上（实测事故：整个库 26 部剧全军覆没）。识别不出来能
+    进待识别清单被看见，识别成另一部作品则完全静默——必须在建档前拦下。
+    """
+    root = tmp_path / "media" / "movies"
+    show = root / "性爱自修室 (2019) [tmdbid=81356]" / "Season 3"
+    show.mkdir(parents=True)
+    (show / "性爱自修室 S03E01 - 1080p x265 10bit.mkv").write_bytes(b"e1")
+    async with db.session() as session:
+        library = await LibraryRepository(session).create(
+            name="欧美剧", kind="movie", root_paths=[str(root)]
+        )
+
+    summary = await scan_library(library.id)
+    assert summary.identified == 0
+    assert summary.unidentified == 1 and summary.kind_mismatched == 1
+
+    async with db.session() as session:
+        row = (await session.execute(select(LibraryFile))).scalars().one()
+        assert row.media_item_id is None  # 建档没有发生
+        assert row.unidentified_code == UnidentifiedCode.KIND_MISMATCH
+        # movie/81356 那部无关老片压根不该被建出来
+        assert (await session.execute(select(MediaItem))).scalars().all() == []
+
+
+async def test_nfo_root_tag_conflicting_with_library_kind(db, tmp_path) -> None:
+    """NFO 根元素是刮削器写下的明确类型声明：<tvshow> 出现在电影库里，
+    哪怕文件名毫无季集号，也判类型冲突（放错库了）。"""
+    root = tmp_path / "media" / "movies"
+    folder = root / "乱七八糟的目录名"
+    folder.mkdir(parents=True)
+    (folder / "abcxyz.mkv").write_bytes(b"movie")
+    (folder / "tvshow.nfo").write_text(
+        "<tvshow><title>某剧</title><tmdbid>300</tmdbid></tvshow>", encoding="utf-8"
+    )
+    async with db.session() as session:
+        library = await LibraryRepository(session).create(
+            name="电影库", kind="movie", root_paths=[str(root)]
+        )
+
+    summary = await scan_library(library.id)
+    assert summary.identified == 0 and summary.kind_mismatched == 1
+    async with db.session() as session:
+        row = (await session.execute(select(LibraryFile))).scalars().one()
+        assert row.unidentified_code == UnidentifiedCode.KIND_MISMATCH
+
+
+async def test_same_dir_dual_nfo_prefers_library_kind(db, tmp_path) -> None:
+    """同一目录里 tvshow.nfo 与 movie.nfo 并存时，取与本库类型一致的那份。
+
+    实测事故：一次库类型选错的扫描往 27 个剧集目录写进了 movie.nfo，库改回
+    剧集后 movie.nfo 排在查找顺序前面，444 个文件全被自己写的 NFO 判成
+    "放错库了"。两份类型声明自相矛盾，按固定顺序取谁都是瞎猜；按库类型取
+    至少不会凭空把整库判死，而**只有一份声明时的冲突检测照常成立**
+    （见 test_nfo_root_tag_conflicting_with_library_kind）。
+    """
+    root = tmp_path / "media" / "tv"
+    entry = root / "测试剧集 (2024)"
+    season = entry / "Season 01"
+    season.mkdir(parents=True)
+    (season / "测试剧集.S01E01.1080p.mkv").write_bytes(b"e1")
+    (entry / "tvshow.nfo").write_text(
+        "<tvshow><title>测试剧集</title><tmdbid>200</tmdbid></tvshow>", encoding="utf-8"
+    )
+    # 历史遗留的脏 NFO：库类型曾被选成「电影」，扫描把电影身份写回了磁盘
+    (entry / "movie.nfo").write_text(
+        "<movie><title>毫不相干的电影</title><tmdbid>200</tmdbid></movie>", encoding="utf-8"
+    )
+    async with db.session() as session:
+        library = await LibraryRepository(session).create(
+            name="欧美剧", kind="tv", root_paths=[str(root)]
+        )
+
+    summary = await scan_library(library.id)
+    assert summary.identified == 1 and summary.kind_mismatched == 0
+
+    async with db.session() as session:
+        row = (await session.execute(select(LibraryFile))).scalars().one()
+        assert row.media_item_id is not None
+        item = await session.get(MediaItem, row.media_item_id)
+        assert (item.kind, item.tmdb_id) == (MediaKind.TV.value, 200)
+
+
+async def test_pinned_id_contradicted_by_local_evidence_falls_back(db, tmp_path) -> None:
+    """标记里的数字打错了：tmdbid=999 拉到的是 1901 年的《毫不相干的老剧》，
+    与本地《测试剧集》(2024) 标题年份双双不符 → 不采信声明，降级走名称
+    解析（它要过完整证据验证，此刻比一个对不上号的数字更可信）。"""
+    root = tmp_path / "media" / "tv"
+    show = root / "测试剧集 (2024)" / "Season 01"
+    show.mkdir(parents=True)
+    (show / "测试剧集.S01E01 [tmdbid=999].mkv").write_bytes(b"e1")
+    async with db.session() as session:
+        library = await LibraryRepository(session).create(
+            name="剧集库", kind="tv", root_paths=[str(root)]
+        )
+
+    summary = await scan_library(library.id)
+    assert summary.identified == 1
+
+    async with db.session() as session:
+        row = (await session.execute(select(LibraryFile))).scalars().one()
+        item = await session.get(MediaItem, row.media_item_id)
+        assert item is not None and item.tmdb_id == 200  # 名称解析的结论胜出
+        assert row.identity_source == IdentitySource.RESOLVED
+
+
+async def test_pinned_id_survives_title_mismatch_when_year_agrees(db, tmp_path) -> None:
+    """不误伤：手写 tmdbid 标记的**主要用途**就是"机器认不出来时我告诉你"
+    ——拼音名/意译名目录的标题必然对不上 TMDB。只要年份吻合就照样采信，
+    绝不能因为标题不同就推翻用户的显式声明。"""
+    root = tmp_path / "media" / "tv"
+    show = root / "Qiang Qiang Shi Yi (2024)" / "Season 01"
+    show.mkdir(parents=True)
+    (show / "QQSY.S01E01 [tmdbid=201].mkv").write_bytes(b"e1")
+    async with db.session() as session:
+        library = await LibraryRepository(session).create(
+            name="剧集库", kind="tv", root_paths=[str(root)]
+        )
+
+    await scan_library(library.id)
+    async with db.session() as session:
+        row = (await session.execute(select(LibraryFile))).scalars().one()
+        item = await session.get(MediaItem, row.media_item_id)
+        assert item is not None and item.tmdb_id == 201  # 《另一部剧》2024，年份吻合
+        assert row.identity_source == IdentitySource.PATH_TAG
+
+
+async def test_identity_review_lifecycle(db, tmp_path, monkeypatch) -> None:
+    """身份对账全链路：入账盖版本戳 → 识别器升级后扫描自动复核 →
+    结论一致只更新戳、不一致进复核清单（身份不动）→ 用户拍板后转人工、
+    永不再打扰。"""
+    from movieclaw_api.api.routes.libraries import (
+        list_identity_review,
+        resolve_identity_review,
+    )
+    from movieclaw_api.schemas.library import ReviewResolvePayload
+
+    root = tmp_path / "media" / "tv"
+    show = root / "某剧 (2024)" / "Season 01"
+    show.mkdir(parents=True)
+    (show / "某剧.S01E01.mkv").write_bytes(b"e1")
+    (show / "某剧.S01E02.mkv").write_bytes(b"e2")
+    nfo = show.parent / "tvshow.nfo"
+    nfo.write_text("<tvshow><tmdbid>200</tmdbid></tvshow>", encoding="utf-8")
+    async with db.session() as session:
+        library = await LibraryRepository(session).create(
+            name="剧集库", kind="tv", root_paths=[str(root)]
+        )
+
+    # ① 首扫：NFO 钉死 200，身份来源与版本戳落账
+    await scan_library(library.id)
+    async with db.session() as session:
+        rows = list((await session.execute(select(LibraryFile))).scalars().all())
+        assert all(r.identity_source == IdentitySource.NFO for r in rows)
+        assert all(r.resolved_version == scan_mod.RESOLVER_VERSION for r in rows)
+
+    # ② 识别器升级、结论没变：复核后只更新版本戳，不产生建议
+    monkeypatch.setattr(scan_mod, "RESOLVER_VERSION", scan_mod.RESOLVER_VERSION + 1)
+    summary = await scan_library(library.id)
+    assert summary.reviewed == 2 and summary.review_flagged == 0
+    async with db.session() as session:
+        rows = list((await session.execute(select(LibraryFile))).scalars().all())
+        assert all(r.resolved_version == scan_mod.RESOLVER_VERSION for r in rows)
+        assert all(r.review_suggestion is None for r in rows)
+
+    # ③ 识别器再升级、结论变了（NFO 修正为 201）：进复核清单，身份不动
+    nfo.write_text("<tvshow><tmdbid>201</tmdbid></tvshow>", encoding="utf-8")
+    monkeypatch.setattr(scan_mod, "RESOLVER_VERSION", scan_mod.RESOLVER_VERSION + 1)
+    summary = await scan_library(library.id)
+    assert summary.reviewed == 2 and summary.review_flagged == 2
+    async with db.session() as session:
+        rows = list((await session.execute(select(LibraryFile))).scalars().all())
+        old_item = await session.get(MediaItem, rows[0].media_item_id)
+        assert old_item is not None and old_item.tmdb_id == 200  # 身份未被翻案
+        assert all((r.review_suggestion or {}).get("tmdb_id") == 201 for r in rows)
+
+    # ④ 建议未决期间再扫：版本已齐平，不重复复核也不冲掉建议
+    summary = await scan_library(library.id)
+    assert summary.reviewed == 0 and summary.skipped_known == 2
+    async with db.session() as session:
+        rows = list((await session.execute(select(LibraryFile))).scalars().all())
+        assert all(r.review_suggestion is not None for r in rows)
+
+        # ⑤ 复核清单：同目录同分歧聚成一组
+        groups = (await list_identity_review(None, session)).data
+        assert len(groups) == 1
+        group = groups[0]
+        assert group.file_count == 2
+        assert group.current.tmdb_id == 200 and group.suggestion.tmdb_id == 201
+
+        # ⑥ 采纳建议：改挂新条目并转人工
+        await resolve_identity_review(
+            ReviewResolvePayload(file_ids=group.file_ids, accept=True), session
+        )
+    async with db.session() as session:
+        rows = list((await session.execute(select(LibraryFile))).scalars().all())
+        new_item = await session.get(MediaItem, rows[0].media_item_id)
+        assert new_item is not None and new_item.tmdb_id == 201
+        assert all(r.identity_source == IdentitySource.MANUAL for r in rows)
+        assert all(r.review_suggestion is None for r in rows)
+
+    # ⑦ 人工身份从此免疫：识别器再升级也不复核
+    monkeypatch.setattr(scan_mod, "RESOLVER_VERSION", scan_mod.RESOLVER_VERSION + 1)
+    summary = await scan_library(library.id)
+    assert summary.reviewed == 0 and summary.skipped_known == 2
+
+
+async def test_identity_review_reject_keeps_identity(db, tmp_path, monkeypatch) -> None:
+    """复核拍板选「维持现状」：身份不变、建议清除、转人工不再打扰。"""
+    from movieclaw_api.api.routes.libraries import resolve_identity_review
+    from movieclaw_api.schemas.library import ReviewResolvePayload
+
+    root = tmp_path / "media" / "tv"
+    show = root / "某剧 (2024)" / "Season 01"
+    show.mkdir(parents=True)
+    (show / "某剧.S01E01.mkv").write_bytes(b"e1")
+    nfo = show.parent / "tvshow.nfo"
+    nfo.write_text("<tvshow><tmdbid>200</tmdbid></tvshow>", encoding="utf-8")
+    async with db.session() as session:
+        library = await LibraryRepository(session).create(
+            name="剧集库", kind="tv", root_paths=[str(root)]
+        )
+    await scan_library(library.id)
+
+    nfo.write_text("<tvshow><tmdbid>201</tmdbid></tvshow>", encoding="utf-8")
+    monkeypatch.setattr(scan_mod, "RESOLVER_VERSION", scan_mod.RESOLVER_VERSION + 1)
+    summary = await scan_library(library.id)
+    assert summary.review_flagged == 1
+
+    async with db.session() as session:
+        row = (await session.execute(select(LibraryFile))).scalars().one()
+        await resolve_identity_review(
+            ReviewResolvePayload(file_ids=[row.id], accept=False), session
+        )
+    async with db.session() as session:
+        row = (await session.execute(select(LibraryFile))).scalars().one()
+        item = await session.get(MediaItem, row.media_item_id)
+        assert item is not None and item.tmdb_id == 200  # 身份未动
+        assert row.identity_source == IdentitySource.MANUAL
+        assert row.review_suggestion is None
+
+
+def test_nfo_tmdbid_ignores_actor_person_ids(tmp_path) -> None:
+    """Emby 刮削的 tvshow.nfo 里 <actor> 块自带演员的 <tmdbid>（person id），
+    且排在剧集级 id 之前——必须剔除演员块，否则第一个演员的 person id
+    会被误当条目身份（实测：潘粤明 138734 → 误配成同 id 的 1993 年动画）。"""
+    root = tmp_path / "tv"
+    show = root / "黑夜告白 (2026)" / "Season 1"
+    show.mkdir(parents=True)
+    file = show / "黑夜告白 S01E01.mkv"
+    file.write_bytes(b"ep")
+    (show.parent / "tvshow.nfo").write_text(
+        """<?xml version="1.0" encoding="utf-8"?>
+<tvshow>
+  <title>黑夜告白</title>
+  <actor>
+    <name>Pan Yueming</name>
+    <type>Actor</type>
+    <tmdbid>138734</tmdbid>
+  </actor>
+  <tmdbid>254498</tmdbid>
+  <uniqueid type="tmdb">254498</uniqueid>
+</tvshow>
+""",
+        encoding="utf-8",
+    )
+    tmdb_id, source = scan_mod.pinned_tmdb_id(MediaKind.TV, root, file)
+    assert (tmdb_id, source) == (254498, IdentitySource.NFO)
 
 
 async def test_owned_units_skip_wanted_and_show_in_prepare(db, tmp_path) -> None:
@@ -221,17 +555,140 @@ async def test_scan_progress_observable_and_cleared(db, tmp_path, monkeypatch) -
     monkeypatch.setattr(scan_mod, "probe_media", slow_probe)
 
     task = asyncio.create_task(scan_library(library.id))
-    sampled: list[tuple[int, int]] = []
+    sampled: list[tuple[str, int, int]] = []
     while not task.done():
-        progress = scan_progress(library.id)
-        if progress is not None:
-            sampled.append(progress)
+        state = scan_progress(library.id)
+        if state is not None:
+            sampled.append((state.phase, state.processed, state.total))
+        # 状态与"在跑"必须同生同灭：任一时刻取到 is_scanning 就一定取得到进度
+        assert scan_mod.is_scanning(library.id) == (state is not None)
         await asyncio.sleep(0.01)
     await task
 
     assert sampled, "扫描期间必须能采样到进度"
-    assert sampled[-1][1] == 3  # 总数 = 两集 + junk
+    ingesting = [s for s in sampled if s[0] == scan_mod.ScanPhase.INGESTING]
+    assert ingesting, "必须能采样到逐文件入账阶段"
+    assert ingesting[-1][2] == 3  # 入账阶段的分母 = 两集 + junk
     assert scan_progress(library.id) is None  # 结束后清空
+
+
+async def test_asset_phase_reports_its_own_phase_and_denominator(db, tmp_path, monkeypatch) -> None:
+    """文件入账跑完后进入资产补齐阶段，阶段名与分子分母都换成资产自己的。
+
+    回归：这一段曾经挂在扫描阶段下静默执行，进度长时间僵在"文件数/文件数"
+    ——一部剧几百张分集剧照能下十几分钟，用户看到的是一个撞了墙的进度条。
+    """
+    import movieclaw_api.services.media_scrape as scrape_mod
+
+    root = _make_tv_library(tmp_path)
+    async with db.session() as session:
+        library = await LibraryRepository(session).create(
+            name="剧集库", kind="tv", root_paths=[str(root)]
+        )
+    library_id = library.id
+
+    seen: list[tuple[str, int, int]] = []
+
+    async def watching_ensure_assets(item_id: int) -> None:
+        state = scan_mod.scan_progress(library_id)
+        assert state is not None
+        seen.append((state.phase, state.processed, state.total))
+
+    monkeypatch.setattr(scrape_mod, "ensure_assets", watching_ensure_assets)
+
+    summary = await scan_library(library_id)
+
+    assert seen, "本轮有条目挂上身份锚，就必须走资产补齐阶段"
+    assert all(phase == scan_mod.ScanPhase.ASSETS for phase, _, _ in seen)
+    # 分母是条目数（1 部剧）而不是文件数（3）——阶段换了分母就得跟着换
+    assert {total for _, _, total in seen} == {len(summary.identified_item_ids)}
+    assert seen[0][1] == 0  # 第一个条目开工时已完成 0 个
+    assert scan_mod.scan_progress(library_id) is None  # 收尾后状态清空
+
+
+async def test_asset_phase_honors_stop_request(db, tmp_path, monkeypatch) -> None:
+    """资产补齐阶段同样响应「停止扫描」。
+
+    回归：停止标志过去只在逐文件循环里检查，进入资产阶段后按钮就成了摆设
+    ——界面还显示"扫描中"，点停止毫无反应。文件此时已全部入账，缺的图片
+    由任一后续刷新入口自愈，没有理由让用户干等。
+    """
+    import movieclaw_api.services.media_scrape as scrape_mod
+
+    root = tmp_path / "media" / "tv"
+    # 两部剧 → 两个条目：第一个补齐时喊停，第二个必须不再开工
+    show_a = root / "测试剧集 (2024)" / "Season 01"
+    show_a.mkdir(parents=True)
+    (show_a / "测试剧集.S01E01.1080p.mkv").write_bytes(b"a1")
+    show_b = root / "另一部剧 (2024) [tmdbid=201]" / "Season 01"
+    show_b.mkdir(parents=True)
+    (show_b / "另一部剧.S01E01.1080p.mkv").write_bytes(b"b1")
+
+    async with db.session() as session:
+        library = await LibraryRepository(session).create(
+            name="剧集库", kind="tv", root_paths=[str(root)]
+        )
+    library_id = library.id
+
+    calls: list[int] = []
+
+    async def stopping_ensure_assets(item_id: int) -> None:
+        calls.append(item_id)
+        assert scan_mod.request_stop_scan(library_id) is True  # 资产阶段可停
+
+    monkeypatch.setattr(scrape_mod, "ensure_assets", stopping_ensure_assets)
+
+    summary = await scan_library(library_id)
+
+    assert len(summary.identified_item_ids) == 2, "样本要有两个条目才谈得上提前收尾"
+    assert len(calls) == 1, "喊停之后不该再给下一个条目补资产"
+    # 文件都已入账，停的只是图片下载——不该被记成"扫描没扫完"
+    assert summary.cancelled is False
+    assert library_id not in scan_mod._stop_requests  # 标志随扫描收尾清干净
+
+
+async def test_reidentify_is_not_disguised_as_scanning(db, tmp_path, monkeypatch) -> None:
+    """重识别与扫描共用库级锁，但阶段如实标成 REIDENTIFYING。
+
+    回归两处：
+    1. 接口过去一律回"正在扫描"，用户看到的状态与实际动作对不上；
+    2. 「停止扫描」当时会被受理，可重识别根本不看这个标志——既停不下来，
+       残留的标志还会让**下一次真扫描**刚开始就被取消。
+    """
+    root = _make_tv_library(tmp_path)
+    async with db.session() as session:
+        library = await LibraryRepository(session).create(
+            name="剧集库", kind="tv", root_paths=[str(root)]
+        )
+    library_id = library.id
+    await scan_library(library_id)
+
+    async with db.session() as session:
+        rows = list((await session.execute(select(LibraryFile))).scalars().all())
+    item_id = next(r.media_item_id for r in rows if r.media_item_id is not None)
+
+    observed: list[str] = []
+    original_identify = scan_mod._identify
+
+    async def watching_identify(*args, **kwargs):
+        state = scan_mod.scan_progress(library_id)
+        assert state is not None
+        observed.append(state.phase)
+        # 重识别期间请求停止：必须被拒绝，且不留下任何痕迹
+        assert scan_mod.request_stop_scan(library_id) is False
+        assert library_id not in scan_mod._stop_requests
+        return await original_identify(*args, **kwargs)
+
+    monkeypatch.setattr(scan_mod, "_identify", watching_identify)
+    summary = await scan_mod.reidentify_item(library_id, item_id)
+    assert not summary.errors
+
+    assert observed, "重识别必须走到识别链"
+    assert all(phase == scan_mod.ScanPhase.REIDENTIFYING for phase in observed)
+    assert scan_mod.scan_progress(library_id) is None  # 结束后状态清空
+    # 下一次真扫描不能被上一轮的残留标志取消
+    next_summary = await scan_library(library_id)
+    assert next_summary.cancelled is False
 
 
 async def test_reconcile_marks_missing_and_rescan_restores(db, tmp_path) -> None:
@@ -297,7 +754,8 @@ async def test_scan_relinks_renamed_file(db, tmp_path) -> None:
 
     summary = await scan_library(library.id)
     assert summary.relinked == 1
-    assert summary.unidentified == 0  # 没有当新文件进待识别
+    # 待识别计数只来自 junk 文件的例行识别重试；改名文件没有当新文件进待识别
+    assert summary.unidentified == summary.retried == 1
 
     async with db.session() as session:
         files = list((await session.execute(select(LibraryFile))).scalars().all())
@@ -414,9 +872,7 @@ async def test_scan_records_unidentified_reason_and_claim_clears(db, tmp_path) -
         unknown = (await repo.list_unidentified(library_id=library.id))[0]
         assert unknown.unidentified_reason  # 有可读的失败原因
         identified = [
-            f
-            for f in await repo.list_by_library(library.id)
-            if f.media_item_id is not None
+            f for f in await repo.list_by_library(library.id) if f.media_item_id is not None
         ]
         assert all(f.unidentified_reason is None for f in identified)
 
@@ -451,3 +907,437 @@ async def test_scan_stop_request_cancels_early(db, tmp_path) -> None:
     # 停止不破坏增量语义：再扫一次照常完成
     summary2 = await scan_library(library.id)
     assert summary2.cancelled is False and summary2.identified == 2
+
+
+async def test_rescan_retries_unidentified_after_tmdb_recovery(db, tmp_path, monkeypatch) -> None:
+    """TMDB 故障期间落账的待识别文件，网络恢复后重扫自动补识别——
+    行原地更新（不新建台账），失败原因随之清除。"""
+    root = tmp_path / "media" / "tv"
+    show = root / "测试剧集 (2024)" / "Season 01"
+    show.mkdir(parents=True)
+    (show / "测试剧集.S01E01.1080p.mkv").write_bytes(b"e1")
+    async with db.session() as session:
+        library = await LibraryRepository(session).create(
+            name="剧集库", kind="tv", root_paths=[str(root)]
+        )
+
+    # 第一轮：TMDB "网络不通"
+    real_verify = scan_mod.resolve_with_candidates
+
+    async def boom(*args, **kwargs):
+        raise RuntimeError("网络不可达")
+
+    monkeypatch.setattr(scan_mod, "resolve_with_candidates", boom)
+    summary = await scan_library(library.id)
+    assert summary.identified == 0 and summary.unidentified == 1
+
+    async with db.session() as session:
+        row = (await session.execute(select(LibraryFile))).scalars().one()
+        assert row.media_item_id is None
+        assert row.unidentified_reason and "TMDB 查询失败" in row.unidentified_reason
+        row_id = row.id
+
+    # 网络恢复后重扫：同一行补上身份锚，原因清除
+    monkeypatch.setattr(scan_mod, "resolve_with_candidates", real_verify)
+    summary2 = await scan_library(library.id)
+    assert summary2.retried == 1 and summary2.identified == 1
+    assert summary2.scanned == 0 and summary2.unidentified == 0
+
+    async with db.session() as session:
+        row = (await session.execute(select(LibraryFile))).scalars().one()
+        assert row.id == row_id  # 原地更新，不是删了重建
+        assert row.media_item_id is not None
+        assert row.unidentified_reason is None
+
+
+async def test_missing_file_return_keeps_identity_without_reidentify(
+    db, tmp_path, monkeypatch
+) -> None:
+    """标记 missing 的已识别文件回归时，身份锚原样保留、不重走识别链——
+    即使此刻 TMDB 不通也不会把已有身份冲掉。"""
+    root = _make_tv_library(tmp_path)
+    async with db.session() as session:
+        library = await LibraryRepository(session).create(
+            name="剧集库", kind="tv", root_paths=[str(root)]
+        )
+    await scan_library(library.id)
+
+    # E01 消失 → 对账标记 missing
+    e01 = root / "测试剧集 (2024)" / "Season 01" / "测试剧集.S01E01.1080p.mkv"
+    e01.unlink()
+    await scan_library(library.id)
+    async with db.session() as session:
+        row = (
+            (await session.execute(select(LibraryFile).where(LibraryFile.file_path == str(e01))))
+            .scalars()
+            .one()
+        )
+        assert row.missing_since is not None and row.media_item_id is not None
+        anchor = row.media_item_id
+
+    # 文件回归，但 TMDB 全挂：身份必须保留
+    e01.write_bytes(b"e1")
+    import os
+    import time as time_mod
+
+    old = time_mod.time() - 3600
+    os.utime(e01, (old, old))  # 绕过写入静默窗口
+
+    async def boom(*args, **kwargs):
+        raise RuntimeError("网络不可达")
+
+    monkeypatch.setattr(scan_mod, "resolve_with_candidates", boom)
+    summary = await scan_library(library.id)
+    assert summary.scanned == 1  # 回归文件按原语义计入
+    async with db.session() as session:
+        row = (
+            (await session.execute(select(LibraryFile).where(LibraryFile.file_path == str(e01))))
+            .scalars()
+            .one()
+        )
+        assert row.missing_since is None  # 在位标记恢复
+        assert row.media_item_id == anchor  # 身份未被冲掉
+
+
+async def test_scan_prefers_path_tmdbid_tag(db, tmp_path) -> None:
+    """目录名的 [tmdbid=N] 标记（Emby/Jellyfin 惯例）是显式身份声明：
+    文件名/片名在 TMDB 搜不到也照样精确识别，不进待识别。"""
+    root = tmp_path / "media" / "movies"
+    folder = root / "无从搜起的片名 (2020) [tmdbid=300]"
+    folder.mkdir(parents=True)
+    (folder / "zzqx.mkv").write_bytes(b"movie")
+    async with db.session() as session:
+        library = await LibraryRepository(session).create(
+            name="电影库", kind="movie", root_paths=[str(root)]
+        )
+
+    summary = await scan_library(library.id)
+    assert summary.identified == 1 and summary.unidentified == 0
+    async with db.session() as session:
+        row = (await session.execute(select(LibraryFile))).scalars().one()
+        assert row.media_item_id is not None
+
+
+async def test_scan_sees_through_grouping_dirs(db, tmp_path) -> None:
+    """库根与条目目录之间的分类分组层（剧集/大陆/…）不该挡住识别：
+    条目目录名要能被逐层找到，否则「大陆」会被当条目名、年份白丢。"""
+    root = tmp_path / "media" / "tv"
+    show = root / "大陆" / "测试剧集 (2024)" / "Season 01"
+    show.mkdir(parents=True)
+    (show / "测试剧集.S01E01.1080p.mkv").write_bytes(b"e1")
+    async with db.session() as session:
+        library = await LibraryRepository(session).create(
+            name="剧集库", kind="tv", root_paths=[str(root)]
+        )
+
+    summary = await scan_library(library.id)
+    assert summary.identified == 1 and summary.unidentified == 0
+
+
+def test_local_episode_count(tmp_path) -> None:
+    """本地集数统计：按集号去重（同集多版本只算一集），不足 2 集不作数。"""
+    season = tmp_path / "Season 01"
+    season.mkdir()
+    for n in (1, 2, 3):
+        (season / f"测试剧集.S01E{n:02d}.1080p.mkv").write_bytes(b"x")
+    (season / "测试剧集.S01E03.2160p.mkv").write_bytes(b"x")  # 同集另一版本
+    (season / "测试剧集.S01E04.sample.mkv").write_bytes(b"x")  # sample 不计
+    (season / "海报.jpg").write_bytes(b"x")  # 非视频不计
+    assert scan_mod.local_episode_count(season) == 3
+
+    single = tmp_path / "single"
+    single.mkdir()
+    (single / "测试剧集.S01E01.mkv").write_bytes(b"x")
+    assert scan_mod.local_episode_count(single) is None
+
+
+# ---------------------------------------------------------------------------
+# 无法抉择时：候选落账 → 清单分组 → 整组认领（《风筝》2017 实测案例的闭环）
+# ---------------------------------------------------------------------------
+
+
+def _ambiguous_tmdb() -> TmdbClient:
+    """同名同年双版本的假 TMDB：正片 46 集 / 送审版 51 集（别名也叫「风筝」）。"""
+    detail = {
+        "status": "Ended",
+        "external_ids": {},
+        "translations": {"translations": []},
+    }
+    routes = {
+        "/3/tv/900": {
+            "id": 900,
+            "name": "风筝",
+            "original_name": "风筝",
+            "first_air_date": "2017-12-17",
+            "number_of_seasons": 1,
+            "seasons": [{"season_number": 1, "episode_count": 46}],
+            "alternative_titles": {"results": []},
+            **detail,
+        },
+        "/3/tv/901": {
+            "id": 901,
+            "name": "风筝·送审版",
+            "original_name": "风筝·送审版",
+            "first_air_date": "2017-12-17",
+            "number_of_seasons": 1,
+            "seasons": [{"season_number": 1, "episode_count": 51}],
+            "alternative_titles": {"results": [{"title": "风筝"}]},
+            **detail,
+        },
+        "/3/tv/900/season/1": {
+            "name": "第 1 季",
+            "air_date": "2017-12-17",
+            "episodes": [
+                {"episode_number": n, "name": f"E{n}", "air_date": "2017-12-17"}
+                for n in range(1, 47)
+            ],
+        },
+    }
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        path = request.url.path
+        if path == "/3/search/tv":
+            hit = "风筝" in request.url.params.get("query", "")
+            return httpx.Response(
+                200,
+                json={
+                    "results": [
+                        {k: routes[f"/3/tv/{i}"][k] for k in ("id", "name", "original_name")}
+                        | {"first_air_date": routes[f"/3/tv/{i}"]["first_air_date"]}
+                        for i in (900, 901)
+                    ]
+                    if hit
+                    else []
+                },
+            )
+        payload = routes.get(path)
+        return httpx.Response(200 if payload else 404, json=payload or {})
+
+    return TmdbClient(_KEY, transport=httpx.MockTransport(handler))
+
+
+def _make_ambiguous_show(tmp_path):
+    """本地只有 2 集：集数既对不上 46 也对不上 51 → 机器无从抉择。"""
+    root = tmp_path / "media" / "tv2"
+    season = root / "大陆" / "风筝 (2017)" / "Season 1"
+    season.mkdir(parents=True)
+    for n in (1, 2):
+        (season / f"风筝 S01E{n:02d} - 2160p.mkv").write_bytes(b"x")
+    return root
+
+
+async def test_ambiguous_scan_records_candidates_and_groups(db, tmp_path, monkeypatch) -> None:
+    """判不了时：原因说清"为什么判不了" + 候选落账 + 清单按条目目录成一组。"""
+    from movieclaw_api.api.routes.libraries import list_unidentified
+
+    client = _ambiguous_tmdb()
+    monkeypatch.setattr(discover_mod, "get_tmdb_client", lambda: client)
+    monkeypatch.setattr(scan_mod, "get_tmdb_client", lambda: client)
+    root = _make_ambiguous_show(tmp_path)
+    async with db.session() as session:
+        library = await LibraryRepository(session).create(
+            name="剧集库", kind="tv", root_paths=[str(root)]
+        )
+
+    summary = await scan_library(library.id)
+    assert summary.identified == 0 and summary.unidentified == 2
+
+    async with db.session() as session:
+        rows = list((await session.execute(select(LibraryFile))).scalars().all())
+        assert all("同样可信的候选" in (r.unidentified_reason or "") for r in rows)
+        ids = {c["tmdb_id"] for c in rows[0].unidentified_candidates}
+        assert ids == {900, 901}
+        # 候选带上各自的集数：46 / 51 正是用户肉眼区分的依据
+        counts = {c["tmdb_id"]: c["episode_count"] for c in rows[0].unidentified_candidates}
+        assert counts == {900: 46, 901: 51}
+
+        resp = await list_unidentified(library.id, session)
+    groups = resp.data
+    assert len(groups) == 1  # 两集聚成一组，不再逐集刷屏
+    assert groups[0].label == "风筝 (2017)" and groups[0].file_count == 2
+    assert len(groups[0].candidates) == 2
+
+
+async def test_claim_batch_fixes_whole_group_at_once(db, tmp_path, monkeypatch) -> None:
+    """整组认领：一次点击全组生效，每个文件沿用自己已解析的季集号。"""
+    import movieclaw_api.api.routes.libraries as routes_mod
+    from movieclaw_api.api.routes.libraries import claim_files_batch
+    from movieclaw_api.schemas.library import ClaimBatchPayload
+
+    client = _ambiguous_tmdb()
+    monkeypatch.setattr(discover_mod, "get_tmdb_client", lambda: client)
+    monkeypatch.setattr(scan_mod, "get_tmdb_client", lambda: client)
+    monkeypatch.setattr(routes_mod, "get_tmdb_client", lambda: client)
+    root = _make_ambiguous_show(tmp_path)
+    async with db.session() as session:
+        library = await LibraryRepository(session).create(
+            name="剧集库", kind="tv", root_paths=[str(root)]
+        )
+    await scan_library(library.id)
+
+    async with db.session() as session:
+        rows = list((await session.execute(select(LibraryFile))).scalars().all())
+        payload = ClaimBatchPayload(file_ids=[r.id for r in rows], tmdb_id=900)
+        resp = await claim_files_batch(payload, BackgroundTasks(), session)
+    assert resp.data["claimed"] == 2
+
+    async with db.session() as session:
+        rows = list((await session.execute(select(LibraryFile))).scalars().all())
+        assert all(r.media_item_id is not None for r in rows)
+        assert all(r.unidentified_reason is None for r in rows)
+        assert all(r.unidentified_candidates is None for r in rows)
+        # 季集号来自各自的文件名，不是前端指定的
+        assert {(r.season_number, r.episode_number) for r in rows} == {(1, 1), (1, 2)}
+
+
+# ---------------------------------------------------------------------------
+# 忽略是永久的：忽略过的文件不再重走识别链、不回清单，但可恢复
+# ---------------------------------------------------------------------------
+
+
+async def test_ignored_file_stays_ignored_across_rescans(db, tmp_path, monkeypatch) -> None:
+    """忽略过的文件重扫时秒过：不重走识别链（连 TMDB 都不该打），不回清单。
+
+    这是「忽略」曾经的硬伤——早先实现是删台账行，而扫描器判定"新文件"
+    就看台账有没有这条路径，删了下轮扫描原样再来一遍。
+    """
+    from movieclaw_api.api.routes.libraries import ignore_file, list_unidentified
+
+    root = tmp_path / "media" / "tv"
+    junk = root / "无从辨认的花絮" / "zzqx.mkv"
+    junk.parent.mkdir(parents=True)
+    junk.write_bytes(b"junk")
+    async with db.session() as session:
+        library = await LibraryRepository(session).create(
+            name="剧集库", kind="tv", root_paths=[str(root)]
+        )
+
+    summary = await scan_library(library.id)
+    assert summary.unidentified == 1
+
+    async with db.session() as session:
+        row = (await session.execute(select(LibraryFile))).scalars().one()
+        await ignore_file(row.id, session)
+        assert (await list_unidentified(library.id, session)).data == []
+
+    # 识别链此刻若被触碰就炸——忽略过的文件不该再产生任何识别开销
+    async def boom(*args, **kwargs):
+        raise AssertionError("忽略过的文件不应重走识别链")
+
+    monkeypatch.setattr(scan_mod, "resolve_with_candidates", boom)
+    summary2 = await scan_library(library.id)
+    assert summary2.skipped_ignored == 1
+    assert summary2.scanned == 0 and summary2.unidentified == 0 and summary2.retried == 0
+
+    async with db.session() as session:
+        # 台账行仍在（否则下次扫描又会把它当新文件），清单里仍然看不到
+        row = (await session.execute(select(LibraryFile))).scalars().one()
+        assert row.ignored_at is not None and row.media_item_id is None
+        assert (await list_unidentified(library.id, session)).data == []
+
+
+async def test_restore_ignored_returns_to_unidentified(db, tmp_path) -> None:
+    """恢复：清掉忽略标记，文件回到待识别清单并重新参与识别。"""
+    from movieclaw_api.api.routes.libraries import (
+        ignore_file,
+        list_ignored,
+        list_unidentified,
+        restore_ignored_files,
+    )
+    from movieclaw_api.schemas.library import RestorePayload
+
+    root = tmp_path / "media" / "tv"
+    junk = root / "无从辨认的花絮" / "zzqx.mkv"
+    junk.parent.mkdir(parents=True)
+    junk.write_bytes(b"junk")
+    async with db.session() as session:
+        library = await LibraryRepository(session).create(
+            name="剧集库", kind="tv", root_paths=[str(root)]
+        )
+    await scan_library(library.id)
+
+    async with db.session() as session:
+        row = (await session.execute(select(LibraryFile))).scalars().one()
+        await ignore_file(row.id, session)
+        groups = (await list_ignored(library.id, session)).data
+        assert len(groups) == 1 and groups[0].label == "无从辨认的花絮"
+
+        resp = await restore_ignored_files(RestorePayload(file_ids=[row.id]), session)
+        assert resp.data["restored"] == 1
+        assert (await list_ignored(library.id, session)).data == []
+        assert len((await list_unidentified(library.id, session)).data) == 1
+
+    # 恢复后重扫会重新尝试识别（不再秒过）
+    summary = await scan_library(library.id)
+    assert summary.skipped_ignored == 0 and summary.retried == 1
+
+
+async def test_ignored_file_survives_disappear_and_return(db, tmp_path) -> None:
+    """忽略过的文件消失又回来：忽略状态保留，missing 标记自动清掉。"""
+    from movieclaw_api.api.routes.libraries import ignore_file
+
+    root = tmp_path / "media" / "tv"
+    junk = root / "无从辨认的花絮" / "zzqx.mkv"
+    junk.parent.mkdir(parents=True)
+    junk.write_bytes(b"junk")
+    async with db.session() as session:
+        library = await LibraryRepository(session).create(
+            name="剧集库", kind="tv", root_paths=[str(root)]
+        )
+    await scan_library(library.id)
+    async with db.session() as session:
+        row = (await session.execute(select(LibraryFile))).scalars().one()
+        await ignore_file(row.id, session)
+
+    junk.unlink()
+    summary = await scan_library(library.id)
+    assert summary.marked_missing == 1
+    async with db.session() as session:
+        row = (await session.execute(select(LibraryFile))).scalars().one()
+        assert row.missing_since is not None and row.ignored_at is not None
+
+    junk.write_bytes(b"junk")
+    await scan_library(library.id)
+    async with db.session() as session:
+        row = (await session.execute(select(LibraryFile))).scalars().one()
+        assert row.missing_since is None and row.ignored_at is not None
+
+
+async def test_unidentified_code_classifies_failures(db, tmp_path, monkeypatch) -> None:
+    """失败分类落库：清单靠 code 决定标签/配色/动作，不能靠猜 reason 文案。
+
+    覆盖三种：认不出片名 / TMDB 搜不到 / TMDB 不可达（ambiguous 见
+    test_ambiguous_scan_records_candidates_and_groups）。
+    """
+    root = tmp_path / "media" / "tv"
+    (root / "zzqx 乱码目录").mkdir(parents=True)
+    (root / "zzqx 乱码目录" / "zzqx.mkv").write_bytes(b"x")  # 解析不出片名
+    (root / "查无此剧 (2019)").mkdir(parents=True)
+    (root / "查无此剧 (2019)" / "查无此剧.S01E01.mkv").write_bytes(b"y")  # 搜不到
+    async with db.session() as session:
+        library = await LibraryRepository(session).create(
+            name="剧集库", kind="tv", root_paths=[str(root)]
+        )
+
+    await scan_library(library.id)
+    async with db.session() as session:
+        by_name = {
+            Path(r.file_path).name: r
+            for r in (await session.execute(select(LibraryFile))).scalars().all()
+        }
+    assert by_name["zzqx.mkv"].unidentified_code == "unparsable"
+    assert by_name["查无此剧.S01E01.mkv"].unidentified_code == "no_match"
+    # 原因整句不再以「请…」收尾——该做什么由清单上的按钮表达
+    assert not (by_name["zzqx.mkv"].unidentified_reason or "").endswith("请人工认领")
+
+    # TMDB 不可达：与「确实找不到」必须分开，前者重扫可自愈
+    async def boom(*args, **kwargs):
+        raise RuntimeError("网络不可达")
+
+    monkeypatch.setattr(scan_mod, "resolve_with_candidates", boom)
+    (root / "查无此剧 (2019)" / "查无此剧.S01E02.mkv").write_bytes(b"z")
+    await scan_library(library.id)
+    async with db.session() as session:
+        rows = list((await session.execute(select(LibraryFile))).scalars().all())
+    fresh = next(r for r in rows if r.file_path.endswith("S01E02.mkv"))
+    assert fresh.unidentified_code == "tmdb_unreachable"

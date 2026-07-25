@@ -69,9 +69,10 @@ from movieclaw_api.services.library_import import (
     IN_PROGRESS_MARKERS,
     VIDEO_EXTS,
     _entry_base_name,
+    season_from_dir,
 )
 from movieclaw_api.services.library_resolve import verify_resolve
-from movieclaw_api.services.library_scan import _guess_evidence, _season_from_dir
+from movieclaw_api.services.library_scan import _guess_evidence
 from movieclaw_api.services.media_discover import get_tmdb_client
 from movieclaw_api.services.media_library import MediaLibraryService
 from movieclaw_api.services.media_probe import probe_media
@@ -468,6 +469,8 @@ async def _ingest_entry(
                 bit_depth=file_spec.bit_depth if file_spec else None,
                 duration_seconds=file_spec.duration_seconds if file_spec else None,
                 bit_rate=file_spec.bit_rate if file_spec else None,
+                audio_streams=list(file_spec.audio_streams) if file_spec else None,
+                subtitle_streams=list(file_spec.subtitle_streams) if file_spec else None,
                 media_source=release_attrs.media_source,
                 release_group=release_attrs.release_group,
                 source=FileSource.IMPORTED,
@@ -484,6 +487,12 @@ async def _ingest_entry(
         from movieclaw_api.services.wanted_fulfillment import close_fulfilled_wanted
 
         await close_fulfilled_wanted(session, item.id)
+        # 一次入库刮削的资产补齐：图片资产 + 媒体目录镜像（完整 NFO/海报/
+        # 分集 thumb），后台执行不阻塞入库结论
+        from movieclaw_api.services.media_scrape import ensure_assets
+
+        assert item.id is not None
+        asyncio.get_running_loop().create_task(ensure_assets(item.id))
 
     verb = "硬链接" if strategy == "hardlink" else "复制"
     if imported:
@@ -544,7 +553,7 @@ def _unit(file: Path, entry: Path) -> tuple[int | None, int]:
     """
     attrs = enrich(file.stem)
     episode = attrs.episodes[0] if attrs.episodes else 0
-    season: int | None = attrs.seasons[0] if attrs.seasons else _season_from_dir(file.parent)
+    season: int | None = attrs.seasons[0] if attrs.seasons else season_from_dir(file.parent)
     if season is None:
         entry_attrs = enrich(entry.name if entry.is_dir() else entry.stem)
         entry_seasons = {s for s in entry_attrs.seasons}

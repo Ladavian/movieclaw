@@ -26,7 +26,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Literal
 
-from pydantic import BaseModel, Field, ValidationError
+from pydantic import BaseModel, ValidationError
 
 from movieclaw_api.exceptions import NotFoundException
 from movieclaw_llm import ChatMessage, TokenUsage

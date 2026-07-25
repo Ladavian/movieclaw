@@ -24,6 +24,7 @@ from movieclaw_api.services.media_library import MediaLibraryService
 from movieclaw_api.services.rule_sets import RuleSetService
 from movieclaw_db.models import (
     ActivityType,
+    MediaEpisode,
     MediaItem,
     MediaSeason,
     Subscription,
@@ -62,7 +63,7 @@ class ExpectedUnit:
 
 def expected_units(
     kind: MediaKind,
-    seasons: list[MediaSeason],
+    episodes: list[MediaEpisode],
     selected: list[int],
     follow_future: bool,
 ) -> list[ExpectedUnit]:
@@ -70,6 +71,7 @@ def expected_units(
 
     E = 勾选季的全部已知集 ∪（follow_future ? 评估时刻之后播出的集 : ∅）
 
+    集数据来自 ``media_episode`` 表（集数据唯一事实源，metadata.md 第 1 节）。
     追新的锚定取**评估时刻**而非订阅创建时刻：创建时二者等价；后来才打开
     追新开关时，不回补开关关闭期间播出的集（用户此刻的意图是"从现在起追"）。
     更早的历史集通过勾选季表达。特别季 0 仅显式勾选才纳入。
@@ -80,20 +82,16 @@ def expected_units(
     today = utcnow().date()
     selected_set = set(selected)
     units: list[ExpectedUnit] = []
-    for season in seasons:
-        in_selected = season.season_number in selected_set
+    for episode in episodes:
+        in_selected = episode.season_number in selected_set
         if not in_selected and not follow_future:
             continue
-        for episode in season.episodes:
-            number = episode.get("episode_number")
-            if number is None:
-                continue
-            air = _parse_date(episode.get("air_date"))
-            if in_selected:
-                units.append(ExpectedUnit(season.season_number, number, air))
-            elif season.season_number != 0 and (air is None or air > today):
-                # 追新贡献：未勾季里"尚未播出/未定档"的集；特别季不自动追
-                units.append(ExpectedUnit(season.season_number, number, air))
+        air = episode.air_date
+        if in_selected:
+            units.append(ExpectedUnit(episode.season_number, episode.episode_number, air))
+        elif episode.season_number != 0 and (air is None or air > today):
+            # 追新贡献：未勾季里"尚未播出/未定档"的集；特别季不自动追
+            units.append(ExpectedUnit(episode.season_number, episode.episode_number, air))
     return units
 
 
@@ -241,7 +239,8 @@ class SubscriptionService:
         )
         assert subscription.id is not None
 
-        units = expected_units(kind, seasons, selected, follow_future)
+        episodes = await self._media_repo.list_episodes(item.id)
+        units = expected_units(kind, episodes, selected, follow_future)
         # 库存联通（媒体库 L3）：库里已有的单元不生成工单——E−H 用真实的 H
         owned = await self._owned_units(item.id)
         skipped_owned = [u for u in units if (u.season_number, u.episode_number) in owned]
@@ -314,8 +313,9 @@ class SubscriptionService:
         if follow_future is not None:
             subscription.follow_future = follow_future if kind is MediaKind.TV else False
 
+        episodes = await self._media_repo.list_episodes(subscription.media_item_id)
         expected = expected_units(
-            kind, seasons, list(subscription.selected_seasons), subscription.follow_future
+            kind, episodes, list(subscription.selected_seasons), subscription.follow_future
         )
         existing = await self._repo.list_wanted(subscription_id)
         existing_keys = {(w.season_number, w.episode_number) for w in existing}
@@ -653,10 +653,3 @@ class SubscriptionService:
         return item
 
 
-def _parse_date(iso_date: str | None) -> date | None:
-    if not iso_date:
-        return None
-    try:
-        return date.fromisoformat(iso_date)
-    except ValueError:
-        return None

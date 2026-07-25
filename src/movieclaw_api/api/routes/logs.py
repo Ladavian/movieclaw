@@ -16,7 +16,8 @@ from __future__ import annotations
 from datetime import date
 from pathlib import Path
 
-from fastapi import APIRouter, Path as PathParam, Query
+from fastapi import APIRouter, Query
+from fastapi import Path as PathParam
 from pydantic import BaseModel
 
 from movieclaw_api.core.config import get_settings

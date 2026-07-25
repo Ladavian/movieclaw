@@ -7,6 +7,9 @@ import httpx
 from movieclaw_media.library import (
     ResolveStatus,
     fetch_media_profile,
+    list_image_candidates,
+    pick_backdrop,
+    pick_poster,
     resolve_douban_to_tmdb,
 )
 from movieclaw_media.models import MediaKind
@@ -37,6 +40,33 @@ _MOVIE_DETAIL = {
     "status": "Released",
     "poster_path": "/poster.jpg",
     "backdrop_path": "/backdrop.jpg",
+    # 展示层（media_metadata）字段：有中文简介时不触发英文兜底的第二次请求
+    "overview": "保罗·厄崔迪与弗雷曼人汇合，踏上复仇之路。",
+    "tagline": "Long live the fighters.",
+    "runtime": 167,
+    "vote_average": 8.16,
+    "vote_count": 5000,
+    "original_language": "en",
+    "genres": [{"id": 878, "name": "科幻"}, {"id": 12, "name": "冒险"}],
+    "production_companies": [{"name": "Legendary Pictures"}],
+    "production_countries": [{"iso_3166_1": "US"}],
+    "release_dates": {
+        "results": [
+            {"iso_3166_1": "US", "release_dates": [{"certification": "PG-13"}]},
+        ]
+    },
+    "credits": {
+        "crew": [{"name": "Denis Villeneuve", "job": "Director"}],
+        "cast": [
+            {
+                "name": "Timothée Chalamet",
+                "character": "Paul",
+                "order": 0,
+                "profile_path": "/tc.jpg",
+            },
+            {"name": "Zendaya", "character": "Chani", "order": 1, "profile_path": None},
+        ],
+    },
     "external_ids": {"imdb_id": "tt15239678"},
     "alternative_titles": {
         "titles": [
@@ -75,18 +105,54 @@ async def test_fetch_movie_profile_fields_and_aliases() -> None:
         "Dune Part 2",
         "沙丘瀚战：第二章",
     ]
+    # 展示层字段（media_metadata 的数据源）随同一次请求拉齐
+    assert profile.overview == "保罗·厄崔迪与弗雷曼人汇合，踏上复仇之路。"
+    assert profile.tagline == "Long live the fighters."
+    assert profile.genres == ["科幻", "冒险"]
+    assert profile.runtime_minutes == 167
+    assert profile.content_rating == "PG-13"
+    assert profile.vote_average == 8.2
+    assert profile.studios == ["Legendary Pictures"]
+    assert profile.origin_countries == ["US"]
+    assert profile.directors == ["Denis Villeneuve"]
+    assert [c.name for c in profile.cast] == ["Timothée Chalamet", "Zendaya"]
+    assert profile.cast[0].character == "Paul"
 
 
 async def test_fetch_movie_uses_append_to_response() -> None:
-    """整个电影建档只发一次请求，别名/译名/外部 ID 走 append_to_response 合并。"""
+    """整个电影建档只发一次请求：别名/译名/外部 ID/演职员/候选图/分级全走
+    append_to_response 合并（有中文简介时不触发英文兜底）。"""
     captured: list[httpx.Request] = []
     client = _client({"/3/movie/693134": _MOVIE_DETAIL}, captured)
     await fetch_media_profile(client, MediaKind.MOVIE, 693134)
 
     assert len(captured) == 1
     params = dict(captured[0].url.params)
-    assert params["append_to_response"] == "alternative_titles,translations,external_ids"
+    assert params["append_to_response"] == (
+        "alternative_titles,translations,external_ids,credits,images,release_dates"
+    )
     assert params["language"] == "zh-CN"
+    # 选图策略要的是"无文字"(null) 与中英文候选，不带这个参数 images 几乎必空
+    assert params["include_image_language"] == "null,zh,en"
+
+
+async def test_fetch_movie_english_overview_fallback() -> None:
+    """中文简介缺失时补拉一次英文兜底（仅条目级，docs/design/metadata.md 第 3 节）。"""
+    detail = {**_MOVIE_DETAIL, "overview": "", "tagline": ""}
+    captured: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured.append(request)
+        if dict(request.url.params).get("language") == "en-US":
+            return httpx.Response(
+                200, json={**detail, "overview": "Paul seeks revenge.", "tagline": "EN tagline"}
+            )
+        return httpx.Response(200, json=detail)
+
+    client = TmdbClient(_KEY, transport=httpx.MockTransport(handler))
+    profile = await fetch_media_profile(client, MediaKind.MOVIE, 693134)
+    assert len(captured) == 2
+    assert profile.overview == "Paul seeks revenge."
 
 
 _TV_DETAIL = {
@@ -145,6 +211,122 @@ async def test_fetch_tv_profile_with_seasons_and_episodes() -> None:
     # 未定档集：air_date 为 None 而非假日期
     assert profile.seasons[2].episodes[1].air_date is None
     assert profile.seasons[2].episodes[1].name == ""
+
+
+# ---------------------------------------------------------------------------
+# 选图策略（docs/design/metadata.md 6.3）
+# ---------------------------------------------------------------------------
+
+
+def _img(path: str, *, lang: str | None, width: int, avg: float, count: int) -> dict:
+    return {
+        "file_path": path,
+        "iso_639_1": lang,
+        "width": width,
+        "height": int(width * 9 / 16),
+        "vote_average": avg,
+        "vote_count": count,
+    }
+
+
+def test_pick_backdrop_prefers_textless() -> None:
+    """背景首选无文字图：带片名文字的横图铺全屏很脏，哪怕它票数更高。"""
+    data = {
+        "images": {
+            "backdrops": [
+                _img("/with-text.jpg", lang="en", width=3840, avg=9.0, count=500),
+                _img("/clean.jpg", lang=None, width=1920, avg=6.0, count=40),
+            ]
+        }
+    }
+    assert pick_backdrop(data) == "/clean.jpg"
+
+
+def test_pick_backdrop_weighted_score_beats_low_vote_outlier() -> None:
+    """加权票数：1 票 10 分的冷门图不该盖过几百票的公认好图。"""
+    data = {
+        "images": {
+            "backdrops": [
+                _img("/outlier.jpg", lang=None, width=1920, avg=10.0, count=1),
+                _img("/popular.jpg", lang=None, width=1920, avg=7.0, count=400),
+            ]
+        }
+    }
+    assert pick_backdrop(data) == "/popular.jpg"
+
+
+def test_pick_backdrop_falls_back_when_all_below_width() -> None:
+    """候选全都低于分辨率门槛时不放弃——宁可给小图也不要没有图。"""
+    data = {"images": {"backdrops": [_img("/small.jpg", lang=None, width=1280, avg=8.0, count=9)]}}
+    assert pick_backdrop(data) == "/small.jpg"
+
+
+def test_pick_backdrop_none_without_candidates() -> None:
+    """没有候选返回 None（调用方回落 TMDB 默认 backdrop_path）。"""
+    assert pick_backdrop({"images": {"backdrops": []}}) is None
+    assert pick_backdrop({}) is None
+
+
+def test_pick_poster_prefers_localized() -> None:
+    """海报相反：**要**文字，中文版比英文原版更符合中文用户预期。"""
+    data = {
+        "images": {
+            "posters": [
+                _img("/en.jpg", lang="en", width=2000, avg=9.5, count=900),
+                _img("/zh.jpg", lang="zh", width=1000, avg=5.0, count=10),
+            ]
+        }
+    }
+    assert pick_poster(data, "zh-CN") == "/zh.jpg"
+    # 当前语言没有海报时退回全部候选里的最优
+    assert pick_poster(data, "ja-JP") == "/en.jpg"
+
+
+def test_list_candidates_ordering_matches_auto_pick() -> None:
+    """弹层首张 == 自动策略会选的那张（用户一眼看出默认给的是哪张），
+    且带文字/非本地化的候选仍在列表里可选。"""
+    data = {
+        "images": {
+            "posters": [
+                _img("/p-en.jpg", lang="en", width=2000, avg=9.0, count=800),
+                _img("/p-zh.jpg", lang="zh", width=1000, avg=6.0, count=30),
+            ],
+            "backdrops": [
+                _img("/b-text.jpg", lang="en", width=3840, avg=9.5, count=700),
+                _img("/b-clean.jpg", lang=None, width=1920, avg=6.5, count=50),
+            ],
+        }
+    }
+    posters, backdrops = list_image_candidates(data, "zh-CN")
+    assert posters[0]["file_path"] == pick_poster(data, "zh-CN") == "/p-zh.jpg"
+    assert backdrops[0]["file_path"] == pick_backdrop(data) == "/b-clean.jpg"
+    assert {i["file_path"] for i in posters} == {"/p-zh.jpg", "/p-en.jpg"}
+    assert {i["file_path"] for i in backdrops} == {"/b-clean.jpg", "/b-text.jpg"}
+
+
+async def test_fetch_profile_uses_picked_images() -> None:
+    """选图策略接进档案拉取：images 里挑出的图取代 TMDB 的默认字段。"""
+    detail = {
+        **_MOVIE_DETAIL,
+        "poster_path": "/default-poster.jpg",
+        "backdrop_path": "/default-backdrop.jpg",
+        "images": {
+            "posters": [_img("/picked-poster.jpg", lang="zh", width=1000, avg=7.0, count=50)],
+            "backdrops": [_img("/picked-backdrop.jpg", lang=None, width=1920, avg=7.0, count=50)],
+        },
+    }
+    client = _client({"/3/movie/693134": detail})
+    profile = await fetch_media_profile(client, MediaKind.MOVIE, 693134)
+    assert profile.poster_path == "/picked-poster.jpg"
+    assert profile.backdrop_path == "/picked-backdrop.jpg"
+
+
+async def test_fetch_profile_falls_back_to_default_images() -> None:
+    """条目没有 images 候选时回落 TMDB 默认字段，不会把图丢成 None。"""
+    client = _client({"/3/movie/693134": _MOVIE_DETAIL})
+    profile = await fetch_media_profile(client, MediaKind.MOVIE, 693134)
+    assert profile.poster_path == "/poster.jpg"
+    assert profile.backdrop_path == "/backdrop.jpg"
 
 
 # ---------------------------------------------------------------------------

@@ -27,8 +27,11 @@ class LibraryStats(BaseModel):
     item_count: int = Field(default=0, description="已识别的媒体条目数")
     file_count: int = Field(default=0, description="在账文件总数（含待识别）")
     total_size_bytes: int = Field(default=0, description="文件总大小（字节）")
-    unidentified_count: int = Field(default=0, description="待识别文件数")
+    unidentified_count: int = Field(default=0, description="待识别文件数（不含已忽略）")
     missing_count: int = Field(default=0, description="标记 missing 的文件数（缺失清单入口）")
+    ignored_count: int = Field(
+        default=0, description="用户忽略过的文件数（不再参与识别，可在已忽略清单恢复）"
+    )
 
 
 class LastScanView(BaseModel):
@@ -40,6 +43,9 @@ class LastScanView(BaseModel):
     unidentified: int
     marked_missing: int = Field(description="本轮标记丢失的文件数")
     deferred: int = Field(default=0, description="疑似写入中暂缓入账的文件数（稍后自动补扫）")
+    retried: int = Field(
+        default=0, description="识别重试数：在位但待识别的文件重走识别链（不算新入账）"
+    )
     cancelled: bool = Field(default=False, description="本轮扫描被用户手动停止（未扫完）")
     errors: list[str] = Field(default_factory=list)
 
@@ -51,10 +57,17 @@ class LastScanView(BaseModel):
 
 
 class ScanProgressView(BaseModel):
-    """进行中扫描/整理的实时进度（前端在库封面上画进度环，两种任务共用）。"""
+    """进行中扫描/整理的实时进度（前端在库封面上画进度环，两种任务共用）。
 
+    ``phase`` 是必填的：一次"扫描"内部分好几段（盘点 → 逐文件入账 →
+    补齐图片资产），分子分母各段各算。前端**必须**按阶段选文案，否则
+    进度走完文件数后还要跑几分钟资产，界面就会僵在"已处理 = 总数"上
+    对用户撒谎（见 library_scan.ScanPhase）。
+    """
+
+    phase: str = Field(description="进行中的阶段，取值见 library_scan.ScanPhase / organizing")
     processed: int
-    total: int
+    total: int = Field(description="总数；0 表示分母未知，前端画不确定态转圈")
 
 
 class LastOrganizeView(BaseModel):
@@ -75,6 +88,32 @@ class LastOrganizeView(BaseModel):
         return value.isoformat()
 
 
+class RefreshActiveView(BaseModel):
+    """整库刷新中正在处理的一部片（并发若干路，故是列表）。"""
+
+    media_item_id: int
+    title: str
+    phase: str = Field(description="当前阶段：拉取 TMDB 档案 / 写入元数据 / 下载图片 / …")
+
+
+class MetadataRefreshView(BaseModel):
+    """整库刷新的实时状态——全量重刷很慢，用户要看到"到哪部了、在做什么"。
+
+    随库列表一并返回（见 LibraryView.metadata_refresh），媒体库首页的库卡片
+    因此不必额外请求就能显示刷新进度；单库页另有专用端点做 2 秒级的阶段
+    刷新（首页 10 秒一轮的节奏跟不上阶段变化）。
+    """
+
+    refreshing: bool
+    processed: int = Field(default=0, description="已完成条目数（含失败）")
+    total: int = 0
+    failed: int = Field(default=0, description="刮削失败的条目数（多为 TMDB 不可达）")
+    stopping: bool = Field(default=False, description="已请求停止，正在收尾")
+    active: list[RefreshActiveView] = Field(
+        default_factory=list, description="正在处理的条目及其阶段"
+    )
+
+
 class LibraryView(BaseModel):
     id: int
     name: str
@@ -91,6 +130,9 @@ class LibraryView(BaseModel):
         default=None, description="整理实时进度（与扫描进度同构）"
     )
     last_organize: LastOrganizeView | None = Field(default=None, description="最近一次整理结论")
+    metadata_refresh: MetadataRefreshView | None = Field(
+        default=None, description="整库元数据刷新状态；没在刷为 null"
+    )
     created_at: datetime
     updated_at: datetime
 
@@ -114,6 +156,7 @@ class LibraryView(BaseModel):
         organizing: bool = False,
         organize_progress: ScanProgressView | None = None,
         last_organize: LastOrganizeView | None = None,
+        metadata_refresh: MetadataRefreshView | None = None,
     ) -> LibraryView:
         return cls(
             id=row.id,  # type: ignore[arg-type]  # 落库后必有主键
@@ -129,6 +172,7 @@ class LibraryView(BaseModel):
             organizing=organizing,
             organize_progress=organize_progress,
             last_organize=last_organize,
+            metadata_refresh=metadata_refresh,
             created_at=row.created_at,
             updated_at=row.updated_at,
         )
@@ -175,7 +219,7 @@ class LibraryItemView(BaseModel):
     )
     missing_episode_count: int = Field(
         default=0,
-        description="已播出但库里没有的正季集数（电影恒 0）——「补齐缺集」的依据",
+        description="已播出但所有媒体库里都没有的正季集数（电影恒 0）——「补齐缺集」的依据",
     )
     added_at: datetime | None = Field(
         default=None, description="最近一次文件入账时间（首页「最近添加」排序依据）"
@@ -190,6 +234,235 @@ class LibraryItemView(BaseModel):
         return value.isoformat()
 
 
+class AudioStreamView(BaseModel):
+    """一条音轨（ffprobe 探测；字段 None=该项探不出）。"""
+
+    codec: str | None = None
+    profile: str | None = Field(
+        default=None, description="编码档次（如 DTS-HD MA），比 codec 更贴近用户认知"
+    )
+    channels: int | None = None
+    channel_layout: str | None = Field(default=None, description="声道布局（如 5.1(side)）")
+    language: str | None = Field(default=None, description="语言标签（ISO 639，如 chi/eng）")
+    title: str | None = None
+    default: bool = False
+
+
+class SubtitleStreamView(BaseModel):
+    """一条字幕：内封轨（ffprobe）或外挂文件（目录发现）。"""
+
+    codec: str | None = Field(
+        default=None, description="内封轨编码（subrip/ass/pgs…）；外挂为文件扩展名"
+    )
+    language: str | None = None
+    title: str | None = None
+    forced: bool = False
+    default: bool = False
+    external: bool = Field(default=False, description="是否外挂字幕文件")
+    file_name: str | None = Field(default=None, description="外挂字幕的文件名")
+
+
+class LibraryFileView(BaseModel):
+    """条目详情页的一个物理文件（一个版本 / 一集）。"""
+
+    id: int
+    file_path: str
+    file_name: str
+    size_bytes: int
+    container: str | None
+    resolution: str | None
+    video_codec: str | None
+    hdr: str | None
+    bit_depth: int | None
+    duration_seconds: int | None
+    bit_rate: int | None
+    media_source: str | None
+    release_group: str | None
+    source: str = Field(description="imported（入库管线）/ scanned（存量扫描）")
+    season_number: int
+    episode_number: int
+    missing: bool = Field(description="文件当前不在磁盘（missing 标记）")
+    audio_streams: list[AudioStreamView] | None = Field(
+        default=None, description="音轨列表；null=尚未探测（ffprobe 缺失或文件不可达）"
+    )
+    subtitle_streams: list[SubtitleStreamView] = Field(
+        default_factory=list, description="字幕列表：内封轨 + 外挂文件"
+    )
+    added_at: datetime
+
+    @field_serializer("added_at")
+    def _serialize_utc(self, value: datetime) -> str:
+        if value.tzinfo is None:
+            value = value.replace(tzinfo=UTC)
+        return value.isoformat()
+
+
+class ActorView(BaseModel):
+    """本地刮削（NFO）的一位演员。"""
+
+    name: str
+    role: str | None = None
+    thumb_url: str | None = Field(default=None, description="头像地址（NFO 里的图床 URL）")
+
+
+class LocalMetaView(BaseModel):
+    """条目的展示元数据：本地 NFO > 库内刮削档案 > TMDB 实时兜底；
+    三个来源都拉不到时整体为 null（docs/design/metadata.md 第 5 节）。"""
+
+    plot: str | None = None
+    rating: float | None = None
+    runtime_minutes: int | None = None
+    genres: list[str] = Field(default_factory=list)
+    directors: list[str] = Field(default_factory=list)
+    actors: list[ActorView] = Field(default_factory=list)
+    nfo_name: str = Field(default="", description="来源 NFO 文件名（source=nfo 时给出）")
+    source: Literal["nfo", "db", "tmdb"] = Field(
+        default="nfo", description="信息出处：nfo=本地刮削 / db=库内档案 / tmdb=实时兜底"
+    )
+
+
+class LibraryItemDetailView(BaseModel):
+    """条目详情页的完整数据：基本信息 + 本地刮削元数据 + 逐文件真实规格。
+
+    图片优先级：条目目录里的本地美术图（poster.jpg/fanart.jpg，走
+    /libraries/.../artwork 接口的相对路径）优先，其次 TMDB 图床绝对地址
+    ——前端按"是否 http 开头"区分两种加载方式。
+    """
+
+    media_item_id: int
+    kind: MediaKind
+    tmdb_id: int
+    imdb_id: str | None
+    title: str
+    original_title: str
+    year: int | None
+    poster_url: str | None
+    backdrop_url: str | None
+    local_meta: LocalMetaView | None = Field(
+        default=None, description="NFO 本地刮削元数据；目录里没有可用 NFO 时为 null"
+    )
+    entry_dirs: list[str] = Field(
+        default_factory=list, description="条目在磁盘上的目录（删除确认时展示）"
+    )
+    files: list[LibraryFileView]
+    file_count: int
+    total_size_bytes: int
+    # 剧集分集区的季选择器数据：库内实有 ∪ 元数据季集结构（电影恒空）。
+    # 特别季 0 只在库里真有文件时出现——元数据里的特别季默认不参与展示
+    seasons: list[int] = Field(default_factory=list, description="季号列表（电影为空）")
+    # 刮削是后台长任务（TMDB + 图片下载），状态放服务端：用户离开页面、
+    # 刷新浏览器、甚至换台设备打开，都能看到"这部还在刮"并等到它结束。
+    # 阶段文案与整库刷新同一套（拉取 TMDB 档案 / 写入元数据 / 下载图片 / …）
+    scraping: bool = Field(default=False, description="该条目正在后台刮削元数据")
+    scraping_phase: str | None = Field(default=None, description="刮削当前阶段；没在刮为 null")
+
+
+class EpisodeView(BaseModel):
+    """剧集分集区的一集：季集结构 + 本地分集刮削 + TMDB 兜底的合并结果。"""
+
+    episode_number: int
+    name: str | None = None
+    overview: str | None = Field(default=None, description="分集简介")
+    air_date: str | None = None
+    still_url: str | None = Field(
+        default=None,
+        description="分集剧照：本地缩略图接口相对路径或 TMDB 图床地址；无为 null",
+    )
+    owned: bool = Field(description="该集有在位文件；false=缺集或文件缺失（前端置灰）")
+    file_ids: list[int] = Field(default_factory=list, description="该集的台账文件 id")
+
+
+class SeasonEpisodesView(BaseModel):
+    """一季的分集清单（分集横滚区数据源）。"""
+
+    season_number: int
+    episodes: list[EpisodeView]
+
+
+class ArtworkCandidateView(BaseModel):
+    """「更换图片」弹层里的一张候选（docs/design/metadata.md 6.3）。"""
+
+    file_path: str = Field(description="TMDB 图片路径（选定时原样回传）")
+    preview_url: str = Field(description="缩略预览地址（TMDB 图床，前端经代理加载）")
+    width: int | None = None
+    height: int | None = None
+    language: str | None = Field(
+        default=None, description="图上文字的语言；null=无文字（背景首选这类）"
+    )
+    vote_average: float | None = None
+    vote_count: int | None = None
+
+
+class ArtworkCandidatesView(BaseModel):
+    """条目的全部候选图，按与自动选图一致的规则排序。
+
+    ``current_*`` 是**实际在用**的图路径（前端据此标「当前」）——不能用
+    "列表第一张"推断：策略升级前刮的条目、手动锁定的条目、TMDB 新增更高票
+    的图，三种情况下第一张都不是在用的那张。
+    """
+
+    posters: list[ArtworkCandidateView] = Field(default_factory=list)
+    backdrops: list[ArtworkCandidateView] = Field(default_factory=list)
+    current_poster: str | None = Field(default=None, description="当前在用的海报路径")
+    current_backdrop: str | None = Field(default=None, description="当前在用的背景路径")
+    poster_locked: bool = Field(default=False, description="海报已手动选定，刷新不覆盖")
+    backdrop_locked: bool = Field(default=False, description="背景已手动选定，刷新不覆盖")
+
+
+class ArtworkSelectPayload(BaseModel):
+    """选图请求：kind 指海报还是背景；file_path 为 null 表示恢复自动选图。"""
+
+    kind: Literal["poster", "backdrop"]
+    file_path: str | None = Field(
+        default=None, description="TMDB 图片路径；null=解锁并恢复自动选图"
+    )
+
+
+class ReidentifyResultView(BaseModel):
+    """单条目重新识别的结论。"""
+
+    total: int = Field(description="参与重识别的在位文件数")
+    identified: int
+    unidentified: int
+    skipped_missing: int = Field(description="missing 文件数（无磁盘实体，保持原身份）")
+    kept_on_error: int = Field(
+        default=0, description="TMDB 网络类失败、保留原身份的文件数（修复网络后可重试）"
+    )
+    changed: bool = Field(description="识别结果与原身份是否不同")
+    new_media_item_id: int | None = Field(
+        default=None, description="全部文件收敛到的新条目；识别失败或分裂为多个条目时为 null"
+    )
+    new_title: str | None = None
+    pinned_identity: bool = Field(
+        default=False,
+        description="身份由目录名 tmdbid 标记或 NFO 钉死——结果不满意需先改标记/NFO 或人工认领",
+    )
+    message: str = Field(description="面向用户的结论文案")
+
+
+class ItemDeleteResultView(BaseModel):
+    """条目真实删除的结论。"""
+
+    removed_paths: list[str] = Field(description="实际从磁盘删除的目录/文件")
+    rows_deleted: int
+    freed_bytes: int
+    errors: list[str] = Field(default_factory=list)
+
+
+class UnidentifiedCandidateView(BaseModel):
+    """收敛器判不了时留下的一个候选（用户点一下即可认领）。"""
+
+    tmdb_id: int
+    title: str
+    year: int | None = None
+    episode_count: int | None = Field(
+        default=None, description="该候选对应季的集数——同名双版本靠它一眼区分"
+    )
+    reasons: list[str] = Field(
+        default_factory=list, description="本地证据对它的佐证（年份相同/本地 N 集吻合…）"
+    )
+
+
 class UnidentifiedFileView(BaseModel):
     """待识别清单的一行。"""
 
@@ -201,8 +474,34 @@ class UnidentifiedFileView(BaseModel):
     season_number: int
     episode_number: int
     reason: str | None = Field(
-        default=None, description="识别失败原因（如 TMDB 无法访问 / 片名解析失败）"
+        default=None, description="识别失败原因整句（展开/悬停查看；清单上只显示标签）"
     )
+    code: str | None = Field(
+        default=None,
+        description="失败分类：unparsable / tmdb_unreachable / ambiguous / no_match",
+    )
+    candidates: list[UnidentifiedCandidateView] = Field(default_factory=list)
+
+
+class UnidentifiedGroupView(BaseModel):
+    """待识别清单的一组：同一条目目录下的文件聚成一条。
+
+    一部剧几十集全认不出时，逐集列出来会把清单刷爆、也让人无从下手；
+    按条目目录聚合后一次认领整组（各文件沿用自己已解析的季集号）。
+    """
+
+    key: str = Field(description="分组键：条目目录绝对路径；裸文件用文件自身路径")
+    label: str = Field(description="展示名：条目目录名（裸文件为文件名）")
+    library_id: int
+    library_name: str
+    file_count: int
+    total_size_bytes: int
+    reason: str | None = Field(default=None, description="组内共同的识别失败原因整句")
+    code: str | None = Field(default=None, description="组内共同的失败分类（决定标签与配色）")
+    candidates: list[UnidentifiedCandidateView] = Field(
+        default_factory=list, description="组内共同的候选：点一下整组认领"
+    )
+    files: list[UnidentifiedFileView]
 
 
 class ClaimPayload(BaseModel):
@@ -211,6 +510,57 @@ class ClaimPayload(BaseModel):
     tmdb_id: int
     season_number: int = 0
     episode_number: int = 0
+
+
+class ClaimBatchPayload(BaseModel):
+    """整组认领：一次把多个待识别文件挂到同一个 TMDB 条目。
+
+    季集号不在这里指定——每个文件沿用扫描时已从文件名解析出的季集号，
+    这正是"一部剧几十集一次认领"能成立的前提。
+    """
+
+    file_ids: list[int] = Field(min_length=1)
+    tmdb_id: int
+
+
+class ReviewItemView(BaseModel):
+    """身份复核里的一方（现身份 / 建议身份）的条目信息。"""
+
+    media_item_id: int
+    tmdb_id: int | None = None
+    title: str
+    year: int | None = None
+    poster_url: str | None = None
+
+
+class ReviewGroupView(BaseModel):
+    """身份复核清单的一组：同一条目目录下、现身份与建议都一致的文件聚成一条。
+
+    识别器升级后扫描复核发现新旧结论不一致的行进入本清单——身份未被改动，
+    由用户拍板：采纳建议（改挂新条目）或维持现状。两种拍板都转为人工身份，
+    此后对账永不再打扰。
+    """
+
+    key: str = Field(description="分组键：条目目录路径 + 现身份 + 建议身份")
+    label: str = Field(description="展示名：条目目录名（裸文件为文件名）")
+    library_id: int
+    library_name: str
+    file_count: int
+    total_size_bytes: int
+    file_ids: list[int]
+    current: ReviewItemView = Field(description="现挂身份")
+    suggestion: ReviewItemView = Field(description="新识别器给出的建议身份")
+
+
+class ReviewResolvePayload(BaseModel):
+    """复核拍板：``accept=True`` 采纳建议改挂新条目；否则维持现状。
+
+    两种拍板都把这些文件的身份来源转为 manual——用户已经看过并做了决定，
+    后续识别器升级不再对它们提复核建议。
+    """
+
+    file_ids: list[int] = Field(min_length=1)
+    accept: bool
 
 
 class MissingFileView(BaseModel):
@@ -253,9 +603,15 @@ class RedownloadPayload(BaseModel):
 
 
 class UnidentifiedClearPayload(BaseModel):
-    """批量忽略整库的待识别文件（只删台账，绝不动磁盘）。"""
+    """批量忽略整库的待识别文件（只打忽略标记，绝不动磁盘）。"""
 
     library_id: int
+
+
+class RestorePayload(BaseModel):
+    """恢复已忽略的文件：清掉忽略标记，重新参与识别。"""
+
+    file_ids: list[int] = Field(min_length=1)
 
 
 class ScanResultView(BaseModel):

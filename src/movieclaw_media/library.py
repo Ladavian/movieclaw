@@ -14,6 +14,7 @@
 from __future__ import annotations
 
 import asyncio
+import math
 from datetime import date
 from enum import StrEnum
 
@@ -32,25 +33,47 @@ _MAX_CANDIDATES = 8
 
 
 class EpisodeInfo(BaseModel):
-    """单集信息；air_date 保持 ISO 字符串形态，与 media_season.episodes JSON 同构。"""
+    """单集信息（订阅骨架 + 展示元数据，media_episode 表的传输形态）。
+
+    air_date 保持 ISO 字符串形态（TMDB 原样），落库时再解析。
+    """
 
     episode_number: int
     name: str = ""
     air_date: str | None = Field(default=None, description="ISO 日期字符串；None=未定档")
+    overview: str | None = None
+    runtime_minutes: int | None = None
+    vote_average: float | None = None
+    still_path: str | None = Field(default=None, description="TMDB 剧照相对路径")
 
 
 class SeasonProfile(BaseModel):
-    """一季的骨架：季级订阅与 wanted 生成所需的全部信息。"""
+    """一季的骨架与展示信息：季级订阅、wanted 生成与详情页所需。"""
 
     season_number: int
     name: str = ""
     air_date: date | None = None
     episode_count: int | None = None
+    overview: str | None = None
+    poster_path: str | None = None
     episodes: list[EpisodeInfo] = Field(default_factory=list)
 
 
+class CastMember(BaseModel):
+    """演员表一行（media_metadata.cast JSON 元素的传输形态）。"""
+
+    name: str
+    character: str | None = None
+    order: int = 0
+    profile_path: str | None = Field(default=None, description="TMDB 头像相对路径")
+
+
 class MediaProfile(BaseModel):
-    """条目身份信息的传输模型：TMDB 原始数据 → 持久层字段的中间形态。"""
+    """条目档案的传输模型：TMDB 原始数据 → 持久层字段的中间形态。
+
+    身份字段供 media_item（匹配最小闭包），展示字段供 media_metadata
+    （自足媒体库的作品档案，docs/design/metadata.md）；同一次请求拉齐。
+    """
 
     kind: MediaKind
     tmdb_id: int
@@ -64,6 +87,21 @@ class MediaProfile(BaseModel):
     backdrop_path: str | None = None
     seasons: list[SeasonProfile] = Field(default_factory=list, description="仅剧集非空")
 
+    # -- 展示层（media_metadata）--------------------------------------------
+    overview: str | None = None
+    tagline: str | None = None
+    genres: list[str] = Field(default_factory=list)
+    runtime_minutes: int | None = None
+    release_date: date | None = None
+    content_rating: str | None = None
+    original_language: str | None = None
+    origin_countries: list[str] = Field(default_factory=list)
+    studios: list[str] = Field(default_factory=list)
+    vote_average: float | None = None
+    vote_count: int | None = None
+    directors: list[str] = Field(default_factory=list)
+    cast: list[CastMember] = Field(default_factory=list)
+
 
 async def fetch_media_profile(
     client: TmdbClient,
@@ -72,16 +110,24 @@ async def fetch_media_profile(
     *,
     language: str = "zh-CN",
 ) -> MediaProfile:
-    """拉取条目的完整身份信息（一次详情请求 + 剧集逐季并发拉集列表）。
+    """拉取条目的完整档案（一次详情请求 + 剧集逐季并发拉集列表）。
 
-    append_to_response 把别名/译名/外部 ID 合并进详情请求，整个电影建档只需
-    一次往返；剧集另按季数并发拉集列表（受客户端漏桶限流约束）。
+    append_to_response 把别名/译名/外部 ID/演职员/分级合并进详情请求，
+    整个电影建档只需一次往返；剧集另按季数并发拉集列表（受客户端漏桶
+    限流约束）。冷门条目当前语言简介缺失时，补拉一次英文兜底（仅条目级，
+    控制请求量——docs/design/metadata.md 第 3 节）。
     """
+    rating_append = "release_dates" if kind is MediaKind.MOVIE else "content_ratings"
     data = await client.get(
         f"{kind.value}/{tmdb_id}",
         {
             "language": language,
-            "append_to_response": "alternative_titles,translations,external_ids",
+            "append_to_response": (
+                f"alternative_titles,translations,external_ids,credits,images,{rating_append}"
+            ),
+            # images 默认只回当前语言的图，几乎必空；显式带上"无语言"(null，
+            # 即无文字烧录的干净图)与中英文，选图策略才有候选可挑
+            "include_image_language": f"null,{language.split('-')[0]},en",
         },
     )
 
@@ -102,6 +148,11 @@ async def fetch_media_profile(
             )
         )
 
+    overview = (data.get("overview") or "").strip() or None
+    tagline = (data.get("tagline") or "").strip() or None
+    if overview is None and not language.lower().startswith("en"):
+        overview, tagline = await _fetch_english_text(client, kind, tmdb_id, tagline)
+
     return MediaProfile(
         kind=kind,
         tmdb_id=tmdb_id,
@@ -111,10 +162,189 @@ async def fetch_media_profile(
         year=_parse_year(release_date),
         aliases=_build_aliases(data, title, original_title),
         status=data.get("status") or None,
-        poster_path=data.get("poster_path"),
-        backdrop_path=data.get("backdrop_path"),
+        poster_path=pick_poster(data, language) or data.get("poster_path"),
+        backdrop_path=pick_backdrop(data) or data.get("backdrop_path"),
         seasons=seasons,
+        overview=overview,
+        tagline=tagline,
+        genres=[g["name"] for g in data.get("genres", []) if g.get("name")],
+        runtime_minutes=_parse_runtime(kind, data),
+        release_date=_parse_date(release_date),
+        content_rating=_parse_certification(kind, data),
+        original_language=data.get("original_language") or None,
+        origin_countries=[c for c in data.get("origin_country", []) if c]
+        or [
+            c.get("iso_3166_1")
+            for c in data.get("production_countries", [])
+            if c.get("iso_3166_1")
+        ],
+        studios=_parse_studios(kind, data),
+        vote_average=round(float(data["vote_average"]), 1) if data.get("vote_average") else None,
+        vote_count=data.get("vote_count") or None,
+        directors=_parse_directors(kind, data),
+        cast=_parse_cast(data),
     )
+
+
+# ---------------------------------------------------------------------------
+# 选图策略（docs/design/metadata.md 6.3）
+# ---------------------------------------------------------------------------
+#
+# TMDB 详情里的 backdrop_path/poster_path 是"按投票排序的第一张"，直接用有
+# 两个通病：① 票王常是**烧了片名文字的横图**（海报化背景），铺全屏做沉浸
+# 背景很脏；② 少量投票就能把一张低分辨率图顶上去。这里从 images 全量候选
+# 里按明确规则重选，规则本身是纯函数，便于单测与后续调参。
+
+# 背景图的分辨率门槛：低于 1080p 宽度的图铺满视口会糊
+_MIN_BACKDROP_WIDTH = 1920
+# 海报的分辨率门槛（w500 展示位，500 宽以下的源图放大会糊）
+_MIN_POSTER_WIDTH = 500
+
+
+def _weighted_score(image: dict) -> float:
+    """加权评分：均分 × log(票数+1)。
+
+    防"1 票 10 分"的冷门图冒顶——纯按 vote_average 排序时，只有个位数
+    投票的图会盖过几百票的公认好图（TMDB 自己的默认排序即有此病）。
+    """
+    average = float(image.get("vote_average") or 0.0)
+    count = int(image.get("vote_count") or 0)
+    return average * math.log(count + 1)
+
+
+def _sorted_candidates(images: list[dict], min_width: int) -> list[dict]:
+    """达到分辨率门槛的候选按加权分降序；门槛过滤掉全部时不设门槛重来
+    （宁可给一张小图，也不要没有图）。"""
+    pool = [i for i in images if int(i.get("width") or 0) >= min_width] or list(images)
+    return sorted(pool, key=_weighted_score, reverse=True)
+
+
+def pick_backdrop(data: dict) -> str | None:
+    """从候选里挑一张做沉浸背景：**无文字优先**，其次分辨率与加权票数。
+
+    ``iso_639_1 is None`` 即"无语言"——TMDB 用它标记没有烧录任何文字的
+    干净图，正是背景该用的那种；全是带字图时退回加权分最高的一张。
+    没有任何候选返回 None（调用方回落 TMDB 默认 backdrop_path）。
+    """
+    images = (data.get("images") or {}).get("backdrops") or []
+    if not images:
+        return None
+    textless = [i for i in images if i.get("iso_639_1") is None]
+    ranked = _sorted_candidates(textless or images, _MIN_BACKDROP_WIDTH)
+    return ranked[0].get("file_path") if ranked else None
+
+
+def pick_poster(data: dict, language: str) -> str | None:
+    """从候选里挑一张海报：**本地化语言优先**，其次分辨率与加权票数。
+
+    与背景相反，海报**要**文字——中文版海报（含中文片名）比英文原版更
+    符合中文用户的预期。当前语言没有海报时退回全部候选。
+    """
+    images = (data.get("images") or {}).get("posters") or []
+    if not images:
+        return None
+    lang = language.split("-")[0]
+    localized = [i for i in images if i.get("iso_639_1") == lang]
+    ranked = _sorted_candidates(localized or images, _MIN_POSTER_WIDTH)
+    return ranked[0].get("file_path") if ranked else None
+
+
+def list_image_candidates(data: dict, language: str) -> tuple[list[dict], list[dict]]:
+    """条目的全部候选图 (海报, 背景)，按各自策略的排序返回。
+
+    供"更换图片"弹层展示——排序与自动选图一致，所以列表第一张就是
+    自动策略会选的那张，用户一眼看出"默认给的是哪张"。
+    """
+    images = data.get("images") or {}
+    posters = images.get("posters") or []
+    backdrops = images.get("backdrops") or []
+    lang = language.split("-")[0]
+    localized = [i for i in posters if i.get("iso_639_1") == lang]
+    poster_ranked = _sorted_candidates(localized or posters, _MIN_POSTER_WIDTH) if posters else []
+    # 海报：本地化优先在前，其余按分排在后（弹层里仍可选到英文原版）
+    rest = [i for i in posters if i not in poster_ranked]
+    poster_list = [*poster_ranked, *_sorted_candidates(rest, _MIN_POSTER_WIDTH)]
+    textless = [i for i in backdrops if i.get("iso_639_1") is None]
+    backdrop_ranked = _sorted_candidates(textless, _MIN_BACKDROP_WIDTH) if textless else []
+    with_text = [i for i in backdrops if i.get("iso_639_1") is not None]
+    backdrop_list = [*backdrop_ranked, *_sorted_candidates(with_text, _MIN_BACKDROP_WIDTH)]
+    return poster_list, backdrop_list
+
+
+async def _fetch_english_text(
+    client: TmdbClient, kind: MediaKind, tmdb_id: int, tagline: str | None
+) -> tuple[str | None, str | None]:
+    """当前语言无简介时的英文兜底（一次轻量详情请求，失败静默保持 None）。"""
+    try:
+        data = await client.get(f"{kind.value}/{tmdb_id}", {"language": "en-US"})
+    except Exception:  # noqa: BLE001 -- 兜底文案拉不到不影响档案主体
+        return None, tagline
+    return (
+        (data.get("overview") or "").strip() or None,
+        tagline or (data.get("tagline") or "").strip() or None,
+    )
+
+
+def _parse_runtime(kind: MediaKind, data: dict) -> int | None:
+    if kind is MediaKind.MOVIE:
+        runtime = data.get("runtime")
+    else:
+        run_times = data.get("episode_run_time") or []
+        runtime = run_times[0] if run_times else None
+    return int(runtime) if runtime else None
+
+
+def _parse_certification(kind: MediaKind, data: dict) -> str | None:
+    """分级：优先 CN，无则 US，再无取第一个非空（电影与剧集接口结构不同）。"""
+    entries: list[tuple[str, str]] = []
+    if kind is MediaKind.MOVIE:
+        for country in (data.get("release_dates") or {}).get("results", []):
+            for release in country.get("release_dates", []):
+                cert = (release.get("certification") or "").strip()
+                if cert:
+                    entries.append((country.get("iso_3166_1") or "", cert))
+                    break
+    else:
+        for country in (data.get("content_ratings") or {}).get("results", []):
+            cert = (country.get("rating") or "").strip()
+            if cert:
+                entries.append((country.get("iso_3166_1") or "", cert))
+    for region in ("CN", "US"):
+        for iso, cert in entries:
+            if iso == region:
+                return cert
+    return entries[0][1] if entries else None
+
+
+def _parse_studios(kind: MediaKind, data: dict) -> list[str]:
+    source = data.get("production_companies") if kind is MediaKind.MOVIE else data.get("networks")
+    return [s["name"] for s in source or [] if s.get("name")][:5]
+
+
+def _parse_directors(kind: MediaKind, data: dict) -> list[str]:
+    if kind is MediaKind.MOVIE:
+        crew = (data.get("credits") or {}).get("crew", [])
+        names = [c["name"] for c in crew if c.get("job") == "Director" and c.get("name")]
+    else:
+        names = [c["name"] for c in data.get("created_by", []) if c.get("name")]
+    return names[:5]
+
+
+# 演员数量上限：详情页与 NFO 展示前 40 位足够（与 library_nfo._MAX_ACTORS 一致）
+_MAX_CAST = 40
+
+
+def _parse_cast(data: dict) -> list[CastMember]:
+    return [
+        CastMember(
+            name=c["name"],
+            character=(c.get("character") or "").strip() or None,
+            order=c.get("order") or 0,
+            profile_path=c.get("profile_path"),
+        )
+        for c in (data.get("credits") or {}).get("cast", [])[:_MAX_CAST]
+        if c.get("name")
+    ]
 
 
 async def _fetch_season(
@@ -126,6 +356,10 @@ async def _fetch_season(
             episode_number=e["episode_number"],
             name=e.get("name") or "",
             air_date=e.get("air_date") or None,
+            overview=(e.get("overview") or "").strip() or None,
+            runtime_minutes=int(e["runtime"]) if e.get("runtime") else None,
+            vote_average=round(float(e["vote_average"]), 1) if e.get("vote_average") else None,
+            still_path=e.get("still_path"),
         )
         for e in data.get("episodes", [])
         if e.get("episode_number") is not None
@@ -136,6 +370,8 @@ async def _fetch_season(
         air_date=_parse_date(data.get("air_date") or ""),
         # 详情季对象可能带 episode_count；集列表已拉到时以实际长度为准
         episode_count=len(episodes) or data.get("episode_count"),
+        overview=(data.get("overview") or "").strip() or None,
+        poster_path=data.get("poster_path"),
         episodes=episodes,
     )
 

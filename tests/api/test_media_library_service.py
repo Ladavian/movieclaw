@@ -130,7 +130,11 @@ async def test_ensure_is_idempotent_and_backfills_douban(db) -> None:
 
 
 async def test_ensure_tv_creates_seasons_with_episodes(db) -> None:
-    """剧集建档：季与集列表一并落库，episodes JSON 结构与设计约定一致。"""
+    """剧集建档：季骨架与 media_episode 集数据一并落库（同一事务）。"""
+    from datetime import date
+
+    from movieclaw_db.models import MediaEpisode
+
     captured: list[httpx.Request] = []
     async with db.session() as session:
         service = MediaLibraryService(session, _fake_tmdb(captured))
@@ -140,17 +144,26 @@ async def test_ensure_tv_creates_seasons_with_episodes(db) -> None:
             select(MediaSeason).where(MediaSeason.media_item_id == item.id)
         )
         seasons = list(result.scalars().all())
+        episodes = list(
+            (
+                await session.execute(
+                    select(MediaEpisode).where(MediaEpisode.media_item_id == item.id)
+                )
+            )
+            .scalars()
+            .all()
+        )
 
     assert item.kind == "tv"
     assert len(seasons) == 1
     season = seasons[0]
     assert season.season_number == 1
     assert season.episode_count == 2
-    assert season.episodes[0] == {
-        "episode_number": 1,
-        "name": "龙之继承人",
-        "air_date": "2022-08-21",
-    }
+    assert len(episodes) == 2
+    assert episodes[0].season_number == 1
+    assert episodes[0].episode_number == 1
+    assert episodes[0].name == "龙之继承人"
+    assert episodes[0].air_date == date(2022, 8, 21)
 
 
 async def test_resolve_douban_matched_creates_item_with_source(db) -> None:

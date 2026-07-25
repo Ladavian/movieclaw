@@ -56,9 +56,10 @@ _RANGE_GAP_RE = re.compile(r"[\s\-~至到]{1,2}[SsEePp]{0,2}")
 def _normalize_spans(spans: list[tuple], texts: tuple[str, str]) -> list[tuple]:
     """号码类 span 的规范化：修复模型把一个号码表达切碎的两种形态。
 
-    1. **区间桥接**：同来源段、同字段、间隙形如区间分隔（"-"、"-S"、"至"）的
-       相邻 span 合并——"S01-S05" 被拆成两段时，合并后 _parse_numbers 才能
-       看到完整区间并展开；合并段置信度取两者较小值（保守）。
+    1. **区间桥接**：同来源段、同字段、间隙形如区间分隔（"-"、"-S"、"至"）
+       或间隙为空（分隔符被模型圈进了前一段，如 "S01-"+"S05"）的相邻 span
+       合并——"S01-S05" 被拆成两段时，合并后 _parse_numbers 才能看到完整
+       区间并展开；合并段置信度取两者较小值（保守）。
     2. **数字吸附**：边界正好切在数字串中间（界内外都是数字）时向外吸满——
        tokenizer 把 "2026" 切成 202+6、模型只标前半时，吸附后才是完整号码。
        边界在字母/量词上绝不吸（"S02E05" 的 E05 左边贴着 02，但 E 不是数字）。
@@ -74,7 +75,7 @@ def _normalize_spans(spans: list[tuple], texts: tuple[str, str]) -> list[tuple]:
                 and last[1] == field
                 and field in _NUMERIC_FIELDS
                 and gap is not None
-                and _RANGE_GAP_RE.fullmatch(gap)
+                and (gap == "" or _RANGE_GAP_RE.fullmatch(gap))
             ):
                 last[3] = end
                 last[4] = min(last[4], prob)
@@ -251,7 +252,8 @@ def extract_with_model(title: str, subtitle: str = "") -> dict[str, object]:
     spans = sorted(other_spans, key=lambda s: (s[0], s[2]))
 
     by_field: dict[str, list[str]] = {}
-    for seq_id, field, start, end, _prob in spans:
+    year_candidates: list[tuple[int, float, str]] = []  # (来源段, 置信度, span 文本)
+    for seq_id, field, start, end, prob in spans:
         source = texts[seq_id]
         if field == "YEAR":
             # 老规则的两条实证守卫，作为模型输出的确定性护栏保留：
@@ -265,7 +267,11 @@ def extract_with_model(title: str, subtitle: str = "") -> dict[str, object]:
                 logger.debug("YEAR 守卫否决 %r（前=%r 后=%r）", source[start:end], before, after)
                 continue
         text = source[start:end].strip()
-        if text and text not in by_field.setdefault(field, []):
+        if not text:
+            continue
+        if field == "YEAR":
+            year_candidates.append((seq_id, prob, text))
+        elif text not in by_field.setdefault(field, []):
             by_field[field].append(text)
 
     result: dict[str, object] = {}
@@ -278,7 +284,10 @@ def extract_with_model(title: str, subtitle: str = "") -> dict[str, object]:
         if titles:
             result[key] = titles
 
-    for span_text in by_field.get("YEAR", []):
+    # 多个 YEAR 候选的确定性抉择：主标题优先于副标题，同段内取模型置信度
+    # 最高的——片名自带年份时（"2001.A.Space.Odyssey.1968"）模型会把两个
+    # 年份都圈出来，但对假年份的置信度显著更低，按置信度即可分辨
+    for _seq_id, _prob, span_text in sorted(year_candidates, key=lambda c: (c[0], -c[1])):
         m = _YEAR_RE.search(span_text)
         if m:
             result["year"] = int(m.group())

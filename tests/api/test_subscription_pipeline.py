@@ -523,7 +523,10 @@ async def test_refresh_grows_new_episode_and_schedules_dated(db, monkeypatch) ->
             ],
         },
     }
-    monkeypatch.setattr(media_refresh, "get_tmdb_client", lambda: _fake_tmdb(updated_routes))
+    # 刷新管线已合流进刮削服务（media_scrape），TMDB client 在 media_discover 取
+    from movieclaw_api.services import media_discover
+
+    monkeypatch.setattr(media_discover, "get_tmdb_client", lambda: _fake_tmdb(updated_routes))
 
     await media_refresh.refresh_media_metadata()
     async with db.session() as session:

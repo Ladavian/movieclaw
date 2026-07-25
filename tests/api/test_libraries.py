@@ -1,8 +1,8 @@
 """媒体库配置接口（/libraries）的端到端测试 + 入库路径推导单元测试。
 
-覆盖：首启种子两个默认库、CRUD 与校验（绝对路径/重名/空根）、每 kind
-默认库不变量（首个自动默认、切换默认、删除默认交接）、save_path 推导
-与目录名清洗。
+覆盖：首启不预置任何库（由前端空态引导创建）、CRUD 与校验（绝对路径/
+重名/空根）、每 kind 默认库不变量（首个自动默认、切换默认、删除默认
+交接）、save_path 推导与目录名清洗。
 """
 
 from __future__ import annotations
@@ -17,10 +17,9 @@ from movieclaw_db.models.library import Library
 
 @pytest.fixture
 def client(tmp_path, monkeypatch):
-    # 每个测试用独立临时 SQLite 库；种子根目录也指向临时目录
+    # 每个测试用独立临时 SQLite 库
     monkeypatch.setenv("DATABASE_URL", f"sqlite+aiosqlite:///{tmp_path / 'test.db'}")
     monkeypatch.setenv("SECRET_KEY_FILE", str(tmp_path / ".secret_key"))
-    monkeypatch.setenv("LIBRARY_DEFAULT_ROOT", str(tmp_path / "library"))
     get_settings.cache_clear()
 
     from movieclaw_api.api.deps import require_login
@@ -29,24 +28,40 @@ def client(tmp_path, monkeypatch):
     app = create_app()
     # 本文件只测媒体库业务，登录鉴权用依赖覆盖绕过（鉴权本身在 test_auth 覆盖）
     app.dependency_overrides[require_login] = lambda: "tester"
-    with TestClient(app) as c:  # with 块内触发 lifespan：迁移 + 首启种子
+    with TestClient(app) as c:  # with 块内触发 lifespan：迁移
         yield c
     get_settings.cache_clear()
 
 
+def _create(client, *, name: str, kind: str, root: str) -> dict:
+    """建库辅助：POST /libraries 并返回创建的库视图（断言 200）。"""
+    r = client.post(
+        "/api/v1/libraries", json={"name": name, "kind": kind, "root_paths": [root]}
+    )
+    assert r.status_code == 200
+    return r.json()["data"]
+
+
 # ---------------------------------------------------------------------------
-# 首启种子
+# 首启空态（不预置默认库）
 # ---------------------------------------------------------------------------
 
 
-def test_seed_creates_two_default_libraries(client) -> None:
-    rows = client.get("/api/v1/libraries").json()["data"]
-    assert {r["name"] for r in rows} == {"电影库", "剧集库"}
-    assert {r["kind"] for r in rows} == {"movie", "tv"}
-    assert all(r["is_default"] for r in rows)
-    by_kind = {r["kind"]: r for r in rows}
-    assert by_kind["movie"]["primary_root"].endswith("/library/movies")
-    assert by_kind["tv"]["primary_root"].endswith("/library/tv")
+def test_first_start_has_no_libraries(client) -> None:
+    # 系统不预置任何默认库：首次部署库表为空，由前端空态引导用户创建
+    assert client.get("/api/v1/libraries").json()["data"] == []
+
+
+def test_scanning_response_always_carries_phase(client) -> None:
+    """``scanning=true`` 必定同时带上阶段与进度，且阶段是裸字符串。
+
+    前端全靠 ``phase`` 选文案（"正在扫描" / "正在补齐海报与剧照" …），
+    出现"在扫描却没有进度"的空档它就只能瞎猜——那正是界面会僵在
+    "正在扫描 N/N" 上撒谎的来源。建库即扫描的乐观响应也不例外。
+    """
+    row = _create(client, name="剧集库", kind="tv", root="/media/tv")
+    assert row["scanning"] is True
+    assert row["scan_progress"] == {"phase": "walking", "processed": 0, "total": 0}
 
 
 # ---------------------------------------------------------------------------
@@ -55,13 +70,13 @@ def test_seed_creates_two_default_libraries(client) -> None:
 
 
 def test_second_library_not_default_until_set(client) -> None:
-    r = client.post(
-        "/api/v1/libraries",
-        json={"name": "动漫库", "kind": "tv", "root_paths": ["/media/anime"]},
-    )
-    assert r.status_code == 200
-    anime = r.json()["data"]
-    assert anime["is_default"] is False  # 该 kind 已有默认（种子的剧集库）
+    first_tv = _create(client, name="剧集库", kind="tv", root="/media/tv")
+    assert first_tv["is_default"] is True  # 每 kind 首个库自动成为默认
+    movie = _create(client, name="电影库", kind="movie", root="/media/movies")
+    assert movie["is_default"] is True
+
+    anime = _create(client, name="动漫库", kind="tv", root="/media/anime")
+    assert anime["is_default"] is False  # 该 kind 已有默认（先建的剧集库）
 
     r = client.post(f"/api/v1/libraries/{anime['id']}/default")
     assert r.json()["data"]["is_default"] is True
@@ -74,6 +89,7 @@ def test_second_library_not_default_until_set(client) -> None:
 
 
 def test_validation_rejects_bad_inputs(client) -> None:
+    _create(client, name="电影库", kind="movie", root="/media/movies")
     # 相对路径拒绝
     r = client.post(
         "/api/v1/libraries",
@@ -95,8 +111,7 @@ def test_validation_rejects_bad_inputs(client) -> None:
 
 
 def test_update_name_and_paths(client) -> None:
-    rows = client.get("/api/v1/libraries", params={"kind": "movie"}).json()["data"]
-    movie_id = rows[0]["id"]
+    movie_id = _create(client, name="电影库", kind="movie", root="/media/movies")["id"]
     r = client.put(
         f"/api/v1/libraries/{movie_id}",
         json={
@@ -112,15 +127,9 @@ def test_update_name_and_paths(client) -> None:
 
 
 def test_delete_default_hands_over_within_kind(client) -> None:
-    anime = client.post(
-        "/api/v1/libraries",
-        json={"name": "动漫库", "kind": "tv", "root_paths": ["/media/anime"]},
-    ).json()["data"]
-    tv_default = [
-        x
-        for x in client.get("/api/v1/libraries", params={"kind": "tv"}).json()["data"]
-        if x["is_default"]
-    ][0]
+    tv_default = _create(client, name="剧集库", kind="tv", root="/media/tv")
+    anime = _create(client, name="动漫库", kind="tv", root="/media/anime")
+    assert tv_default["is_default"] is True and anime["is_default"] is False
     assert client.delete(f"/api/v1/libraries/{tv_default['id']}").status_code == 200
     rows = client.get("/api/v1/libraries", params={"kind": "tv"}).json()["data"]
     assert [x["id"] for x in rows] == [anime["id"]]

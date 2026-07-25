@@ -122,8 +122,9 @@ async def test_clear_missing_per_item_and_all(db) -> None:
 
 
 async def test_clear_unidentified_bulk(db) -> None:
-    """批量忽略：只删 media_item_id 为空的待识别行，已识别的台账不动。"""
-    from movieclaw_api.api.routes.libraries import clear_unidentified
+    """批量忽略：给待识别行打忽略标记（不删行，扫描才认得出"别再问"），
+    已识别的台账不受影响。"""
+    from movieclaw_api.api.routes.libraries import clear_unidentified, list_unidentified
     from movieclaw_api.schemas.library import UnidentifiedClearPayload
 
     async with db.session() as session:
@@ -150,6 +151,11 @@ async def test_clear_unidentified_bulk(db) -> None:
     # 跨会话断言：忽略必须已提交
     async with db.session() as session:
         remaining = list((await session.execute(select(LibraryFile))).scalars().all())
-        # _seed 的 4 条已识别台账（含 missing）全部保留
-        assert len(remaining) == 4
-        assert all(f.media_item_id is not None for f in remaining)
+        # 行一条都不删（删了下次扫描会当新文件重新发现），只是打上标记
+        assert len(remaining) == 7
+        ignored = [f for f in remaining if f.ignored_at is not None]
+        assert len(ignored) == 3 and all(f.media_item_id is None for f in ignored)
+        # _seed 的 4 条已识别台账（含 missing）不受影响
+        assert all(f.ignored_at is None for f in remaining if f.media_item_id is not None)
+        # 清单里已经看不到它们了
+        assert (await list_unidentified(library_id, session)).data == []

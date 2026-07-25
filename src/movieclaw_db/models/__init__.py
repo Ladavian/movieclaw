@@ -20,6 +20,7 @@ from movieclaw_db.models.library import Library
 from movieclaw_db.models.library_file import FileSource, LibraryFile
 from movieclaw_db.models.llm_provider import LlmProvider
 from movieclaw_db.models.media_item import MediaItem, MediaSeason
+from movieclaw_db.models.media_metadata import MediaEpisode, MediaMetadata
 from movieclaw_db.models.rule_set import RuleSet
 from movieclaw_db.models.scheduled_task import (
     ScheduledTask,
@@ -68,7 +69,9 @@ __all__ = [
     "Library",
     "LibraryFile",
     "LlmProvider",
+    "MediaEpisode",
     "MediaItem",
+    "MediaMetadata",
     "MediaSeason",
     "RuleSet",
     "Subscription",

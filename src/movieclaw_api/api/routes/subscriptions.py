@@ -23,6 +23,7 @@ from movieclaw_api.services.media_discover import get_tmdb_client
 from movieclaw_api.services.media_library import MediaLibraryService
 from movieclaw_api.services.subscription import SubscriptionService
 from movieclaw_db.engine import get_session
+from movieclaw_db.models import utcnow
 from movieclaw_media.library import ResolveStatus
 from movieclaw_media.models import MediaKind
 
@@ -78,15 +79,29 @@ async def prepare_subscription(
         payload.kind, tmdb_id, douban_id=payload.douban_id
     )
     # 库存概览（媒体库 L3 联通）：季选择器每行显示"库里已有 x 集"
+    from movieclaw_db.repositories import MediaItemRepository
     from movieclaw_db.repositories.library_file_repo import LibraryFileRepository
 
     assert item.id is not None
     owned = await LibraryFileRepository(session).owned_units(item.id)
+    # 已播集数按季统计（集数据在 media_episode 表）
+    today = utcnow().date()
+    aired_by_season: dict[int, int] = {}
+    for episode in await MediaItemRepository(session).list_episodes(item.id):
+        if episode.air_date is not None and episode.air_date <= today:
+            aired_by_season[episode.season_number] = (
+                aired_by_season.get(episode.season_number, 0) + 1
+            )
     return ok(
         PrepareView(
             status="ready",
             media=MediaBrief.from_model(item),
-            seasons=[SeasonOverview.from_row(s, owned_units=owned) for s in seasons],
+            seasons=[
+                SeasonOverview.from_row(
+                    s, aired_count=aired_by_season.get(s.season_number, 0), owned_units=owned
+                )
+                for s in seasons
+            ],
             existing_subscription_id=existing.id if existing else None,
             movie_owned=payload.kind == MediaKind.MOVIE and (0, 0) in owned,
         )

@@ -26,16 +26,24 @@
        反证。年份间隔这一刀挡住"错代同名老条目"（Berserk 2016 种子不会
        因豁免错挂 1997 版：间隔 19 年远超 S02×2）。
      - 集数（剧集）：对应季的集数 ≥ 本地集号作佐证；不足不淘汰——TMDB 对
-       在播季的集数经常滞后。
+       在播季的集数经常滞后。**本地这一季实际有多少集文件**与候选对应季
+       集数精确相等时是强佐证，且在裁决里先于年份收窄——同名双版本（实测：
+       《风筝》2017 正片 46 集 vs「送审版」51 集，别名互相污染、同年同名）
+       只有集数能一刀切开。
      - 副标题（经下载器落地的文件才有，见 download_hint 表）：其中的中文
        片名作**备选查询词**（主词全灭后换词重跑）；「全N集」与对应季
        episode_count 精确相等作佐证。
 
 最终裁决（保守优先，绝不静默错挂）：
   过门槛且未被反证的候选恰好一个 → 命中；多个时依次用"有佐证者唯一"、
-  "年份精确相等者唯一"、"时长强吻合者唯一（电影）"收窄；仍不唯一 → 放弃，
-  进待识别清单人工认领。例外兜底：门槛全灭的电影允许"时长强吻合且无反证
-  者唯一"直接实锤——enrich 对短中文名偶发截断，物理时长此时是唯一强证据。
+  "本地集数精确相等者唯一"、"年份精确相等者唯一"、"时长强吻合者唯一
+  （电影）"收窄；仍不唯一 → 放弃，进待识别清单人工认领。例外兜底：门槛
+  全灭的电影允许"时长强吻合且无反证者唯一"直接实锤——enrich 对短中文名
+  偶发截断，物理时长此时是唯一强证据。
+
+放弃时**把候选原样带回**（``ResolveOutcome.candidates``）：机器判不了的
+歧义人一眼就能认出来（"46 集那个才是正片"），让用户在待识别清单里直接点
+选，比让他自己去 TMDB 查 id 再手输强得多。
 """
 
 from __future__ import annotations
@@ -78,6 +86,9 @@ class LocalEvidence:
     # 副标题「全N集」声明的总集数（剧集）：与 TMDB 对应季 episode_count
     # 精确相等作佐证
     total_episodes: int | None = None
+    # 本地这一季**实际有多少集文件**（去重集号数）：同名双版本的分水岭证据，
+    # 与 TMDB 对应季集数精确相等时优先于年份收窄（见 _adjudicate）
+    local_episodes: int | None = None
 
 
 # 副标题里的总集数声明：「全32集」「全 13 集」
@@ -88,6 +99,27 @@ def parse_total_episodes(subtitle: str) -> int | None:
     """从副标题里解析「全N集」声明；没有返回 None。"""
     match = _TOTAL_EPISODES.search(subtitle)
     return int(match.group(1)) if match else None
+
+
+@dataclass
+class ResolveCandidate:
+    """带回给用户的一个候选（供待识别清单里点选认领）。"""
+
+    tmdb_id: int
+    title: str
+    year: int | None
+    episode_count: int | None = None  # 对应季集数（剧集）：同名双版本的肉眼区分点
+    reasons: list[str] = field(default_factory=list)  # 本地证据对它的佐证
+
+
+@dataclass
+class ResolveOutcome:
+    """一次收敛的完整结论：命中的 id，或放弃时留给用户挑选的候选。"""
+
+    tmdb_id: int | None = None
+    candidates: list[ResolveCandidate] = field(default_factory=list)
+    # 放弃的具体原因（中文短语，由调用方拼进面向用户的完整文案）
+    reason: str | None = None
 
 
 @dataclass
@@ -113,7 +145,18 @@ async def verify_resolve(
     *,
     language: str = "zh-CN",
 ) -> int | None:
-    """按本地证据验证 TMDB 搜索候选；唯一可信者返回其 tmdb_id，否则 None。
+    """``resolve_with_candidates`` 的薄封装：只要收敛出的 tmdb_id。"""
+    return (await resolve_with_candidates(client, kind, evidence, language=language)).tmdb_id
+
+
+async def resolve_with_candidates(
+    client: TmdbClient,
+    kind: MediaKind,
+    evidence: LocalEvidence,
+    *,
+    language: str = "zh-CN",
+) -> ResolveOutcome:
+    """按本地证据验证 TMDB 搜索候选；唯一可信者命中，否则带回候选供人工选择。
 
     主查询词（文件/目录名）全灭且有备选查询词（副标题中文名）时，换词
     重跑一轮完整验证——标题门槛/反证/裁决对备选词同样生效，不降标准。
@@ -124,24 +167,28 @@ async def verify_resolve(
     主词直接命中，走不到降级）；整题双写折叠（「Beginners Beginners」是
     站点生成器把片名写了两遍；《New York, New York》同理主词先命中）。
     """
-    picked = await _verify_query(client, kind, evidence, language)
-    if picked is not None:
-        return picked
+    outcome = await _verify_query(client, kind, evidence, language)
+    if outcome.tmdb_id is not None:
+        return outcome
     for degraded, why in _degraded_evidences(evidence):
-        picked = await _verify_query(client, kind, degraded, language)
-        if picked is not None:
+        retried = await _verify_query(client, kind, degraded, language)
+        if retried.tmdb_id is not None:
             logger.info(
                 "扫描收敛降级查询命中（%s）：「%s」→「%s」", why, evidence.title, degraded.title
             )
-            return picked
+            return retried
     if not evidence.alt_title:
-        return None
+        return outcome
     if normalize_title(evidence.alt_title) == normalize_title(evidence.title):
-        return None  # 备选词与主词同形，重跑是浪费
+        return outcome  # 备选词与主词同形，重跑是浪费
     logger.info("扫描收敛换词重试：「%s」→ 副标题中文名「%s」", evidence.title, evidence.alt_title)
-    return await _verify_query(
+    retried = await _verify_query(
         client, kind, replace(evidence, title=evidence.alt_title, alt_title=None), language
     )
+    if retried.tmdb_id is not None:
+        return retried
+    # 全灭时优先留主查询词的候选：用户认得的是文件名里的片名，不是副标题
+    return outcome if outcome.candidates else retried
 
 
 # 尾部年份："Police Raid 1947" → 片名 "Police Raid" + 年份 1947
@@ -173,42 +220,54 @@ async def _verify_query(
     kind: MediaKind,
     evidence: LocalEvidence,
     language: str,
-) -> int | None:
+) -> ResolveOutcome:
     """单个查询词的完整验证：普通搜索 → 年份补搜。"""
     # 点分命名的查询词（Shark.Tank）会拖垮 TMDB 搜索召回，先归一成空格
     query = re.sub(r"[._]+", " ", evidence.title).strip()
     candidates = await _search_candidates(client, kind, query, language)
-    picked = await _verify_pool(client, kind, evidence, candidates, language)
-    if picked is not None:
-        return await _exact_year_recheck(client, kind, evidence, candidates, picked, language)
+    outcome = await _verify_pool(client, kind, evidence, candidates, language)
+    if outcome.tmdb_id is not None:
+        return await _exact_year_recheck(
+            client, kind, evidence, candidates, outcome, language
+        )
     if evidence.year is None:
-        return None
+        return outcome
     # 年份补搜：普通搜索按热度排序，冷门正主可能排在前 5 之外（实测案例：
     # 「Berserk 2016」的 2016 版剑风传奇）——带年份参数再捞一轮新候选
     extra = await _search_candidates(client, kind, query, language, year=evidence.year)
     known = {c.tmdb_id for c in candidates}
     fresh = [c for c in extra if c.tmdb_id not in known]
     if not fresh:
-        return None
+        return outcome
     logger.info(
         "扫描收敛年份补搜：「%s」(%s) 新增 %d 个候选", evidence.title, evidence.year, len(fresh)
     )
-    picked_id = await _verify_pool(client, kind, evidence, fresh, language)
-    if picked_id is None:
-        return None
+    extra_outcome = await _verify_pool(client, kind, evidence, fresh, language)
+    if extra_outcome.tmdb_id is None:
+        # 两轮的候选合并带回：正主可能就在补搜捞到的那批里
+        return replace(
+            outcome,
+            candidates=_dedupe_candidates(outcome.candidates + extra_outcome.candidates),
+            reason=outcome.reason or extra_outcome.reason,
+        )
     # 补搜池本身按年份过滤而来，"年份相同"在这里是循环论证、零信息量；
     # 必须另有非平凡佐证才可采信（实测反例：「Never Give Up」剧集种子
     # 差点错挂到同年同英文别名的电影《龍昇不打烊》）
-    picked = next(c for c in fresh if c.tmdb_id == picked_id)
-    strong = _strong_corroborations(kind, evidence, picked)
-    if not strong:
+    picked = next(c for c in fresh if c.tmdb_id == extra_outcome.tmdb_id)
+    if not _strong_corroborations(kind, evidence, picked):
         logger.info(
             "扫描收敛年份补搜否决：《%s》除年份外无有效佐证，进待识别（查询「%s」）",
             picked.title,
             evidence.title,
         )
-        return None
-    return picked_id
+        # 否决的候选照样带回给用户——机器不敢认，人可能一眼就认出
+        return ResolveOutcome(
+            candidates=_dedupe_candidates(
+                outcome.candidates + [_to_user_candidate(kind, evidence, picked)]
+            ),
+            reason=outcome.reason or "候选除年份外没有其它佐证，不敢自动采信",
+        )
+    return extra_outcome
 
 
 async def _exact_year_recheck(
@@ -216,9 +275,9 @@ async def _exact_year_recheck(
     kind: MediaKind,
     evidence: LocalEvidence,
     candidates: list[_Candidate],
-    picked_id: int,
+    outcome: ResolveOutcome,
     language: str,
-) -> int | None:
+) -> ResolveOutcome:
     """±1 年命中的精确年复核（Full Contact 1992 错挂 1993 同名美国片的教训）。
 
     搜索排位噪声可能把「同名且年份精确相等」的正主挤出前 5，让 ±1 年的
@@ -228,16 +287,16 @@ async def _exact_year_recheck(
     资源发布年，本就只作弱佐证，不值得为它翻案。
     """
     if kind is not MediaKind.MOVIE or evidence.year is None:
-        return picked_id
-    picked = next((c for c in candidates if c.tmdb_id == picked_id), None)
+        return outcome
+    picked = next((c for c in candidates if c.tmdb_id == outcome.tmdb_id), None)
     if picked is None or picked.year == evidence.year:
-        return picked_id
+        return outcome
     query = re.sub(r"[._]+", " ", evidence.title).strip()
     extra = await _search_candidates(client, kind, query, language, year=evidence.year)
     known = {c.tmdb_id for c in candidates}
     fresh = [c for c in extra if c.tmdb_id not in known]
     if not fresh:
-        return picked_id
+        return outcome
     logger.info(
         "扫描收敛精确年复核：「%s」(%s) 原命中《%s》(%s)，补搜新增 %d 个精确年候选重裁",
         evidence.title,
@@ -268,12 +327,15 @@ async def _verify_pool(
     evidence: LocalEvidence,
     candidates: list[_Candidate],
     language: str,
-) -> int | None:
+) -> ResolveOutcome:
     if not candidates:
-        return None
+        return ResolveOutcome(reason="TMDB 搜索没有任何结果")
     wanted = normalize_title(evidence.title)
     for candidate in candidates:
         await _load_detail(client, kind, candidate, language)
+
+    def users(pool: list[_Candidate]) -> list[ResolveCandidate]:
+        return [_to_user_candidate(kind, evidence, c) for c in pool]
 
     # ① 标题门槛
     passers = [c for c in candidates if wanted in c.names]
@@ -290,27 +352,35 @@ async def _verify_pool(
                 picked.year,
                 picked.tmdb_id,
             )
-            return picked.tmdb_id
+            return ResolveOutcome(tmdb_id=picked.tmdb_id)
         logger.info(
             "扫描收敛放弃：「%s」的 %d 个候选均未过标题门槛（首位：《%s》）",
             evidence.title,
             len(candidates),
             candidates[0].title,
         )
-        return None
+        # 搜索结果照样带回：片名被 enrich 截断/改写时，人眼往往一眼认得
+        return ResolveOutcome(
+            candidates=users(candidates), reason="搜索结果里没有片名对得上的条目"
+        )
 
     # ② 反证淘汰
     survivors = []
+    rejected: list[_Candidate] = []
     for c in passers:
         counter = _counter_evidence(kind, evidence, c)
         if counter:
             logger.info(
                 "扫描收敛淘汰候选《%s》：%s（查询「%s」）", c.title, counter, evidence.title
             )
+            rejected.append(c)
             continue
         survivors.append(c)
     if not survivors:
-        return None
+        # 同名候选都被本地证据反证：大概率是本地命名有误，交给人判断
+        return ResolveOutcome(
+            candidates=users(rejected), reason="同名候选都与本地的年份/季数对不上"
+        )
 
     # ③ 裁决：唯一幸存 → 逐级收窄 → 歧义放弃
     picked = _adjudicate(kind, evidence, survivors)
@@ -321,7 +391,10 @@ async def _verify_pool(
             len(survivors),
             "、".join(f"《{c.title}》({c.year})" for c in survivors[:3]),
         )
-        return None
+        return ResolveOutcome(
+            candidates=users(survivors),
+            reason=f"有 {len(survivors)} 个同样可信的候选，机器不敢替你选",
+        )
     reasons = _corroborations(kind, evidence, picked) or ["唯一过标题门槛"]
     logger.info(
         "扫描收敛命中：「%s」→《%s》(%s, tmdb=%d)，佐证：%s",
@@ -331,7 +404,34 @@ async def _verify_pool(
         picked.tmdb_id,
         "、".join(reasons),
     )
-    return picked.tmdb_id
+    return ResolveOutcome(tmdb_id=picked.tmdb_id)
+
+
+def _to_user_candidate(
+    kind: MediaKind, evidence: LocalEvidence, c: _Candidate
+) -> ResolveCandidate:
+    """内部候选 → 带给用户的候选（附上佐证与对应季集数，供肉眼区分）。"""
+    return ResolveCandidate(
+        tmdb_id=c.tmdb_id,
+        title=c.title,
+        year=c.year,
+        episode_count=(
+            c.episode_counts.get(evidence.season or 1) if kind is MediaKind.TV else None
+        ),
+        reasons=_corroborations(kind, evidence, c),
+    )
+
+
+def _dedupe_candidates(items: list[ResolveCandidate]) -> list[ResolveCandidate]:
+    """按 tmdb_id 去重、保序（两轮搜索的候选合并时用）。"""
+    seen: set[int] = set()
+    unique = []
+    for item in items:
+        if item.tmdb_id in seen:
+            continue
+        seen.add(item.tmdb_id)
+        unique.append(item)
+    return unique
 
 
 def _adjudicate(
@@ -343,6 +443,11 @@ def _adjudicate(
     if len(corroborated) == 1:
         return corroborated[0]
     pool = corroborated or survivors
+    # 本地实际集数精确相等：同名双版本（正片 46 集 vs 送审版 51 集）的
+    # 分水岭，比年份更有区分度——两个版本同名同年，只有集数不一样
+    exact_episodes = [c for c in pool if _local_episodes_match(evidence, c)]
+    if len(exact_episodes) == 1:
+        return exact_episodes[0]
     if evidence.year is not None:
         exact_year = [c for c in pool if c.year == evidence.year]
         if len(exact_year) == 1:
@@ -430,6 +535,8 @@ def _corroborations(kind: MediaKind, evidence: LocalEvidence, c: _Candidate) -> 
                 reasons.append("集数覆盖")
         if _total_episodes_match(evidence, c):
             reasons.append(f"全{evidence.total_episodes}集吻合")
+        if _local_episodes_match(evidence, c):
+            reasons.append(f"本地 {evidence.local_episodes} 集吻合")
     return reasons
 
 
@@ -440,6 +547,15 @@ def _total_episodes_match(evidence: LocalEvidence, c: _Candidate) -> bool:
     if not evidence.total_episodes:
         return False
     return c.episode_counts.get(evidence.season or 1) == evidence.total_episodes
+
+
+def _local_episodes_match(evidence: LocalEvidence, c: _Candidate) -> bool:
+    """本地实际集数与 TMDB 对应季集数**精确相等**（无季号按第 1 季）。
+
+    只作佐证不作反证：本地只下了半季是常态，集数不足说明不了任何问题。"""
+    if not evidence.local_episodes:
+        return False
+    return c.episode_counts.get(evidence.season or 1) == evidence.local_episodes
 
 
 def _strong_corroborations(kind: MediaKind, evidence: LocalEvidence, c: _Candidate) -> list[str]:
@@ -463,6 +579,8 @@ def _strong_corroborations(kind: MediaKind, evidence: LocalEvidence, c: _Candida
                 reasons.append("集数覆盖")
         if _total_episodes_match(evidence, c):
             reasons.append(f"全{evidence.total_episodes}集吻合")
+        if _local_episodes_match(evidence, c):
+            reasons.append(f"本地 {evidence.local_episodes} 集吻合")
     return reasons
 
 

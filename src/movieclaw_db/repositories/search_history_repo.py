@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import json
 
-from sqlalchemy import delete as sa_delete, func
+from sqlalchemy import delete as sa_delete
+from sqlalchemy import func
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
 

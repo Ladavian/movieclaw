@@ -12,7 +12,7 @@ from __future__ import annotations
 import json
 import logging
 import subprocess
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 logger = logging.getLogger("movieclaw_api.media_probe")
@@ -26,7 +26,12 @@ _PROBE_TIMEOUT = 30.0
 
 @dataclass(frozen=True)
 class MediaSpec:
-    """一次探测的结论。字段 None = 该项未能取得（三态铁律）。"""
+    """一次探测的结论。字段 None = 该项未能取得（三态铁律）。
+
+    音频/字幕流是**列表字段**：空列表 = 探测成功但确实没有该类流
+    （与 None=没探测到有区别），元素结构见 ``_audio_stream_info`` /
+    ``_subtitle_stream_info``——直接以 dict 形态落 JSON 列，前端负责展示格式化。
+    """
 
     resolution: str | None
     video_codec: str | None
@@ -34,6 +39,8 @@ class MediaSpec:
     bit_depth: int | None
     duration_seconds: int | None
     bit_rate: int | None
+    audio_streams: list[dict] = field(default_factory=list)
+    subtitle_streams: list[dict] = field(default_factory=list)
 
 
 def probe_media(path: str | Path) -> MediaSpec | None:
@@ -94,6 +101,7 @@ def _parse_probe(payload: dict) -> MediaSpec:
         hdr = _hdr_label(video)
         bit_depth = _bit_depth(video)
 
+    streams = payload.get("streams", [])
     return MediaSpec(
         resolution=resolution,
         video_codec=codec,
@@ -101,7 +109,41 @@ def _parse_probe(payload: dict) -> MediaSpec:
         bit_depth=bit_depth,
         duration_seconds=_to_int(fmt.get("duration")),
         bit_rate=_to_int(fmt.get("bit_rate")),
+        audio_streams=[
+            _audio_stream_info(s) for s in streams if s.get("codec_type") == "audio"
+        ],
+        subtitle_streams=[
+            _subtitle_stream_info(s) for s in streams if s.get("codec_type") == "subtitle"
+        ],
     )
+
+
+def _audio_stream_info(stream: dict) -> dict:
+    """音轨的展示要素。``profile`` 比 codec 更接近用户认知（如 DTS-HD MA、
+    Dolby TrueHD + Atmos 探不出 Atmos 层，先给基础格式），缺失时前端退回 codec。"""
+    tags = stream.get("tags") or {}
+    return {
+        "codec": stream.get("codec_name"),
+        "profile": stream.get("profile"),
+        "channels": _to_int(stream.get("channels")),
+        "channel_layout": stream.get("channel_layout"),
+        "language": tags.get("language"),
+        "title": tags.get("title"),
+        "default": bool((stream.get("disposition") or {}).get("default")),
+    }
+
+
+def _subtitle_stream_info(stream: dict) -> dict:
+    """内封字幕轨的展示要素（外挂字幕文件由媒体库详情层另行发现）。"""
+    tags = stream.get("tags") or {}
+    disposition = stream.get("disposition") or {}
+    return {
+        "codec": stream.get("codec_name"),
+        "language": tags.get("language"),
+        "title": tags.get("title"),
+        "forced": bool(disposition.get("forced")),
+        "default": bool(disposition.get("default")),
+    }
 
 
 def _resolution_label(width: int | None, height: int | None) -> str | None:

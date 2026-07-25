@@ -65,3 +65,21 @@ def _mute_instant_search_kick(monkeypatch):
     monkeypatch.setattr(
         "movieclaw_api.services.wanted_search.kick_search_soon", lambda: None
     )
+
+
+@pytest.fixture(autouse=True)
+def _offline_image_proxy(monkeypatch):
+    """刮削管线的图片资产下载在测试环境一律快速失败（不访问外网图床）。
+
+    管线对单张失败本就优雅降级（字段保持 NULL、下次刷新自愈），这里只是
+    把"真实网络超时"换成即时异常，保证测试快速且不依赖外网。直接构造
+    ImageProxy 实例（注入 MockTransport）的专项测试不经单例，不受影响。
+    """
+
+    class _Offline:
+        async def fetch(self, url: str):
+            raise RuntimeError("测试环境不访问外网图床")
+
+    monkeypatch.setattr(
+        "movieclaw_api.services.image_proxy.get_image_proxy", lambda: _Offline()
+    )

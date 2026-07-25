@@ -40,6 +40,10 @@ class Library(TimestampMixin, table=True):
     )
     # 每 kind 至多一个默认库
     is_default: bool = Field(default=False, description="是否为该类型的默认库")
+    # 刮削成果镜像写入媒体目录（poster.jpg/fanart.jpg/分集 thumb + 完整 NFO，
+    # Kodi/Emby 规范，只增不覆盖不删除——docs/design/metadata.md 6.2）。
+    # 默认开：无破坏性且反哺播放器生态；不想污染目录的用户按库关闭
+    write_media_assets: bool = Field(default=True, description="刮削图片/NFO 是否写入媒体目录")
 
     @property
     def primary_root(self) -> str | None:

@@ -19,7 +19,6 @@ from movieclaw_db.models import (
     SubscriptionActivity,
     WantedItem,
 )
-from movieclaw_db.models.base import utcnow
 from movieclaw_media.library import ResolveCandidate
 from movieclaw_media.models import MediaKind
 
@@ -99,17 +98,13 @@ class SeasonOverview(BaseModel):
 
     @classmethod
     def from_row(
-        cls, season: MediaSeason, *, owned_units: set[tuple[int, int]] | None = None
+        cls,
+        season: MediaSeason,
+        *,
+        aired_count: int,
+        owned_units: set[tuple[int, int]] | None = None,
     ) -> SeasonOverview:
-        today = utcnow().date()
-        aired = 0
-        for episode in season.episodes:
-            raw = episode.get("air_date")
-            try:
-                if raw and date.fromisoformat(raw) <= today:
-                    aired += 1
-            except ValueError:
-                continue
+        """``aired_count`` 由调用方从 media_episode 表统计（集数据唯一事实源）。"""
         owned = 0
         if owned_units:
             owned = sum(1 for s, _e in owned_units if s == season.season_number)
@@ -118,7 +113,7 @@ class SeasonOverview(BaseModel):
             name=season.name,
             air_date=season.air_date,
             episode_count=season.episode_count,
-            aired_count=aired,
+            aired_count=aired_count,
             owned_count=owned,
         )
 

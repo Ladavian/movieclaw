@@ -481,3 +481,48 @@ async def test_total_episodes_disambiguates_same_title() -> None:
         client, MediaKind.TV, LocalEvidence(title="山海情", total_episodes=13)
     )
     assert picked == 201
+
+
+async def test_local_episodes_disambiguates_same_year_versions() -> None:
+    """《风筝》2017 实测案例：TMDB 有正片（46 集）与「送审版」（51 集）两个
+    同名同年条目，送审版的别名里就叫「风筝」——标题门槛、年份、季数全都
+    分不开，只有本地实际集数能一刀切开（两个方向都要判对，不能是碰巧）。"""
+    routes = {
+        "/3/search/tv": {
+            "results": [
+                _tv(75956, "风筝", "风筝", 2017),
+                _tv(309806, "风筝·送审版", "风筝·送审版", 2017),
+            ]
+        },
+        "/3/tv/75956": _tv_detail(75956, seasons=1, episode_counts={1: 46}),
+        "/3/tv/309806": _tv_detail(309806, seasons=1, episode_counts={1: 51}, alts=["风筝"]),
+    }
+    for local, expected in ((46, 75956), (51, 309806)):
+        picked = await verify_resolve(
+            _client(routes),
+            MediaKind.TV,
+            LocalEvidence(title="风筝", year=2017, season=1, episode=1, local_episodes=local),
+        )
+        assert picked == expected
+
+
+async def test_local_episodes_mismatch_stays_ambiguous() -> None:
+    """本地只下了半季（集数与两个候选都对不上）：不许硬猜，仍进待识别。"""
+    client = _client(
+        {
+            "/3/search/tv": {
+                "results": [
+                    _tv(75956, "风筝", "风筝", 2017),
+                    _tv(309806, "风筝·送审版", "风筝·送审版", 2017),
+                ]
+            },
+            "/3/tv/75956": _tv_detail(75956, seasons=1, episode_counts={1: 46}),
+            "/3/tv/309806": _tv_detail(309806, seasons=1, episode_counts={1: 51}, alts=["风筝"]),
+        }
+    )
+    picked = await verify_resolve(
+        client,
+        MediaKind.TV,
+        LocalEvidence(title="风筝", year=2017, season=1, episode=1, local_episodes=20),
+    )
+    assert picked is None

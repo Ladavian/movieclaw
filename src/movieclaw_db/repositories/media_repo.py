@@ -5,10 +5,12 @@ from sqlmodel import select
 
 from movieclaw_db.models.base import utcnow
 from movieclaw_db.models.media_item import MediaItem, MediaSeason
+from movieclaw_db.models.media_metadata import MediaEpisode, MediaMetadata
 
 
 class MediaItemRepository:
-    """媒体条目（``media_item`` / ``media_season``）的数据访问层。
+    """媒体条目（``media_item`` / ``media_season`` / ``media_episode`` /
+    ``media_metadata``）的数据访问层。
 
     职责边界：只做按锚存取与整体落库，不理解 TMDB 数据结构、不做收敛判定——
     这些语义在 ``movieclaw_api.services.media_library`` 与 ``movieclaw_media.library``。
@@ -33,13 +35,45 @@ class MediaItemRepository:
         )
         return list(result.scalars().all())
 
-    async def create_with_seasons(self, item: MediaItem, seasons: list[MediaSeason]) -> MediaItem:
-        """建档：条目与季一次事务落库，返回带 id 的条目。"""
+    async def list_episodes(
+        self, media_item_id: int, season_number: int | None = None
+    ) -> list[MediaEpisode]:
+        """返回条目的集（可限定一季），按 (季号, 集号) 升序。"""
+        statement = select(MediaEpisode).where(MediaEpisode.media_item_id == media_item_id)
+        if season_number is not None:
+            statement = statement.where(MediaEpisode.season_number == season_number)
+        statement = statement.order_by(
+            MediaEpisode.season_number, MediaEpisode.episode_number  # type: ignore[arg-type]
+        )
+        result = await self._session.execute(statement)
+        return list(result.scalars().all())
+
+    async def get_metadata(self, media_item_id: int) -> MediaMetadata | None:
+        """读取条目的展示元数据档案；未刮削过返回 None。"""
+        result = await self._session.execute(
+            select(MediaMetadata).where(MediaMetadata.media_item_id == media_item_id)
+        )
+        return result.scalar_one_or_none()
+
+    async def create_with_seasons(
+        self,
+        item: MediaItem,
+        seasons: list[MediaSeason],
+        episodes: list[MediaEpisode] | None = None,
+        metadata: MediaMetadata | None = None,
+    ) -> MediaItem:
+        """建档：条目、季、集与展示档案一次事务落库，返回带 id 的条目。"""
         self._session.add(item)
-        await self._session.flush()  # 先拿到 item.id 供季行引用
+        await self._session.flush()  # 先拿到 item.id 供子表行引用
         for season in seasons:
             season.media_item_id = item.id
             self._session.add(season)
+        for episode in episodes or []:
+            episode.media_item_id = item.id
+            self._session.add(episode)
+        if metadata is not None:
+            metadata.media_item_id = item.id
+            self._session.add(metadata)
         await self._session.commit()
         await self._session.refresh(item)
         return item

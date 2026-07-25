@@ -1,15 +1,23 @@
 """存量扫描器（媒体库 L3 核心）：把库根路径下已有的文件识别并纳入台账。
 
 识别链（docs/design/library.md M2，每个视频文件依次尝试）：
-  ① NFO 优先——存量目录常有 Emby/TMM 刮削好的 NFO（内含 tmdb id），
-     读到即免费精确身份；
+  ⓪ 类型冲突拦截——文件明显是剧集却在电影库（或 NFO 根元素与库类型相反）
+     时**直接判待识别**，不进入后面任何一步：TMDB 的 movie 与 tv 是两套
+     独立 id 空间，按错误类型拉档会成功拿到一部毫不相干的作品（见
+     ``_kind_conflict``）；
+  ① 显式身份优先——路径里的 ``[tmdbid=75956]`` 标记（Emby/Jellyfin/TMM
+     的通行命名惯例，用户手写的身份声明）与 NFO 里的 tmdb id，读到即
+     精确身份；但**声明不再免检**：拉到的条目与本地片名/年份严重矛盾时
+     不予采信，降级走 ②（见 ``_pinned_mismatch``）；
   ② 文件名/目录名解析（enrich 复用）→ TMDB 证据验证收敛
      （标题门槛 + 年份/时长/季集数佐证，见 library_resolve 模块头注释）；
   ③ 仍无法确认 → 照样落账但 media_item_id=NULL，进"待识别"清单人工认领
      ——宁可待确认，不静默错挂。
 
-增量语义：已在台账且在位的路径直接跳过（重扫秒级）；标记过 missing 的
-文件再次被发现时自动清除标记。扫描同时感知删除：在位根路径下、台账有
+增量语义：已识别且在位的路径直接跳过（重扫秒级）；**在位但待识别的行
+每轮重走识别链**（行原地更新）——「重新扫描」因此天然是识别重试入口，
+TMDB 网络故障恢复后重扫即可自动补识别；标记过 missing 的
+文件再次被发现时自动清除标记（已有身份锚原样保留，不重新识别）。扫描同时感知删除：在位根路径下、台账有
 但本轮没遍历到的文件标记 missing（挂载失败的根整个跳过、不误伤）——
 "扫描 = 把台账与磁盘对齐"，新增与消失一次看全。扫描绝不移动/重命名/
 删除任何存量文件，missing 只是标记、记录永远保留。
@@ -32,22 +40,26 @@ import asyncio
 import logging
 import re
 import time
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field, replace
+from enum import StrEnum
 from pathlib import Path
 
 from sqlmodel import select
 
-from movieclaw_api.services.library_import import VIDEO_EXTS
+from movieclaw_api.services.library_import import VIDEO_EXTS, entry_dirs, season_from_dir
+from movieclaw_api.services.library_nfo import NfoIdentity, read_entry_identity
 from movieclaw_api.services.library_resolve import (
     LocalEvidence,
+    normalize_title,
     parse_total_episodes,
-    verify_resolve,
+    resolve_with_candidates,
 )
 from movieclaw_api.services.media_discover import get_tmdb_client
 from movieclaw_api.services.media_library import MediaLibraryService
 from movieclaw_api.services.media_probe import probe_media
 from movieclaw_db.engine import get_database
 from movieclaw_db.models import DownloadHint, FileSource, Library, LibraryFile, MediaItem, utcnow
+from movieclaw_db.models.library_file import IdentitySource, UnidentifiedCode
 from movieclaw_db.models.scheduled_task import TriggerType
 from movieclaw_db.repositories.library_file_repo import LibraryFileRepository
 from movieclaw_enrich import enrich
@@ -61,29 +73,85 @@ _IGNORE_DIRS = {"@eadir", ".deletedbytmm", "bonus", "extras", "sample", "samples
 # 文件名含这些标记不入库
 _IGNORE_MARKERS = ("sample",)
 
-# 季目录名解析："Season 02" / "S02" / "Specials" / "特别篇"
-_SEASON_DIR = re.compile(r"^(?:season[ ._-]*(\d{1,3})|s(\d{1,3}))$", re.IGNORECASE)
-_SPECIALS_DIR = re.compile(r"^(?:specials?|特别篇|特典)$", re.IGNORECASE)
+# 路径里的显式 tmdb id 标记（Emby/Jellyfin/TMM 通行惯例，用户手写的身份声明）：
+# 「风筝 (2017) [tmdbid=75956]」「Kite [tmdb-75956]」「{tmdb-75956}」
+_PATH_TMDBID = re.compile(r"[\[{]\s*tmdb(?:id)?\s*[-=]\s*(\d+)\s*[\]}]", re.IGNORECASE)
 
-# NFO 里的 tmdb id：<tmdbid>123</tmdbid> 或 <uniqueid type="tmdb">123</uniqueid>
-_NFO_TMDBID = re.compile(r"<tmdbid>\s*(\d+)\s*</tmdbid>", re.IGNORECASE)
-_NFO_UNIQUEID = re.compile(r'<uniqueid[^>]*type="tmdb"[^>]*>\s*(\d+)\s*</uniqueid>', re.IGNORECASE)
+# 识别器版本号：识别链（NFO 解析 / 名称解析 / TMDB 证据收敛）发生**实质**
+# 变更时 +1。扫描会对「已识别、但版本落后且非人工认领」的行重走识别链复核
+# （身份对账）：新旧结论一致只更新版本戳；不一致写入复核建议、由用户在
+# 「身份复核」清单拍板——识别器升级的红利因此能主动惠及存量库，而不是
+# 只有新文件受益。
+# 版本史：1 = 特性上线前的隐式版本（存量行 resolved_version 为 NULL）；
+#         2 = NFO 结构化解析（修复演员 person id / 分集 id 冒认条目身份）
+#         3 = 钉死身份不再免检（类型冲突检测 + 声明与本地证据的矛盾校验）
+RESOLVER_VERSION = 3
+
+# 身份来源的中文名（日志与提示用）
+_ID_SOURCE_NAMES = {
+    IdentitySource.PATH_TAG: "目录名 tmdbid 标记",
+    IdentitySource.NFO: "NFO",
+}
+_KIND_NAMES = {MediaKind.MOVIE: "电影", MediaKind.TV: "剧集"}
+
+# 钉死身份的年份反证阈值（年）：同一部作品在 TMDB 与文件名上的年份不会差
+# 这么多；超出才有资格参与"推翻用户显式声明"的判定（见 _pinned_mismatch）
+_PINNED_YEAR_TOLERANCE = 2
 
 # 新文件的静默窗口：mtime 距今不足该值视为"疑似写入中"，本轮暂缓入账。
 # 只看 mtime 不看大小——BT 客户端预分配全尺寸文件，大小从一开始就不变
 NEW_FILE_QUIET_SECONDS = 300
 
-# 同一时间每个库只允许一个扫描在跑（进程内互斥）
-_scanning: set[int] = set()
-# 用户请求停止的库：扫描循环在每个文件之间检查，命中即提前收尾
+
+class ScanPhase(StrEnum):
+    """扫描类任务的阶段。
+
+    分阶段是**状态诚实**的要求：一次「扫描」并不是单一动作，遍历完文件
+    之后还要给新挂锚的条目补齐图片资产（几百张剧照、以分钟计）。不区分
+    阶段的话，进度会长时间停在「已处理 = 总数」，用户看到的是一个撞了
+    墙的进度条，无从判断是慢还是死。每个阶段有自己的分子分母与文案。
+    """
+
+    WALKING = "walking"  # 盘点根路径下的文件（分母还没定）
+    INGESTING = "ingesting"  # 逐文件走识别链、写台账（分母 = 待处理文件数）
+    ASSETS = "assets"  # 收尾补齐图片资产（分母 = 本轮新挂锚的条目数）
+    REIDENTIFYING = "reidentifying"  # 单条目重识别（与扫描共用同一把库级锁）
+
+
+# 阶段的中文名：接口冲突提示与日志共用，避免"正在重新识别"被说成"正在扫描"
+PHASE_LABELS: dict[ScanPhase, str] = {
+    ScanPhase.WALKING: "正在盘点文件",
+    ScanPhase.INGESTING: "正在扫描",
+    ScanPhase.ASSETS: "正在补齐图片资产",
+    ScanPhase.REIDENTIFYING: "正在重新识别条目",
+}
+
+# 可以中途叫停的阶段：重识别在改身份锚，半途而废会留下不一致的台账，
+# 因此不给停止入口（它本身也只处理单个条目、很快结束）
+_STOPPABLE_PHASES = {ScanPhase.WALKING, ScanPhase.INGESTING, ScanPhase.ASSETS}
+
+
+@dataclass
+class ScanState:
+    """一次扫描/重识别在进程内的实时状态（前端进度环的数据源）。"""
+
+    phase: ScanPhase
+    processed: int = 0
+    total: int = 0  # 0 表示分母未知（遍历阶段），前端画不确定态转圈
+
+
+# 进行中的扫描类任务：库 id → 实时状态。**同时**承担三个角色：库级互斥锁
+# （在册即有任务在跑）、阶段标识、进度来源。三者合一是刻意的——早先"互斥
+# 用 set、进度用另一个 dict"的写法必须靠人肉维持两者同生共死，任何一条
+# 提前退出的路径都会让「在扫描」与「有进度」对不上，接口于是开始说谎
+_jobs: dict[int, ScanState] = {}
+# 用户请求停止的库：扫描循环在每个文件/条目之间检查，命中即提前收尾
 _stop_requests: set[int] = set()
 # 暂缓补扫任务：每库至多一个（写入结束后没有事件叫醒扫描，靠它到点补扫）
 _rescan_tasks: dict[int, asyncio.Task] = {}
 # 每库最近一次扫描的结论（进程内即可：给前端"扫描完成了什么"的反馈——
 # 扫描常常毫秒级结束，没有这份记录用户会以为点了没反应）
 _last_scans: dict[int, tuple] = {}
-# 扫描进行中的实时进度 (已处理, 总数)：前端轮询后在库封面上画进度环
-_progress: dict[int, tuple[int, int]] = {}
 
 
 @dataclass
@@ -94,28 +162,52 @@ class ScanSummary:
     scanned: int = 0  # 本轮处理的新文件数
     identified: int = 0  # 成功挂上身份锚
     unidentified: int = 0  # 落账但待识别
+    kind_mismatched: int = 0  # 其中因"类型与本库不符"待识别的（库类型可能选错了）
     relinked: int = 0  # 改名归并：旧台账行迁到新路径（身份延续，不算新入账）
     skipped_known: int = 0  # 已在台账、直接跳过
+    skipped_ignored: int = 0  # 用户忽略过的文件，不再重走识别链
     marked_missing: int = 0  # 台账有但磁盘上已消失，标记 missing
     deferred: int = 0  # 疑似写入中（mtime 太新），本轮暂缓入账，稍后自动补扫
+    retried: int = 0  # 识别重试：在位但待识别的台账行重走识别链（不算新入账）
+    reviewed: int = 0  # 身份复核：识别器升级后重走识别链的已识别行
+    review_flagged: int = 0  # 复核发现新旧结论不一致、已写入复核建议的行
     cancelled: bool = False  # 用户手动停止：已入账的保留，未处理的留待下次扫描
     errors: list[str] = field(default_factory=list)
     # 暂缓文件的最近到期秒数（补扫的等待时长；对外接口不暴露）
     recheck_delay_seconds: float = 0.0
+    # 本轮挂上身份锚的条目（去重）：扫描收尾统一补齐图片资产与媒体目录
+    # 镜像（docs/design/metadata.md 4.1；对外接口不暴露）
+    identified_item_ids: set[int] = field(default_factory=set)
 
 
 def is_scanning(library_id: int) -> bool:
-    return library_id in _scanning
+    """该库是否有扫描类任务在跑（扫描或重识别）——库级互斥的判定入口。
+
+    具体在做什么由 ``scan_progress(library_id).phase`` 区分：调用方要对
+    用户描述状态时**必须**读阶段，不能一律说成"正在扫描"。
+    """
+    return library_id in _jobs
+
+
+def busy_phase(library_id: int) -> ScanPhase | None:
+    """该库进行中任务的阶段；没有任务在跑返回 None（接口提示文案用）。"""
+    state = _jobs.get(library_id)
+    return state.phase if state is not None else None
 
 
 def request_stop_scan(library_id: int) -> bool:
-    """请求停止该库进行中的扫描；没有扫描在跑返回 False。
+    """请求停止该库进行中的扫描；没有**可停止**的任务在跑返回 False。
 
     停止是"提前收尾"而非回滚：已识别入账的文件保留，还没处理到的文件
-    下次扫描继续（扫描本就是增量幂等的）。循环在文件之间检查标志，
-    单个文件的识别（含 TMDB 请求）不会被打断，通常几秒内停下。
+    下次扫描继续（扫描本就是增量幂等的）。遍历、入账、资产补齐三个阶段
+    都在每个单位之间检查标志，单个文件的识别（含 TMDB 请求）不会被打断，
+    通常几秒内停下。
+
+    重识别阶段返回 False 而不是"假装受理"：它不看这个标志，受理了既停
+    不下来，标志还会残留到下一次真扫描、让那次刚开始就被取消。
     """
-    if library_id not in _scanning:
+    state = _jobs.get(library_id)
+    if state is None or state.phase not in _STOPPABLE_PHASES:
         return False
     _stop_requests.add(library_id)
     return True
@@ -143,9 +235,12 @@ def last_scan(library_id: int) -> tuple | None:
     return _last_scans.get(library_id)
 
 
-def scan_progress(library_id: int) -> tuple[int, int] | None:
-    """进行中扫描的 (已处理, 总数)；没有扫描在跑则为 None。"""
-    return _progress.get(library_id)
+def scan_progress(library_id: int) -> ScanState | None:
+    """进行中任务的实时状态（阶段 + 已处理/总数）；没有任务在跑则为 None。
+
+    与 ``is_scanning`` 同一份数据，不存在"在扫描却没有进度"的中间态。
+    """
+    return _jobs.get(library_id)
 
 
 async def scan_library(library_id: int) -> ScanSummary:
@@ -153,8 +248,9 @@ async def scan_library(library_id: int) -> ScanSummary:
     from movieclaw_api.services.library_organize import is_organizing
 
     summary = ScanSummary(library_id=library_id)
-    if library_id in _scanning:
-        summary.errors.append("该库已有扫描在进行中")
+    running = _jobs.get(library_id)
+    if running is not None:
+        summary.errors.append(f"该库已有任务在进行中（{PHASE_LABELS[running.phase]}）")
         return summary
     # 与整理互斥：整理在批量改名，扫描此刻介入会把刚搬走的旧路径标 missing、
     # 把新路径当新文件重走识别链（人工认领可能丢失）。手动扫描、watchdog
@@ -163,17 +259,19 @@ async def scan_library(library_id: int) -> ScanSummary:
     if is_organizing(library_id):
         summary.errors.append("该库正在整理文件名，扫描已跳过（整理完成后可重新扫描）")
         return summary
-    _scanning.add(library_id)
+    # 状态先立起来再干活：从这一行到 finally 之间的任何路径，"在跑"与
+    # "跑到哪了"都由同一个对象回答，接口不可能取到半截状态
+    state = ScanState(phase=ScanPhase.WALKING)
+    _jobs[library_id] = state
     try:
-        return await _scan(library_id, summary)
+        return await _scan(library_id, summary, state)
     except Exception:  # noqa: BLE001 -- 后台任务兜底
         logger.exception("媒体库 #%s 扫描时发生未知错误", library_id)
         summary.errors.append("扫描中断：发生未知错误（详见后端日志）")
         return summary
     finally:
-        _scanning.discard(library_id)
+        _jobs.pop(library_id, None)
         _stop_requests.discard(library_id)
-        _progress.pop(library_id, None)
         _last_scans[library_id] = (utcnow(), summary)
         # 暂缓过文件的扫描要自己安排补扫：写入结束后不会再有事件叫醒我们
         # （手动停止的不自动补扫——用户的意图是"别扫了"）
@@ -181,7 +279,7 @@ async def scan_library(library_id: int) -> ScanSummary:
             _arm_rescan(library_id, summary.recheck_delay_seconds)
 
 
-async def _scan(library_id: int, summary: ScanSummary) -> ScanSummary:
+async def _scan(library_id: int, summary: ScanSummary, state: ScanState) -> ScanSummary:
     db = get_database()
     async with db.session() as session:
         library = await session.get(Library, library_id)
@@ -194,6 +292,8 @@ async def _scan(library_id: int, summary: ScanSummary) -> ScanSummary:
         kind = MediaKind(library.kind)
         # 每轮扫描内的收敛缓存：同一部剧同一季几十集只查一次 TMDB
         resolve_cache: dict[tuple, MediaItem | None] = {}
+        # 目录 → 本地集数：同一季目录只统计一次（统计要对每个文件跑 enrich）
+        episodes_cache: dict[Path, int | None] = {}
         # 下载线索：手动下载提交时锚定的「条目目录 → 副标题」（拼音名种子的救赎）
         hints = await _load_hints(session)
 
@@ -212,7 +312,9 @@ async def _scan(library_id: int, summary: ScanSummary) -> ScanSummary:
                 pending.append((root_path, file, is_disc))
 
         assert library.id is not None
-        _progress[library.id] = (0, len(pending))
+        # 分母定了，进入逐文件入账阶段
+        state.phase = ScanPhase.INGESTING
+        state.processed, state.total = 0, len(pending)
         now_ts = time.time()
         min_remaining: float | None = None
         for done, (root_path, file, is_disc) in enumerate(pending, start=1):
@@ -228,9 +330,47 @@ async def _scan(library_id: int, summary: ScanSummary) -> ScanSummary:
                 break
             path_str = str(file)
             existing = known.get(path_str)
-            if existing is not None and existing.missing_since is None:
-                summary.skipped_known += 1
-                _progress[library.id] = (done, len(pending))
+            # 用户忽略过的文件秒过：花絮/预告/自录内容在 TMDB 本就没有条目，
+            # 重走识别链只会再次失败、再次回到清单。忽略是**永久**承诺，
+            # 「已忽略」清单里可一键恢复（消失又回来的顺手清 missing 标记，
+            # 忽略状态原样保留）
+            if existing is not None and existing.ignored_at is not None:
+                if existing.missing_since is not None:
+                    assert existing.id is not None
+                    await repo.clear_missing_flag(existing.id)
+                summary.skipped_ignored += 1
+                state.processed = done
+                continue
+            # 已识别且在位的行秒过。「在位但待识别」的行不跳过——重走识别链，
+            # 让「重新扫描」天然成为识别重试入口（TMDB 网络故障恢复后重扫即可，
+            # 不必先忽略再扫）；行原地更新，不产生新台账
+            if (
+                existing is not None
+                and existing.missing_since is None
+                and existing.media_item_id is not None
+            ):
+                # 身份对账：识别器升级后（版本戳落后）重走识别链复核——
+                # 人工认领的身份永不复核；结论不一致只写建议不改身份
+                if _review_due(existing):
+                    try:
+                        await _review_identity(
+                            session,
+                            media_service,
+                            kind,
+                            root_path,
+                            file,
+                            resolve_cache,
+                            episodes_cache,
+                            summary,
+                            existing,
+                            hint=_hint_for(file, hints),
+                        )
+                    except Exception as exc:  # noqa: BLE001 -- 单文件失败不断整轮
+                        logger.exception("身份复核失败：%s", file)
+                        summary.errors.append(f"「{file.name}」身份复核失败：{exc}")
+                else:
+                    summary.skipped_known += 1
+                state.processed = done
                 continue
             # 完整性检测：mtime 太新 = 疑似写入中（下载/拷贝进行时），本轮
             # 暂缓入账、稍后补扫——库不假设目录用途，根路径完全可能同时是
@@ -245,7 +385,7 @@ async def _scan(library_id: int, summary: ScanSummary) -> ScanSummary:
                 min_remaining = (
                     remaining if min_remaining is None else min(min_remaining, remaining)
                 )
-                _progress[library.id] = (done, len(pending))
+                state.processed = done
                 continue
             try:
                 await _ingest_file(
@@ -257,14 +397,16 @@ async def _scan(library_id: int, summary: ScanSummary) -> ScanSummary:
                     root_path,
                     file,
                     resolve_cache,
+                    episodes_cache,
                     summary,
                     is_disc=is_disc,
                     hint=_hint_for(file, hints),
+                    existing=existing,
                 )
             except Exception as exc:  # noqa: BLE001 -- 单文件失败不断整轮
                 logger.exception("扫描文件失败：%s", file)
                 summary.errors.append(f"「{file.name}」处理失败：{exc}")
-            _progress[library.id] = (done, len(pending))
+            state.processed = done
 
         # 收尾感知删除：在位根路径下、台账有但本轮没遍历到 → 标记 missing。
         # 不存在的根整个不参与（挂载失败/掉盘时不误伤），文件回归时
@@ -297,19 +439,62 @@ async def _scan(library_id: int, summary: ScanSummary) -> ScanSummary:
             summary.deferred,
             int(summary.recheck_delay_seconds),
         )
+    if summary.kind_mismatched:
+        # 库级配置问题，汇总说一次（逐文件告警会被几百集刷屏）：几乎必然是
+        # 建库时类型选错了，认领单个文件解决不了，得把文件挪到对的库
+        logger.warning(
+            "媒体库 #%s（类型：%s）：%d 个文件的实际类型与本库不符——很可能是建库时"
+            "类型选错了。这些文件不会被自动识别（按错误类型查 TMDB 会挂到毫不相干的"
+            "作品上）；库类型创建后不可修改，请把它们移到对应类型的库里再扫描",
+            library_id,
+            _KIND_NAMES[kind],  # 会话已关，读本地枚举而非 ORM 属性（避免过期加载）
+            summary.kind_mismatched,
+        )
     logger.info(
-        "媒体库 #%s 扫描完成：新入账 %d（已识别 %d / 待识别 %d），"
-        "改名归并 %d，跳过已知 %d，标记丢失 %d，暂缓 %d，问题 %d",
+        "媒体库 #%s 文件入账完成：新入账 %d（已识别 %d / 待识别 %d），识别重试 %d，"
+        "身份复核 %d（存疑 %d），改名归并 %d，跳过已知 %d，跳过已忽略 %d，"
+        "标记丢失 %d，暂缓 %d，问题 %d",
         library_id,
         summary.scanned - summary.relinked,
         summary.identified,
         summary.unidentified,
+        summary.retried,
+        summary.reviewed,
+        summary.review_flagged,
         summary.relinked,
         summary.skipped_known,
+        summary.skipped_ignored,
         summary.marked_missing,
         summary.deferred,
         len(summary.errors),
     )
+
+    # 一次入库刮削的资产补齐：文本档案在建档时已随 ensure_media_item 落库，
+    # 这里给本轮新挂锚的条目补图片资产与媒体目录镜像（逐条串行，受图床
+    # 并发闸约束；失败只记日志，任一后续刷新入口自愈）。
+    # 这是扫描的**独立阶段**而非附带动作：一部剧几百张分集剧照能下十几
+    # 分钟，必须换上自己的分子分母，否则进度会僵在"文件数/文件数"上，
+    # 用户只能看到一个不动的进度条（这正是它曾经的样子）
+    if summary.identified_item_ids:
+        from movieclaw_api.services.media_scrape import ensure_assets
+
+        item_ids = sorted(summary.identified_item_ids)
+        state.phase = ScanPhase.ASSETS
+        state.processed, state.total = 0, len(item_ids)
+        logger.info("媒体库 #%s 开始补齐 %d 个条目的图片资产", library_id, len(item_ids))
+        for done, item_id in enumerate(item_ids, start=1):
+            # 停止请求在这里同样生效：文件都已入账，缺的图片由任一后续
+            # 刷新入口自愈，没有理由让用户点了停止还得干等
+            if library_id in _stop_requests:
+                logger.info(
+                    "媒体库 #%s 图片资产补齐被手动停止（已完成 %d / 共 %d，缺的图片下次刷新自愈）",
+                    library_id,
+                    done - 1,
+                    len(item_ids),
+                )
+                break
+            await ensure_assets(item_id)
+            state.processed = done
     return summary
 
 
@@ -382,12 +567,19 @@ async def _ingest_file(
     root: Path,
     file: Path,
     resolve_cache: dict,
+    episodes_cache: dict[Path, int | None],
     summary: ScanSummary,
     *,
     is_disc: bool = False,
     hint: _SubtitleHint | None = None,
+    existing: LibraryFile | None = None,
 ) -> None:
-    summary.scanned += 1
+    """把一个文件识别并写入台账。``existing`` 是该路径已有的台账行：
+    在位但待识别 → 本次是识别重试；标记过 missing → 文件回归。"""
+    if existing is None or existing.missing_since is not None:
+        summary.scanned += 1  # 新文件 / 回归的 missing 文件
+    else:
+        summary.retried += 1  # 在位但待识别：识别重试，不算新入账
     # 先探测：实测时长是电影同名候选消歧的强信号（原盘探测其主流文件）
     probe_target = disc_main_stream(file) if is_disc else file
     spec = await asyncio.to_thread(probe_media, probe_target) if probe_target is not None else None
@@ -399,8 +591,9 @@ async def _ingest_file(
         container = file.suffix.lstrip(".").lower() or None
 
     # 改名归并（走识别链之前）：新路径可能只是台账里某个旧文件被改了名，
-    # 归并成功即结束——身份锚（含人工认领）随行迁移，免一次 TMDB 收敛
-    if await _try_relink(
+    # 归并成功即结束——身份锚（含人工认领）随行迁移，免一次 TMDB 收敛。
+    # 该路径已有台账行时跳过：行会原地更新，归并反而会撞路径唯一键
+    if existing is None and await _try_relink(
         repo,
         library,
         file,
@@ -411,22 +604,49 @@ async def _ingest_file(
         summary.relinked += 1
         return
 
-    item, unidentified_reason = await _identify(
-        media_service,
-        kind,
-        root,
-        file,
-        resolve_cache,
-        duration_seconds=spec.duration_seconds if spec else None,
-        hint=hint,
-    )
-    season, episode = (0, 0) if is_disc else _unit_for(kind, file)
+    if existing is not None and existing.media_item_id is not None:
+        # 文件回归且台账已有身份锚（可能来自人工认领）：原样保留，不重走
+        # 识别链——重识别一旦失败（如 TMDB 恰好不通）会把已有身份冲掉
+        item_id: int | None = existing.media_item_id
+        unidentified_reason = None
+        unidentified_code: str | None = None
+        candidates: list[dict] = []
+        season, episode = existing.season_number, existing.episode_number
+        # 身份对账三件套随身份一并保留（含人工认领标记与未决的复核建议）
+        identity_source = existing.identity_source
+        resolved_version = existing.resolved_version
+        review_suggestion = existing.review_suggestion
+    else:
+        identified = await _identify(
+            media_service,
+            kind,
+            root,
+            file,
+            resolve_cache,
+            episodes_cache,
+            duration_seconds=spec.duration_seconds if spec else None,
+            hint=hint,
+        )
+        unidentified_reason, candidates = identified.reason, identified.candidates
+        unidentified_code = identified.code
+        item_id = identified.item.id if identified.item is not None else None
+        season, episode = (0, 0) if is_disc else _unit_for(kind, file)
+        identity_source = identified.source if item_id is not None else None
+        resolved_version = RESOLVER_VERSION if item_id is not None else None
+        review_suggestion = None
+        if item_id is not None:
+            summary.identified += 1
+            summary.identified_item_ids.add(item_id)
+        else:
+            summary.unidentified += 1
+            if unidentified_code == UnidentifiedCode.KIND_MISMATCH:
+                summary.kind_mismatched += 1
     attrs = enrich(file.stem if not is_disc else file.name)
     assert library.id is not None
     await repo.upsert_by_path(
         LibraryFile(
             library_id=library.id,
-            media_item_id=item.id if item else None,
+            media_item_id=item_id,
             season_number=season,
             episode_number=episode,
             file_path=str(file),
@@ -438,22 +658,110 @@ async def _ingest_file(
             bit_depth=spec.bit_depth if spec else None,
             duration_seconds=spec.duration_seconds if spec else None,
             bit_rate=spec.bit_rate if spec else None,
+            audio_streams=list(spec.audio_streams) if spec else None,
+            subtitle_streams=list(spec.subtitle_streams) if spec else None,
             media_source=attrs.media_source,
             release_group=attrs.release_group,
             source=FileSource.SCANNED,
-            unidentified_reason=None if item is not None else unidentified_reason,
+            unidentified_reason=None if item_id is not None else unidentified_reason,
+            unidentified_code=None if item_id is not None else unidentified_code,
+            unidentified_candidates=None if item_id is not None else (candidates or None),
+            identity_source=identity_source,
+            resolved_version=resolved_version,
+            review_suggestion=review_suggestion,
         )
     )
-    if item is not None:
-        summary.identified += 1
-        # 库存对账：新入账的单元关闭对应的订阅工单（订阅止于投递，
-        # 完成状态由库存推导）
+    if item_id is not None:
+        # 库存对账：单元在库成立即关闭对应的订阅工单（订阅止于投递，
+        # 完成状态由库存推导；文件回归同样适用）
         from movieclaw_api.services.wanted_fulfillment import close_fulfilled_wanted
 
-        assert item.id is not None
-        await close_fulfilled_wanted(session, item.id)
+        await close_fulfilled_wanted(session, item_id)
+
+
+# ---------------------------------------------------------------------------
+# 身份对账（识别器升级后的存量复核）
+# ---------------------------------------------------------------------------
+
+
+def _review_due(row: LibraryFile) -> bool:
+    """该行是否需要身份复核：版本戳落后于当前识别器，且身份非人工认领。
+
+    NULL 版本 = 特性上线前的旧数据，一律视为落后（存量库借此吃到升级红利）。
+    """
+    if row.identity_source == IdentitySource.MANUAL:
+        return False
+    return (row.resolved_version or 0) < RESOLVER_VERSION
+
+
+async def _review_identity(
+    session,
+    media_service: MediaLibraryService,
+    kind: MediaKind,
+    root: Path,
+    file: Path,
+    resolve_cache: dict,
+    episodes_cache: dict[Path, int | None],
+    summary: ScanSummary,
+    row: LibraryFile,
+    *,
+    hint: _SubtitleHint | None = None,
+) -> None:
+    """对一条已识别的台账行重走识别链，与现有身份对账。
+
+    三种结局：
+    - 结论一致 → 只更新版本戳与来源，皆大欢喜；
+    - 结论不一致 → **不改身份**，写入复核建议进「身份复核」清单，用户拍板
+      （新识别器也可能错，静默翻案会把改对的东西改错——宁可待确认）；
+    - 新链给不出确定结论 → 保持原身份、盖戳了结（旧结论未必错，不打扰）；
+      TMDB 网络类失败例外：不盖戳，下次扫描重试。
+    """
+    identified = await _identify(
+        media_service,
+        kind,
+        root,
+        file,
+        resolve_cache,
+        episodes_cache,
+        duration_seconds=row.duration_seconds,
+        hint=hint,
+    )
+    item = identified.item
+    if item is None and identified.code == UnidentifiedCode.TMDB_UNREACHABLE:
+        return  # 网络类失败：本轮不盖戳，下次扫描继续复核
+    if item is None and identified.code == UnidentifiedCode.KIND_MISMATCH:
+        # 类型冲突：现挂的身份几乎必然是错的（按错误类型拉档拿到的是另一部
+        # 作品），但没有替代条目可建议——复核清单帮不上忙。同样不盖戳：
+        # 库类型的事得用户处理，盖戳等于把问题埋进版本号里；文件挪到对的
+        # 库后重扫会自然走完整识别链。库级告警在扫描收尾汇总说一次
+        summary.kind_mismatched += 1
+        return
+    summary.reviewed += 1
+    row.resolved_version = RESOLVER_VERSION
+    if item is not None and item.id != row.media_item_id:
+        # 新旧结论不一致：身份不动，建议入清单
+        row.review_suggestion = {
+            "media_item_id": item.id,
+            "tmdb_id": item.tmdb_id,
+            "title": item.title,
+            "year": item.year,
+            "poster_path": item.poster_path,
+        }
+        summary.review_flagged += 1
+        logger.warning(
+            "身份复核存疑：「%s」现挂条目 #%s，新识别器认为应是《%s》（tmdb=%s），已进复核清单",
+            file.name,
+            row.media_item_id,
+            item.title,
+            item.tmdb_id,
+        )
     else:
-        summary.unidentified += 1
+        # 结论一致（或新链给不出结论）：保持身份，清掉可能残留的旧建议
+        if item is not None:
+            row.identity_source = identified.source
+        row.review_suggestion = None
+    row.updated_at = utcnow()
+    await session.commit()
 
 
 # ---------------------------------------------------------------------------
@@ -516,6 +824,20 @@ async def _try_relink(
 
 
 @dataclass
+class _Identified:
+    """一次识别的结论：条目 + 失败原因/分类 + 待选候选（后三者仅失败时有值）。"""
+
+    item: MediaItem | None
+    reason: str | None = None
+    candidates: list[dict] = field(default_factory=list)
+    # 失败分类：清单据此给标签/配色/动作，与面向用户的 reason 文案解耦
+    code: str | None = None
+    # 身份来源（成功时有值）：钉死声明（path_tag/nfo）或名称收敛（resolved），
+    # 落到台账 identity_source，对账机制据此分级
+    source: IdentitySource | None = None
+
+
+@dataclass
 class _SubtitleHint:
     """``download_hint`` 行的解析形态（每轮扫描解析一次，同目录多文件复用）。"""
 
@@ -555,26 +877,82 @@ async def _identify(
     root: Path,
     file: Path,
     cache: dict,
+    episodes_cache: dict[Path, int | None],
     *,
     duration_seconds: int | None = None,
     hint: _SubtitleHint | None = None,
-) -> tuple[MediaItem | None, str | None]:
-    """识别链主入口，返回 (条目, 失败原因)。
+) -> _Identified:
+    """识别链主入口。
 
-    识别成功时原因为 None；失败时给出用户能看懂的中文原因（落到台账的
+    识别成功时 reason 为 None；失败时给出用户能看懂的中文原因（落到台账的
     ``unidentified_reason``，待识别清单展示）——尤其要把"TMDB 访问失败"
     与"确实找不到匹配"区分开：前者修好网络重扫即可，后者需要人工认领。
+    收敛器给出候选时一并带回（``candidates``），让用户在清单里直接点选。
     """
-    # ① NFO 精确身份
-    tmdb_id = _nfo_tmdb_id(root, file)
-    if tmdb_id is not None:
+    nfo = _entry_nfo(kind, root, file)
+
+    # ⓪ 类型冲突：文件实际是剧集/电影，与所在库的类型对不上（零网络成本）
+    conflict = _kind_conflict(kind, file, nfo)
+    if conflict is not None:
+        return _Identified(None, conflict, code=UnidentifiedCode.KIND_MISMATCH)
+
+    # 本地证据先算出来：既是步骤②的输入，也是步骤①校验钉死身份的标尺
+    evidence = _guess_evidence(kind, root, file)
+
+    # ① 显式精确身份：路径 tmdbid 标记（就近优先）→ NFO
+    rejected_pin: str | None = None
+    tmdb_id, id_source = pinned_tmdb_id(kind, root, file, nfo=nfo)
+    if tmdb_id is not None and id_source is not None:
         try:
-            return await media_service.ensure_media_item(kind, tmdb_id), None
-        except Exception as exc:  # noqa: BLE001 -- NFO 的 id 可能已失效，降级到解析
-            logger.warning("NFO 指向的 TMDB 条目建档失败（id=%s）：%s", tmdb_id, exc)
+            item = await media_service.ensure_media_item(kind, tmdb_id)
+        except Exception as exc:  # noqa: BLE001 -- 声明的 id 可能已失效，降级到解析
+            logger.warning(
+                "%s指定的 TMDB 条目建档失败（id=%s）：%s",
+                _ID_SOURCE_NAMES[id_source],
+                tmdb_id,
+                exc,
+            )
+        else:
+            mismatch = _pinned_mismatch(item, evidence)
+            if mismatch is None:
+                return _Identified(item, source=id_source)
+            # 声明与本地证据严重矛盾：不采信，降级走名称解析（它要过完整的
+            # 证据验证，此刻可信度高于一个对不上号的数字）
+            rejected_pin = (
+                f"{_ID_SOURCE_NAMES[id_source]} tmdbid={tmdb_id} 指向{mismatch}，与本地文件不符"
+            )
+            logger.warning("%s（%s），改按文件名识别", rejected_pin, file.name)
 
     # ② 名称解析 → TMDB 证据验证收敛（年份/时长/季集数佐证见 library_resolve）
-    evidence = _guess_evidence(kind, root, file)
+    result = await _resolve_by_name(
+        media_service,
+        kind,
+        file,
+        cache,
+        episodes_cache,
+        evidence,
+        duration_seconds=duration_seconds,
+        hint=hint,
+    )
+    if rejected_pin is not None and result.item is None:
+        # 声明被推翻、按名字也没认出来：原因以"声明有问题"开头——这才是
+        # 用户唯一需要动手的地方（改标记/NFO 比每次都认领一遍一劳永逸）
+        return replace(result, reason=f"{rejected_pin}；{result.reason}")
+    return result
+
+
+async def _resolve_by_name(
+    media_service: MediaLibraryService,
+    kind: MediaKind,
+    file: Path,
+    cache: dict,
+    episodes_cache: dict[Path, int | None],
+    evidence: LocalEvidence | None,
+    *,
+    duration_seconds: int | None,
+    hint: _SubtitleHint | None,
+) -> _Identified:
+    """识别链步骤②：名称证据 → TMDB 证据验证收敛（见 library_resolve 模块头）。"""
     # 下载线索补强：副标题中文名作备选查询词，「全N集」作集数佐证；
     # 文件/目录名完全解析不出条目名时，中文名直接顶为主查询词
     if hint is not None:
@@ -586,74 +964,193 @@ async def _identify(
         if evidence is not None:
             evidence.total_episodes = hint.total_episodes
     if evidence is None:
-        return None, "无法从文件名/目录名解析出片名，请人工认领"
+        return _Identified(None, "无法从文件名/目录名解析出片名", code=UnidentifiedCode.UNPARSABLE)
     evidence.duration_seconds = duration_seconds
-    key = (evidence.title, evidence.alt_title, evidence.year, evidence.season)
+    # 本地实际集数（同一季目录只数一次）：同名双版本的分水岭证据
+    if kind is MediaKind.TV:
+        directory = file.parent
+        if directory not in episodes_cache:
+            episodes_cache[directory] = local_episode_count(directory)
+        evidence.local_episodes = episodes_cache[directory]
+    key = (
+        evidence.title,
+        evidence.alt_title,
+        evidence.year,
+        evidence.season,
+        evidence.local_episodes,
+    )
     if key in cache:
         return cache[key]
     year_note = f"（{evidence.year}）" if evidence.year else ""
     try:
-        tmdb_id = await verify_resolve(get_tmdb_client(), kind, evidence)
+        outcome = await resolve_with_candidates(get_tmdb_client(), kind, evidence)
         item = (
-            await media_service.ensure_media_item(kind, tmdb_id, extra_aliases=[])
-            if tmdb_id is not None
+            await media_service.ensure_media_item(kind, outcome.tmdb_id, extra_aliases=[])
+            if outcome.tmdb_id is not None
             else None
         )
     except Exception as exc:  # noqa: BLE001 -- TMDB 波动不该中断扫描
         logger.warning("TMDB 收敛失败（%s / %s）：%s", evidence.title, evidence.year, exc)
         # 网络类失败不写入缓存：同名文件下次扫描还有机会重试
-        return None, f"TMDB 查询失败（网络不通或接口异常），修复后重新扫描即可：{exc}"
-    reason = (
-        None
-        if item is not None
-        else f"按「{evidence.title}」{year_note}在 TMDB 未找到可确认的匹配，请人工认领"
+        return _Identified(
+            None,
+            f"TMDB 查询失败（网络不通或接口异常）：{exc}",
+            code=UnidentifiedCode.TMDB_UNREACHABLE,
+        )
+    if item is not None:
+        result = _Identified(item, source=IdentitySource.RESOLVED)
+    else:
+        # 原因写清楚"卡在哪一步"：有候选说明机器是"不敢选"而非"找不到"。
+        # 收尾不再写「请…」——该做什么由清单上的按钮表达，文案只说发生了什么
+        detail = f"：{outcome.reason}" if outcome.reason else ""
+        result = _Identified(
+            None,
+            f"按「{evidence.title}」{year_note}在 TMDB 未能确认身份{detail}",
+            [asdict(c) for c in outcome.candidates],
+            code=(UnidentifiedCode.AMBIGUOUS if outcome.candidates else UnidentifiedCode.NO_MATCH),
+        )
+    cache[key] = result
+    return result
+
+
+def pinned_tmdb_id(
+    kind: MediaKind, root: Path, file: Path, *, nfo: NfoIdentity | None = None
+) -> tuple[int | None, IdentitySource | None]:
+    """路径/NFO 里被**显式钉死**的 TMDB 身份，返回 (id, 来源)。
+
+    路径标记优先于 NFO：``[tmdbid=N]`` 是用户或整理工具刚写在目录名上的
+    声明，而 NFO 可能是很久以前刮削残留的。两者都没有时返回 (None, None)。
+    ``nfo`` 传入已读到的条目级 NFO 可省掉一次磁盘查找（识别链就这么用）；
+    需要现查时 ``kind`` 用于在多份 NFO 里挑与本库类型一致的那份。
+    """
+    tmdb_id = _path_tmdb_id(root, file)
+    if tmdb_id is not None:
+        return tmdb_id, IdentitySource.PATH_TAG
+    if nfo is None:
+        nfo = _entry_nfo(kind, root, file)
+    tmdb_id = nfo.tmdb_id if nfo is not None else None
+    return (tmdb_id, IdentitySource.NFO) if tmdb_id is not None else (None, None)
+
+
+def _kind_conflict(kind: MediaKind, file: Path, nfo: NfoIdentity | None) -> str | None:
+    """文件的实际类型与所在库的类型是否冲突（冲突时返回中文原因）。
+
+    为什么这一刀必须在识别链最前面：TMDB 的 movie 与 tv 是**两套独立的 id
+    空间**，同一个数字在两边往往都能取到条目。库类型选错时，一个正确的
+    ``[tmdbid=81356]`` 标记会被按电影拉档，接口 200 返回、建档成功、全程
+    零报错——实测《性爱自修室》整库被建成 1938 年德国片《13 Stühle》。
+    "识别失败"能进待识别清单被看见，"识别成另一部作品"则完全静默。
+
+    只认两种**明确**信号，绝不靠猜（误判会把好好的库整个打进待识别）：
+    - NFO 根元素 ``<movie>`` / ``<tvshow>``：刮削器写下的类型声明，双向可信；
+    - 电影库里出现 ``Season N`` 目录或 ``SxxExx`` 文件名：季集号是剧集独有的
+      结构。反方向不检测——剧集库里没有季集号的文件（特典、纪录片）很正常。
+    """
+    if nfo is not None and nfo.kind is not kind:
+        return (
+            f"同目录的 {'tvshow' if nfo.kind is MediaKind.TV else 'movie'}.nfo 表明这是"
+            f"{_KIND_NAMES[nfo.kind]}，但所在媒体库的类型是「{_KIND_NAMES[kind]}」"
+        )
+    if kind is MediaKind.MOVIE:
+        attrs = enrich(file.stem)
+        if season_from_dir(file.parent) is not None or (attrs.seasons and attrs.episodes):
+            return "文件带季集号（是剧集），但所在媒体库的类型是「电影」"
+    return None
+
+
+def _pinned_mismatch(item: MediaItem, evidence: LocalEvidence | None) -> str | None:
+    """钉死身份拉到的条目是否与本地证据**严重**矛盾（矛盾时返回条目描述）。
+
+    显式声明是用户的强意图，判定必须克制——手写 ``[tmdbid=N]`` 的主要用途
+    恰恰是"机器认不出来时我告诉你"（拼音名、意译名目录），标题对不上是
+    这类场景的常态，单凭标题不符推翻声明会误伤一大片。因此要求**标题与
+    年份双双不符**才判矛盾：
+    - 标题：本地片名与条目主名/原名/别名归一后既不相等也无包含关系；
+    - 年份：两边都有年份且相差超过 2 年（同一部作品的年份偏差不会这么大）。
+
+    命中的是"标记打错数字"「NFO 是别的片子的残留」这类真错误，以及库类型
+    选错时侥幸绕过类型检测的漏网之鱼。
+    """
+    if evidence is None or evidence.year is None or item.year is None:
+        return None
+    if abs(item.year - evidence.year) <= _PINNED_YEAR_TOLERANCE:
+        return None
+    local = normalize_title(evidence.title)
+    for text in (item.title, item.original_title, *item.aliases):
+        known = normalize_title(text) if text else ""
+        if known and (known == local or known in local or local in known):
+            return None
+    return f"《{item.title}》({item.year})"
+
+
+def _path_tmdb_id(root: Path, file: Path) -> int | None:
+    """从文件名与各级目录名里读 ``[tmdbid=N]`` 标记（就近优先，向上到库根）。
+
+    单集文件名上的标记比剧集目录上的更具体，因此从文件本身开始向上找。
+    """
+    current = file
+    while True:
+        match = _PATH_TMDBID.search(current.name)
+        if match:
+            return int(match.group(1))
+        if current == root or current.parent == current:
+            return None
+        current = current.parent
+
+
+def _entry_nfo(kind: MediaKind, root: Path, file: Path) -> NfoIdentity | None:
+    """找该文件适用的条目级 NFO：同名 .nfo → 目录级 movie/tvshow.nfo（向上到库根）。
+
+    本函数只负责"查找顺序"这层策略；单份 NFO 的解析交给 library_nfo 的
+    结构化解析器（正则扒文本会被 <actor> 块里的演员 person id 污染）。
+
+    **带 tmdb id 的优先**：id 是 NFO 最有价值的信息，一份没写 id 的
+    movie.nfo 不该挡住上层写了 id 的那份。全都没 id 时退回最近的一份——
+    它声明的类型（movie/tvshow）仍然是有效信号，见 _kind_conflict。
+
+    **同目录 movie.nfo 与 tvshow.nfo 并存时，与本库类型一致的那份优先**：
+    两份类型声明自相矛盾，按固定顺序取谁都是瞎猜。实测代价：一次库类型
+    选错的扫描往剧集目录里写进了 movie.nfo，库改回剧集后 movie.nfo 排在
+    前面，整库每个文件都被自己写的 NFO 判成"放错库了"。只有一份声明时
+    不受影响——真正放错库的文件照样判得出来。
+    """
+    entry_names = (
+        ("movie.nfo", "tvshow.nfo") if kind is MediaKind.MOVIE else ("tvshow.nfo", "movie.nfo")
     )
-    cache[key] = (item, reason)
-    return item, reason
-
-
-def _nfo_tmdb_id(root: Path, file: Path) -> int | None:
-    """从 NFO 里读 tmdb id：同名 .nfo → 目录级 movie/tvshow.nfo（向上到库根）。"""
     candidates = [file.with_suffix(".nfo")]
     current = file.parent
     while True:
-        candidates.append(current / "movie.nfo")
-        candidates.append(current / "tvshow.nfo")
+        candidates.extend(current / name for name in entry_names)
         if current == root or current.parent == current:
             break
         current = current.parent
+    fallback: NfoIdentity | None = None
     for nfo in candidates:
         if not nfo.is_file():
             continue
-        try:
-            text = nfo.read_text(encoding="utf-8", errors="ignore")
-        except OSError:
+        identity = read_entry_identity(nfo)
+        if identity is None:
             continue
-        match = _NFO_TMDBID.search(text) or _NFO_UNIQUEID.search(text)
-        if match:
-            return int(match.group(1))
-    return None
+        if identity.tmdb_id is not None:
+            return identity
+        if fallback is None:
+            fallback = identity
+    return fallback
 
 
 def _guess_evidence(kind: MediaKind, root: Path, file: Path) -> LocalEvidence | None:
     """收集本地识别证据：条目名/年份 + 剧集的季集号（供收敛验证器佐证）。
 
     条目名：剧集优先用"剧集目录名"（比文件名干净），电影优先用文件名；
-    目录结构 ``{root}/{条目目录}[/Season NN]/文件`` 中，条目目录是紧挨
-    库根的那一层，散落在库根下的裸文件退回用文件名解析。
+    库根与文件之间的**每一层**目录都是候选（由近及远），第一个能解析出
+    片名的胜出——分类分组层（``剧集/大陆/风筝 (2017)/…``）很常见，只认
+    "库根的直接子目录"会把「大陆」当条目目录，白白丢掉真条目目录名里的
+    年份证据。散落在库根下的裸文件退回用文件名解析。
     季集号：目录名与文件名两个来源合并取最大（季包目录带 SNN、文件名带
     SxxExx，各有一半信息）；S00 特别篇不计入季数证据。
     """
-    entry_dir = _entry_dir(root, file)
-    sources = []
-    if kind is MediaKind.TV:
-        if entry_dir is not None:
-            sources.append(entry_dir.name)
-        sources.append(file.stem)
-    else:
-        sources.append(file.stem)
-        if entry_dir is not None:
-            sources.append(entry_dir.name)
+    dir_names = [d.name for d in entry_dirs(root, file)]
+    sources = [*dir_names, file.stem] if kind is MediaKind.TV else [file.stem, *dir_names]
     parsed = [enrich(text) for text in sources]
 
     evidence: LocalEvidence | None = None
@@ -679,16 +1176,31 @@ def _guess_evidence(kind: MediaKind, root: Path, file: Path) -> LocalEvidence | 
     return evidence
 
 
-def _entry_dir(root: Path, file: Path) -> Path | None:
-    """文件归属的条目目录（库根的直接子目录）；文件直接躺在根下时为 None。"""
+def local_episode_count(directory: Path) -> int | None:
+    """目录里**去重后的集号个数**：同名双版本消歧的强证据。
+
+    实测案例：《风筝》(2017) 在 TMDB 有正片（46 集）与「送审版」（51 集）
+    两个同名同年条目，别名互相污染，标题门槛与年份都分不开——本地实际
+    有多少集是唯一能一刀切开的物理证据（见 library_resolve 的裁决顺序）。
+
+    只数直属本目录的视频文件；集号解析不出的不计；不足 2 集返回 None
+    （单集目录零区分度，还容易被"只下了一集"误导）。
+    """
     try:
-        relative = file.relative_to(root)
-    except ValueError:
+        entries = list(directory.iterdir())
+    except OSError:
         return None
-    parts = relative.parts
-    if len(parts) < 2:
-        return None
-    return root / parts[0]
+    episodes: set[int] = set()
+    for entry in entries:
+        name = entry.name
+        if entry.suffix.lower() not in VIDEO_EXTS or not entry.is_file():
+            continue
+        if any(marker in name.lower() for marker in _IGNORE_MARKERS):
+            continue
+        attrs = enrich(entry.stem)
+        if attrs.episodes:
+            episodes.add(attrs.episodes[0])
+    return len(episodes) if len(episodes) >= 2 else None
 
 
 def _unit_for(kind: MediaKind, file: Path) -> tuple[int, int]:
@@ -697,18 +1209,176 @@ def _unit_for(kind: MediaKind, file: Path) -> tuple[int, int]:
         return 0, 0
     attrs = enrich(file.stem)
     episode = attrs.episodes[0] if attrs.episodes else 0
-    season = attrs.seasons[0] if attrs.seasons else _season_from_dir(file.parent)
+    season = attrs.seasons[0] if attrs.seasons else season_from_dir(file.parent)
     return season if season is not None else 0, episode
 
 
-def _season_from_dir(directory: Path) -> int | None:
-    name = directory.name.strip()
-    if _SPECIALS_DIR.match(name):
-        return 0
-    match = _SEASON_DIR.match(name)
-    if match:
-        return int(match.group(1) or match.group(2))
-    return None
+# ---------------------------------------------------------------------------
+# 单条目重新识别（条目详情页）：识别链在升级，错挂的条目要有翻案通道
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class ReidentifySummary:
+    """一次单条目重识别的结论（同步返回给前端，用户当场看到结果）。"""
+
+    library_id: int
+    media_item_id: int  # 重识别前的身份锚
+    total: int = 0  # 参与重识别的在位文件数
+    identified: int = 0
+    unidentified: int = 0
+    skipped_missing: int = 0  # missing 文件没有磁盘实体，保持原身份不参与
+    kept_on_error: int = 0  # TMDB 网络类失败：保留原身份的文件数（修好网络再重试）
+    new_media_item_id: int | None = None  # 全部文件收敛到的新身份（分裂时为 None）
+    new_title: str | None = None
+    changed: bool = False  # 识别结果是否与原身份不同
+    # 身份被显式钉死（目录名 tmdbid 标记或 NFO）：结果不满意得先改标记/NFO
+    pinned_identity: bool = False
+    errors: list[str] = field(default_factory=list)
+
+
+async def reidentify_item(library_id: int, media_item_id: int) -> ReidentifySummary:
+    """对某条目在库内的全部在位文件**重走完整识别链**（NFO → 名称解析 →
+    TMDB 证据收敛），行原地更新。
+
+    与「重新扫描」的区别：扫描只重试待识别的行，已识别的秒过；这里是
+    用户对**已识别结果**不满意时的翻案通道——识别器随版本升级在变强，
+    老的错挂应该有机会被纠正。识别失败的行会进待识别清单（原因照记），
+    用户仍可人工认领，绝不静默保持错误身份。
+    """
+    summary = ReidentifySummary(library_id=library_id, media_item_id=media_item_id)
+    from movieclaw_api.services.library_organize import is_organizing
+
+    running = _jobs.get(library_id)
+    if running is not None:
+        summary.errors.append(f"该库{PHASE_LABELS[running.phase]}，请等当前任务完成后再重新识别")
+        return summary
+    if is_organizing(library_id):
+        summary.errors.append("该库正在整理文件名，请等整理完成后再重新识别")
+        return summary
+    # 与扫描互斥：重识别正在改身份锚，此刻扫描介入会打架。占的是同一把库级
+    # 锁，但阶段标成 REIDENTIFYING——接口据此如实说"正在重新识别"，不会
+    # 冒充扫描（也因此不会给出一个按了没用的"停止扫描"入口）
+    state = ScanState(phase=ScanPhase.REIDENTIFYING)
+    _jobs[library_id] = state
+    try:
+        return await _reidentify(library_id, media_item_id, summary, state)
+    except Exception:  # noqa: BLE001 -- 面向用户的操作，兜底转成可读错误
+        logger.exception("媒体库 #%s 条目 #%s 重新识别时发生未知错误", library_id, media_item_id)
+        summary.errors.append("重新识别中断：发生未知错误（详见后端日志）")
+        return summary
+    finally:
+        _jobs.pop(library_id, None)
+
+
+async def _reidentify(
+    library_id: int, media_item_id: int, summary: ReidentifySummary, state: ScanState
+) -> ReidentifySummary:
+    db = get_database()
+    async with db.session() as session:
+        library = await session.get(Library, library_id)
+        if library is None:
+            summary.errors.append("媒体库不存在（可能已被删除）")
+            return summary
+        repo = LibraryFileRepository(session)
+        rows = [
+            row
+            for row in await repo.list_by_library(library_id)
+            if row.media_item_id == media_item_id
+        ]
+        if not rows:
+            summary.errors.append("该条目在本库已没有台账文件")
+            return summary
+        media_service = MediaLibraryService(session, get_tmdb_client())
+        kind = MediaKind(library.kind)
+        resolve_cache: dict[tuple, tuple] = {}
+        episodes_cache: dict[Path, int | None] = {}
+        hints = await _load_hints(session)
+        roots = [Path(p) for p in library.root_paths]
+
+        state.total = len(rows)
+        new_ids: set[int] = set()
+        for done, row in enumerate(rows, start=1):
+            state.processed = done
+            if row.missing_since is not None:
+                summary.skipped_missing += 1
+                continue
+            summary.total += 1
+            file = Path(row.file_path)
+            # 文件所在的库根：识别链用它界定条目目录与 NFO 向上查找的边界；
+            # 根已被移出配置时退回父目录（仍能按文件名识别）
+            root = next((r for r in roots if r in file.parents), file.parent)
+            if pinned_tmdb_id(kind, root, file)[0] is not None:
+                summary.pinned_identity = True
+            is_disc = row.container in ("bluray", "dvd")
+            identified = await _identify(
+                media_service,
+                kind,
+                root,
+                file,
+                resolve_cache,
+                episodes_cache,
+                duration_seconds=row.duration_seconds,
+                hint=_hint_for(file, hints),
+            )
+            item, reason = identified.item, identified.reason
+            # 网络类失败（TMDB 不通）不冲掉现有身份——用户要的是"重新刮削"，
+            # 不是"断网就清档"；修好网络再点一次即可。与"确实匹配不到"区分：
+            # 后者才应该进待识别（不静默保持可疑身份）
+            if item is None and identified.code == UnidentifiedCode.TMDB_UNREACHABLE:
+                summary.kept_on_error += 1
+                continue
+            row.media_item_id = item.id if item is not None else None
+            row.unidentified_reason = None if item is not None else reason
+            row.unidentified_code = None if item is not None else identified.code
+            row.unidentified_candidates = (
+                None if item is not None else (identified.candidates or None)
+            )
+            row.identity_source = identified.source if item is not None else None
+            row.resolved_version = RESOLVER_VERSION if item is not None else None
+            row.review_suggestion = None  # 重识别就是用户主动翻案，旧建议随之失义
+            if not is_disc:
+                row.season_number, row.episode_number = _unit_for(kind, file)
+            row.updated_at = utcnow()
+            if item is not None:
+                assert item.id is not None
+                summary.identified += 1
+                new_ids.add(item.id)
+            else:
+                summary.unidentified += 1
+        await session.commit()
+
+        if len(new_ids) == 1:
+            new_id = next(iter(new_ids))
+            summary.new_media_item_id = new_id
+            summary.changed = new_id != media_item_id
+            new_item = await session.get(MediaItem, new_id)
+            summary.new_title = new_item.title if new_item is not None else None
+            # 库存对账：单元归属的新条目若有订阅工单，在库成立即关闭
+            from movieclaw_api.services.wanted_fulfillment import close_fulfilled_wanted
+
+            await close_fulfilled_wanted(session, new_id)
+        elif new_ids:
+            # 分裂成多个条目（如剧集目录混入了别的剧）：不给单一跳转目标
+            summary.changed = True
+    logger.info(
+        "媒体库 #%s 条目 #%s 重新识别完成：%d 个文件（识别 %d / 待识别 %d），新身份 %s%s",
+        library_id,
+        media_item_id,
+        summary.total,
+        summary.identified,
+        summary.unidentified,
+        summary.new_media_item_id,
+        "（身份由 tmdbid 标记/NFO 指定）" if summary.pinned_identity else "",
+    )
+    # 改锚后的新条目补齐资产（图片 + 媒体目录镜像），后台执行不拖住响应
+    if new_ids:
+        from movieclaw_api.services.media_scrape import ensure_assets
+
+        loop = asyncio.get_running_loop()
+        for new_id in new_ids:
+            loop.create_task(ensure_assets(new_id))
+    return summary
 
 
 # ---------------------------------------------------------------------------
