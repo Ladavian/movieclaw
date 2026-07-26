@@ -86,6 +86,14 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     setPageNavCount((n) => n + 1);
     return () => setPageNavCount((n) => n - 1);
   }, []);
+  // 顶层页面挂进全局顶栏的页面级控件（如发现页的数据源切换），同样是为了
+  // 不让它们自己吸一条顶栏、在窄屏上摞成两排。撤销时先比对身份，避免路由
+  // 切换期间旧页面的清理把新页面刚挂上的控件顺手抹掉。
+  const [topBarActions, setTopBarActionsState] = useState<React.ReactNode>(null);
+  const setTopBarActions = useCallback((node: React.ReactNode) => {
+    setTopBarActionsState(node);
+    return () => setTopBarActionsState((current) => (current === node ? null : current));
+  }, []);
 
   const isSettings = pathname.startsWith("/settings");
   const activeNav = navIdFromPath(pathname);
@@ -184,8 +192,8 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const showMobileTopBar = isMobile && pageNavCount === 0;
   const openDrawer = useCallback(() => setDrawerOpen(true), []);
   const pageChrome = useMemo(
-    () => ({ registerPageNav, onSearch: handleSearch, openDrawer }),
-    [registerPageNav, handleSearch, openDrawer],
+    () => ({ registerPageNav, onSearch: handleSearch, openDrawer, setTopBarActions }),
+    [registerPageNav, handleSearch, openDrawer, setTopBarActions],
   );
 
   // 移动端抽屉：切换路由即自动收起（点导航项跳走后抽屉不该还盖着新页面），
@@ -258,7 +266,9 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       /* data-topbar：主区要不要为全局顶栏空出那 52px，取决于这一行有没有被
          页面自己的 PageNav 认领（对应 globals.css 的 .app-shell[data-topbar] 规则）。 */
       <div className="app-shell relative z-10 h-[100dvh] w-full" data-topbar={showMobileTopBar}>
-        {showMobileTopBar && <MobileTopBar onMenu={openDrawer} onSearch={handleSearch} />}
+        {showMobileTopBar && (
+          <MobileTopBar onMenu={openDrawer} onSearch={handleSearch} actions={topBarActions} />
+        )}
         {/* 主区铺满外壳（absolute 而非 flex 子项）：全站页面清一色是
             「外层 h-full + 内层 overflow-y-auto」，h-full 要能解析就必须有一个
             确定的父高度——absolute inset-0 给的是确定值，flex-1 得来的高度在
@@ -335,9 +345,12 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 function MobileTopBar({
   onMenu,
   onSearch,
+  actions,
 }: {
   onMenu: () => void;
   onSearch: (keyword: string, scope: SearchScope, options?: SearchSubmitOptions) => void;
+  /** 当前页面挂上来的页面级控件（见 lib/page-chrome.tsx 的 setTopBarActions） */
+  actions?: React.ReactNode;
 }) {
   const router = useRouter();
   return (
@@ -366,8 +379,13 @@ function MobileTopBar({
             className="h-7 w-auto max-w-[104px] object-contain"
           />
         </button>
-        <div className="ml-auto shrink-0">
-          <SearchCommand onSearch={onSearch} />
+        {/* 页面级控件塞在字标与搜索之间——那段本来就空着，够放一个分段控件；
+            min-w-0 让它在窄屏上自己收缩，而不是把搜索挤出屏幕 */}
+        <div className="ml-auto flex min-w-0 shrink items-center gap-2">
+          {actions}
+          <div className="shrink-0">
+            <SearchCommand onSearch={onSearch} />
+          </div>
         </div>
       </div>
     </header>

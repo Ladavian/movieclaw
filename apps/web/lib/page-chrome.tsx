@@ -1,6 +1,6 @@
 "use client";
 
-import { createContext, useContext } from "react";
+import { createContext, useContext, type ReactNode } from "react";
 
 import type { SearchSubmitOptions } from "@/components/search-command";
 import type { SearchScope } from "@/lib/categories";
@@ -42,6 +42,17 @@ export interface PageChromeValue {
   onSearch: PageSearchHandler;
   /** 唤起移动端抽屉侧栏：同样由 PageNav 代为呈现，详情页因此不必先返回才能换区 */
   openDrawer: () => void;
+  /**
+   * 把页面级控件挂进移动端全局顶栏那一行，返回撤销函数。
+   *
+   * 给的是**没有 PageNav 的顶层页面**（发现页那种侧栏一级入口）：它们不该有返回键，
+   * 却又有一两个页面级控件（如发现页的 TMDB / 豆瓣 数据源切换）。若让这些控件
+   * 自己吸一条顶栏，窄屏上同样会出现两排 header——而全局顶栏「字标与搜索之间」
+   * 本来就空着一大段，正好安置。
+   *
+   * 在 effect 里调用并返回它的清理函数；节点要用稳定依赖构造，别在渲染期直接调。
+   */
+  setTopBarActions: (node: ReactNode) => () => void;
 }
 
 const PageChromeContext = createContext<PageChromeValue | null>(null);
