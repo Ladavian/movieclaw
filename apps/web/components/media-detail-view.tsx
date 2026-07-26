@@ -11,7 +11,7 @@ import {
   PlayIcon,
   StarIcon,
 } from "@/components/icons";
-import { HScroller } from "@/components/h-scroller";
+import { CastRow } from "@/components/cast-row";
 import { PageNav } from "@/components/page-nav";
 import { ImageLightbox, type LightboxAction } from "@/components/image-lightbox";
 import { MediaRow } from "@/components/media-row";
@@ -20,7 +20,6 @@ import { SubscribeDialog, type SubscribeTarget } from "@/components/subscribe-di
 import {
   fetchDoubanMediaDetail,
   fetchMediaDetail,
-  type MediaCastMember,
   type MediaDetailData,
   type MediaImage,
 } from "@/lib/api/discover";
@@ -312,7 +311,7 @@ export function MediaDetailView({
         )}
 
         {/* 演职员：与条目详情页同一套横滚版式，头像来自 TMDB credits / 豆瓣 actors */}
-        {info && info.cast.length > 0 && <CastRow cast={info.cast} />}
+        {info && <CastRow cast={info.cast} />}
 
         {/* 词条信息：一格都没有时整段不渲染。把导演与主演移走之后，小众条目
             很容易落到「每一格都是空」的状态，那时候留下的是一个空玻璃盒子 */}
@@ -364,37 +363,6 @@ export function MediaDetailView({
       </div>
       </div>
     </div>
-  );
-}
-
-/**
- * 演职员横滚条：与媒体库条目详情页同一套版式（那边的数据来自本地刮削 NFO，
- * 这边来自 TMDB credits / 豆瓣 actors）。头像缺失的人照样占一格——名字与
- * 角色本身就是信息，PosterImage 会渲染深色占位块。
- */
-function CastRow({ cast }: { cast: MediaCastMember[] }) {
-  return (
-    <section>
-      <h2 className="text-on-image mb-3 text-[15px] font-semibold tracking-[-0.01em] text-[var(--text)]">
-        演职员
-      </h2>
-      <HScroller className="-mx-1 gap-3 px-1 pb-1">
-        {/* 同一个人可能以不同角色出现（如一人分饰两角），姓名不足以唯一，附加下标兜底 */}
-        {cast.map((person, index) => (
-          <div key={`${person.name}-${person.role ?? ""}-${index}`} className="w-[104px] shrink-0">
-            <div className="aspect-[2/3] overflow-hidden rounded-xl bg-[#141824] ring-1 ring-white/[0.08]">
-              <PosterImage src={person.avatarUrl} alt={person.name} className="size-full object-cover" />
-            </div>
-            <p className="mt-1.5 truncate text-[12px] font-medium text-[var(--text)]">
-              {person.name}
-            </p>
-            {person.role && (
-              <p className="truncate text-[11px] text-[var(--text-faint)]">饰 {person.role}</p>
-            )}
-          </div>
-        ))}
-      </HScroller>
-    </section>
   );
 }
 

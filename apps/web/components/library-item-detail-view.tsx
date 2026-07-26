@@ -9,6 +9,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 
 import { ArtworkPickerDialog } from "@/components/artwork-picker-dialog";
+import { CastRow } from "@/components/cast-row";
 import { PAGE_NAV_BUTTON_CLASS, PageNav } from "@/components/page-nav";
 import { HScroller } from "@/components/h-scroller";
 import {
@@ -394,8 +395,18 @@ export function LibraryItemDetailView({
           <SeasonEpisodesSection libraryId={libraryId} detail={detail} />
         )}
 
-        {/* —— 演职员（NFO，含头像）—— */}
-        {meta && meta.actors.length > 0 && <CastRow actors={meta.actors} />}
+        {/* —— 演职员：与发现页条目详情共用同一个组件。头像来自 NFO 的 <thumb>，
+            NFO 没写的按姓名回填库内档案的 profile_path（见后端 _fill_actor_thumbs）；
+            TMDB 本就没有照片的人渲染姓名首字占位 —— */}
+        {meta && (
+          <CastRow
+            cast={meta.actors.map((a) => ({
+              name: a.name,
+              role: a.role,
+              avatarUrl: a.thumb_url ? cachedImageUrl(a.thumb_url) : null,
+            }))}
+          />
+        )}
 
         {/* —— 文件区：电影列全部文件；剧集只列没归到集的零散文件 —— */}
         {(() => {
@@ -804,37 +815,6 @@ function SourceLink({ href, label }: { href: string; label: string }) {
     >
       {label} ↗
     </a>
-  );
-}
-
-/** 演职员横滚条：NFO 里的演员表（头像来自刮削工具写入的图床地址）。 */
-function CastRow({ actors }: { actors: { name: string; role: string | null; thumb_url: string | null }[] }) {
-  return (
-    <section>
-      <h2 className="text-on-image mb-3 text-[15px] font-semibold tracking-[-0.01em] text-[var(--text)]">
-        演职员
-      </h2>
-      <HScroller className="-mx-1 gap-3 px-1 pb-1">
-        {/* NFO 里同一个人可能重复出现（如既是编剧又是演员），姓名+角色不足以唯一，附加下标兜底 */}
-        {actors.map((actor, index) => (
-          <div key={`${actor.name}-${actor.role ?? ""}-${index}`} className="w-[104px] shrink-0">
-            <div className="aspect-[2/3] overflow-hidden rounded-xl bg-[#141824] ring-1 ring-white/[0.08]">
-              <PosterImage
-                src={actor.thumb_url ? cachedImageUrl(actor.thumb_url) : ""}
-                alt={actor.name}
-                className="size-full object-cover"
-              />
-            </div>
-            <p className="mt-1.5 truncate text-[12px] font-medium text-[var(--text)]">
-              {actor.name}
-            </p>
-            {actor.role && (
-              <p className="truncate text-[11px] text-[var(--text-faint)]">饰 {actor.role}</p>
-            )}
-          </div>
-        ))}
-      </HScroller>
-    </section>
   );
 }
 

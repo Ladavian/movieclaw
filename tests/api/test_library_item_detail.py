@@ -1045,3 +1045,51 @@ async def test_reidentify_failure_moves_to_unidentified(db, tmp_path, monkeypatc
         row = (await session.execute(select(LibraryFile))).scalars().one()
         assert row.media_item_id is None
         assert row.unidentified_reason and "未能确认身份" in row.unidentified_reason
+
+
+async def test_actor_thumb_missing_only_when_tmdb_has_no_profile(db, tmp_path) -> None:
+    """演职员头像为空的唯一成因是 TMDB 没有这个人的 profile_path，不是读取/入库丢数据。
+
+    夹具里「线上演员甲」有 profile_path、「线上演员乙」没有。三条读路径
+    （NFO / 库内档案 / TMDB 兜底）都必须：有图的拿到 w300 地址，没图的为 None
+    且**仍然保留这一行**——姓名与角色本身就是信息，不能因为缺图就把人丢掉。
+    """
+    root = tmp_path / "media" / "movies"
+    entry = root / "某电影 (2020)"
+    entry.mkdir(parents=True)
+    (entry / "某电影.2020.1080p.mkv").write_bytes(b"m")
+    (entry / "movie.nfo").write_text(
+        "<movie><title>某电影</title><tmdbid>300</tmdbid></movie>", encoding="utf-8"
+    )
+    async with db.session() as session:
+        library = await LibraryRepository(session).create(
+            name="电影库", kind="movie", root_paths=[str(root)]
+        )
+    await scan_library(library.id)
+
+    async def actors_now():
+        async with db.session() as session:
+            item = (
+                (await session.execute(select(MediaItem).where(MediaItem.tmdb_id == 300)))
+                .scalars()
+                .one()
+            )
+            resp = await get_library_item(library.id, item.id, BackgroundTasks(), session)
+        return resp.data.local_meta
+
+    # 1) NFO 路径（我们自己写出的完整 NFO：有图的写 <thumb>，没图的不写）
+    meta = await actors_now()
+    assert meta is not None and meta.source == "nfo"
+    assert [(a.name, bool(a.thumb_url)) for a in meta.actors] == [
+        ("线上演员甲", True),
+        ("线上演员乙", False),
+    ]
+
+    # 2) 库内档案路径（删掉 NFO，断网可用的第二层）
+    (entry / "movie.nfo").unlink()
+    meta = await actors_now()
+    assert meta is not None and meta.source == "db"
+    assert [(a.name, bool(a.thumb_url)) for a in meta.actors] == [
+        ("线上演员甲", True),
+        ("线上演员乙", False),
+    ]
