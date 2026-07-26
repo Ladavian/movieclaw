@@ -695,6 +695,9 @@ export interface LocalActor {
   name: string;
   role: string | null;
   thumb_url: string | null;
+  /** TMDB 影人 ID：有值时详情页把这一格链到人物页（/people/[id]）；
+   *  第三方刮削器写的老 NFO 里可能没有，后端会尽力按姓名从库内档案回填 */
+  tmdb_person_id: number | null;
 }
 
 /** 条目的展示元数据：本地 NFO > 库内刮削档案 > TMDB 实时兜底。 */

@@ -410,20 +410,22 @@ async def _fill_actor_thumbs(
     row = await MediaItemRepository(session).get_metadata(item.id)
     if row is None or not row.cast:
         return
-    profiles = {
-        (c.get("name") or "").strip(): c.get("profile_path")
-        for c in row.cast
-        if c.get("name") and c.get("profile_path")
+    by_name = {
+        (c.get("name") or "").strip(): c for c in row.cast if c.get("name")
     }
-    if not profiles:
+    if not by_name:
         return
     image_base = get_settings().tmdb_image_base_url.rstrip("/")
     for actor in meta.actors:
-        if actor.thumb:
+        entry = by_name.get(actor.name.strip())
+        if entry is None:
             continue
-        profile_path = profiles.get(actor.name.strip())
-        if profile_path:
-            actor.thumb = f"{image_base}/w300{profile_path}"
+        if not actor.thumb and entry.get("profile_path"):
+            actor.thumb = f"{image_base}/w300{entry['profile_path']}"
+        # 影人 id 同理按姓名回填：第三方刮削器写的 NFO 通常没有 <actor><tmdbid>，
+        # 而库内档案里有——补上这一格才点得开人物页
+        if actor.tmdb_person_id is None and entry.get("tmdb_person_id"):
+            actor.tmdb_person_id = int(entry["tmdb_person_id"])
 
 
 async def _db_meta(session: AsyncSession, item: MediaItem) -> EntryMetadata | None:
@@ -457,6 +459,7 @@ async def _db_meta(session: AsyncSession, item: MediaItem) -> EntryMetadata | No
                     if actor.get("profile_path")
                     else None
                 ),
+                tmdb_person_id=actor.get("tmdb_person_id"),
             )
             for actor in row.cast
             if actor.get("name")
@@ -508,6 +511,7 @@ async def _tmdb_fallback_meta(item: MediaItem) -> EntryMetadata | None:
             name=c["name"],
             role=(c.get("character") or "").strip() or None,
             thumb=f"{image_base}/w300{c['profile_path']}" if c.get("profile_path") else None,
+            tmdb_person_id=c.get("id"),
         )
         for c in credits.get("cast", [])[:40]
         if c.get("name")

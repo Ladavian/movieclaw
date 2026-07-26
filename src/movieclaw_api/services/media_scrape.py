@@ -43,8 +43,10 @@ from movieclaw_db.models import (
     LibraryFile,
     MediaEpisode,
     MediaItem,
+    MediaItemPerson,
     MediaMetadata,
     MediaSeason,
+    Person,
     Subscription,
     SubscriptionActivity,
     WantedItem,
@@ -346,6 +348,69 @@ def _merge_identity(
     item.imdb_id = item.imdb_id or profile.imdb_id
 
 
+async def apply_people_credits(
+    session: AsyncSession, media_item_id: int, profile: MediaProfile, now=None
+) -> None:
+    """影人实体与参演/执导关系的 upsert（人物页的数据来源）。
+
+    与集数据同样是**增删改**：本次档案里没有的关系要删掉，否则 TMDB 改了
+    演员表之后，库里会残留「这个人还在这部片里」的假关系，人物页就会列出
+    一部他其实没参演的片。
+
+    ``person`` 行只增不删——同一个人往往参演多部片，删掉某部的关系不代表
+    这个人该从库里消失；真正的孤儿行由 media_item 级联删除后留下，量小且
+    无害（下次刮到同一个人会直接复用）。
+    """
+    now = now or utcnow()
+    credits = profile.people
+    person_ids: dict[int, int] = {}  # tmdb_person_id -> person.id
+
+    for credit in credits:
+        row = (
+            await session.execute(
+                select(Person).where(Person.tmdb_person_id == credit.tmdb_person_id)
+            )
+        ).scalars().first()
+        if row is None:
+            row = Person(tmdb_person_id=credit.tmdb_person_id, name=credit.name)
+            session.add(row)
+        # 姓名/头像以最近一次刮削为准：换了刮削语言时人物页要跟着变
+        row.name = credit.name
+        row.original_name = credit.original_name
+        row.profile_path = credit.profile_path
+        row.updated_at = now
+        await session.flush()
+        assert row.id is not None
+        person_ids[credit.tmdb_person_id] = row.id
+
+    existing = {
+        (r.person_id, r.department): r
+        for r in (
+            await session.execute(
+                select(MediaItemPerson).where(MediaItemPerson.media_item_id == media_item_id)
+            )
+        ).scalars()
+    }
+    seen: set[tuple[int, str]] = set()
+    for credit in credits:
+        key = (person_ids[credit.tmdb_person_id], credit.department)
+        seen.add(key)
+        link = existing.get(key)
+        if link is None:
+            link = MediaItemPerson(
+                media_item_id=media_item_id,
+                person_id=key[0],
+                department=credit.department,
+            )
+        link.character = credit.character
+        link.credit_order = credit.credit_order
+        link.updated_at = now
+        session.add(link)
+    for key, link in existing.items():
+        if key not in seen:
+            await session.delete(link)
+
+
 async def apply_display_profile(
     session: AsyncSession, media_item_id: int, profile: MediaProfile, language: str
 ) -> None:
@@ -378,6 +443,8 @@ async def apply_display_profile(
     meta.scrape_language = language
     meta.updated_at = now
     session.add(meta)
+
+    await apply_people_credits(session, media_item_id, profile, now)
 
     existing_seasons = {s.season_number: s for s in await repo.list_seasons(media_item_id)}
     for season_profile in profile.seasons:

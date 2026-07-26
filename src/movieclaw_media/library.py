@@ -66,6 +66,27 @@ class CastMember(BaseModel):
     character: str | None = None
     order: int = 0
     profile_path: str | None = Field(default=None, description="TMDB 头像相对路径")
+    # 姓名不是身份（同名不同人 / 一人多译名），人物页的链接与 person 表的匹配
+    # 一律走这个 id。老数据的 JSON 里没有这个字段，读取方按缺失处理
+    tmdb_person_id: int | None = Field(default=None, description="TMDB 影人 ID")
+
+
+class PersonCredit(BaseModel):
+    """一条参演/执导关系（喂 person 与 media_item_person 两张表）。
+
+    与 ``CastMember`` 并存而不是复用：那个是「该影片档案里的演员表」（进
+    media_metadata 的 JSON、写 NFO），这个是「人与影片的关系」（进关系表），
+    两者字段需求不同——前者不需要 department，后者不需要为缺 id 的人留位置
+    （没有 person id 就没法建关系，直接跳过）。
+    """
+
+    tmdb_person_id: int
+    name: str
+    original_name: str | None = None
+    profile_path: str | None = None
+    department: str = Field(description="cast=演员 / director=导演（剧集为主创）")
+    character: str | None = None
+    credit_order: int = 0
 
 
 class MediaProfile(BaseModel):
@@ -101,6 +122,9 @@ class MediaProfile(BaseModel):
     vote_count: int | None = None
     directors: list[str] = Field(default_factory=list)
     cast: list[CastMember] = Field(default_factory=list)
+    # 人物页的数据来源。与上面两个字段同源但独立呈现：那两个是展示用的
+    # 姓名/演员表（进 media_metadata），这个是带 TMDB person id 的关系集合
+    people: list[PersonCredit] = Field(default_factory=list)
 
 
 async def fetch_media_profile(
@@ -183,6 +207,7 @@ async def fetch_media_profile(
         vote_count=data.get("vote_count") or None,
         directors=_parse_directors(kind, data),
         cast=_parse_cast(data),
+        people=_parse_people(kind, data),
     )
 
 
@@ -341,10 +366,62 @@ def _parse_cast(data: dict) -> list[CastMember]:
             character=(c.get("character") or "").strip() or None,
             order=c.get("order") or 0,
             profile_path=c.get("profile_path"),
+            tmdb_person_id=c.get("id"),
         )
         for c in (data.get("credits") or {}).get("cast", [])[:_MAX_CAST]
         if c.get("name")
     ]
+
+
+def _parse_people(kind: MediaKind, data: dict) -> list[PersonCredit]:
+    """credits → 参演/执导关系集合（只收 cast 与导演/主创两类，见 MediaItemPerson）。
+
+    没有 TMDB person id 的条目直接跳过：关系表以 id 为身份，拿姓名硬凑只会
+    把同名不同人合并到一起。一人分饰两角时把角色名合并成「A / B」，
+    与关系表 (media_item_id, person_id, department) 的唯一键对齐。
+    """
+    credits = data.get("credits") or {}
+    people: dict[tuple[int, str], PersonCredit] = {}
+
+    def add(raw: dict, department: str, *, character: str | None, order: int) -> None:
+        person_id = raw.get("id")
+        name = (raw.get("name") or "").strip()
+        if not isinstance(person_id, int) or not name:
+            return
+        key = (person_id, department)
+        existing = people.get(key)
+        if existing is None:
+            people[key] = PersonCredit(
+                tmdb_person_id=person_id,
+                name=name,
+                original_name=(raw.get("original_name") or "").strip() or None,
+                profile_path=raw.get("profile_path"),
+                department=department,
+                character=character,
+                credit_order=order,
+            )
+            return
+        # 同一个人同一身份出现第二次：合并角色名，顺序取更靠前的那个
+        if character and character not in (existing.character or ""):
+            existing.character = f"{existing.character} / {character}" if existing.character else character
+        existing.credit_order = min(existing.credit_order, order)
+
+    for c in credits.get("cast", [])[:_MAX_CAST]:
+        add(
+            c,
+            "cast",
+            character=(c.get("character") or "").strip() or None,
+            order=c.get("order") or 0,
+        )
+
+    if kind is MediaKind.MOVIE:
+        crew = [c for c in credits.get("crew", []) if c.get("job") == "Director"]
+    else:
+        crew = list(data.get("created_by") or [])
+    for i, c in enumerate(crew[:5]):
+        add(c, "director", character=None, order=i)
+
+    return list(people.values())
 
 
 async def _fetch_season(

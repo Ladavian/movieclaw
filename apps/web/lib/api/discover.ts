@@ -77,6 +77,7 @@ interface MediaCastMemberDto {
   name: string;
   role: string | null;
   avatar_url: string | null;
+  tmdb_person_id: number | null;
 }
 
 interface MediaFactsDto {
@@ -198,6 +199,8 @@ export interface MediaCastMember {
   name: string;
   role?: string;
   avatarUrl?: string;
+  /** TMDB 影人 ID：有值时详情页把这一格链到人物页；豆瓣来源没有此 id */
+  tmdbPersonId?: number;
 }
 
 /** 详情页「词条信息」卡的字段（导演 / 演职员 / 地区 / 语言 / 日期 / 平台）。 */
@@ -275,6 +278,7 @@ function toDetail(dto: MediaDetailDto): MediaDetailData {
         role: c.role ?? undefined,
         // 头像走图片代理：豆瓣图床按 Referer 防盗链，直连会 403
         avatarUrl: c.avatar_url ? cachedImageUrl(c.avatar_url) : undefined,
+        tmdbPersonId: c.tmdb_person_id ?? undefined,
       })),
       country: dto.facts.country,
       language: dto.facts.language,

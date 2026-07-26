@@ -1,5 +1,8 @@
 "use client";
 
+import Link from "next/link";
+import type { Route } from "next";
+
 import { HScroller } from "@/components/h-scroller";
 import { PosterImage } from "@/components/poster-image";
 
@@ -23,6 +26,12 @@ export interface CastRowPerson {
   role?: string | null;
   /** 头像地址（调用方负责走图片代理）；数据源未提供为空 */
   avatarUrl?: string | null;
+  /**
+   * TMDB 影人 ID：有值时这一格链到人物页（/people/[id]）。姓名不是身份，
+   * 没有 id 就不给链接——宁可不可点，也不能点开一个同名的另一个人。
+   * 豆瓣来源、以及第三方刮削器写的老 NFO 都可能没有这个 id。
+   */
+  tmdbPersonId?: number | null;
 }
 
 /**
@@ -50,31 +59,49 @@ export function CastRow({ cast, title = "演职员" }: { cast: CastRowPerson[]; 
         {/* 同一个人可能出现多次（一人分饰两角；NFO 里还可能既是编剧又是演员），
             姓名+角色不足以唯一，附加下标兜底 */}
         {cast.map((person, index) => (
-          <div key={`${person.name}-${person.role ?? ""}-${index}`} className="w-[104px] shrink-0">
-            <div className="aspect-[2/3] overflow-hidden rounded-xl bg-[#141824] ring-1 ring-white/[0.08]">
-              <PosterImage
-                src={person.avatarUrl ?? ""}
-                alt={person.name}
-                className="size-full object-cover"
-                fallback={
-                  <div
-                    aria-hidden="true"
-                    className="grid size-full place-items-center bg-gradient-to-b from-white/[0.07] to-white/[0.02] text-[26px] font-semibold tracking-wide text-white/30"
-                  >
-                    {initialsOf(person.name)}
-                  </div>
-                }
-              />
-            </div>
-            <p className="mt-1.5 truncate text-[12px] font-medium text-[var(--text)]">
-              {person.name}
-            </p>
-            {person.role && (
-              <p className="truncate text-[11px] text-[var(--text-faint)]">饰 {person.role}</p>
-            )}
-          </div>
+          <CastCard key={`${person.name}-${person.role ?? ""}-${index}`} person={person} />
         ))}
       </HScroller>
     </section>
+  );
+}
+
+/** 一格演员：有 TMDB 影人 ID 时整格是通往人物页的链接，否则是静态块。 */
+function CastCard({ person }: { person: CastRowPerson }) {
+  const body = (
+    <>
+      <div className="aspect-[2/3] overflow-hidden rounded-xl bg-[#141824] ring-1 ring-white/[0.08] transition-all duration-300 ease-out group-hover/cast:-translate-y-1 group-hover/cast:shadow-[0_16px_38px_rgba(0,0,0,0.5)] group-hover/cast:ring-white/25">
+        <PosterImage
+          src={person.avatarUrl ?? ""}
+          alt={person.name}
+          className="size-full object-cover"
+          fallback={
+            <div
+              aria-hidden="true"
+              className="grid size-full place-items-center bg-gradient-to-b from-white/[0.07] to-white/[0.02] text-[26px] font-semibold tracking-wide text-white/30"
+            >
+              {initialsOf(person.name)}
+            </div>
+          }
+        />
+      </div>
+      <p className="mt-1.5 truncate text-[12px] font-medium text-[var(--text)]">{person.name}</p>
+      {person.role && (
+        <p className="truncate text-[11px] text-[var(--text-faint)]">饰 {person.role}</p>
+      )}
+    </>
+  );
+
+  if (!person.tmdbPersonId) {
+    return <div className="w-[104px] shrink-0">{body}</div>;
+  }
+  return (
+    <Link
+      href={`/people/${person.tmdbPersonId}` as Route}
+      aria-label={`查看 ${person.name} 的影人页`}
+      className="group/cast w-[104px] shrink-0 rounded-xl outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-ring)]"
+    >
+      {body}
+    </Link>
   );
 }

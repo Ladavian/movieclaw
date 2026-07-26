@@ -303,6 +303,9 @@ class ActorView(BaseModel):
     name: str
     role: str | None = None
     thumb_url: str | None = Field(default=None, description="头像地址（NFO 里的图床 URL）")
+    tmdb_person_id: int | None = Field(
+        default=None, description="TMDB 影人 ID；有值时前端把这一格链到人物页"
+    )
 
 
 class LocalMetaView(BaseModel):

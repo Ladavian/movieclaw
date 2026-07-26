@@ -404,6 +404,7 @@ export function LibraryItemDetailView({
               name: a.name,
               role: a.role,
               avatarUrl: a.thumb_url ? cachedImageUrl(a.thumb_url) : null,
+              tmdbPersonId: a.tmdb_person_id,
             }))}
           />
         )}

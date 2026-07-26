@@ -1144,7 +1144,9 @@ async def get_library_item(
             genres=bundle.local_meta.genres,
             directors=bundle.local_meta.directors,
             actors=[
-                ActorView(name=a.name, role=a.role, thumb_url=a.thumb)
+                ActorView(
+                    name=a.name, role=a.role, thumb_url=a.thumb, tmdb_person_id=a.tmdb_person_id
+                )
                 for a in bundle.local_meta.actors
             ],
             nfo_name=bundle.local_meta.nfo_name,

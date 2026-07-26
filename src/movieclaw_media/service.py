@@ -383,6 +383,7 @@ class MediaDiscoverService:
                     name=name,
                     role=(person.get("character") or "").strip() or None,
                     avatar_url=f"{self._image_base}/w185{profile}" if profile else None,
+                    tmdb_person_id=person.get("id"),
                 )
             )
         return members

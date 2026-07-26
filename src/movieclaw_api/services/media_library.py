@@ -35,6 +35,7 @@ class MediaLibraryService:
     def __init__(
         self, session: AsyncSession, tmdb_client: TmdbClient, *, language: str = "zh-CN"
     ) -> None:
+        self._session = session
         self._repo = MediaItemRepository(session)
         self._client = tmdb_client
         self._language = language
@@ -72,6 +73,12 @@ class MediaLibraryService:
             if existing is None:  # 理论不可达：冲突意味着对方已提交
                 raise
             return await self._backfill(existing, douban_id, extra_aliases)
+        # 影人关系要等 media_item.id 落库后才能建（人物页的数据来源）。
+        # 与刷新路径（media_scrape.apply_display_profile）同一个函数，口径一致。
+        from movieclaw_api.services.media_scrape import apply_people_credits
+
+        if item.id is not None:
+            await apply_people_credits(self._session, item.id, profile)
         logger.info(
             "媒体条目已建档：%s/%s《%s》(%s)，别名 %d 个，季 %d 个",
             kind.value,

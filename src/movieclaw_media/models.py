@@ -95,6 +95,10 @@ class MediaCastMember(BaseModel):
     name: str = Field(description="演员姓名")
     role: str | None = Field(default=None, description="饰演角色；数据源未提供为空")
     avatar_url: str | None = Field(default=None, description="头像地址；数据源未提供为空")
+    tmdb_person_id: int | None = Field(
+        default=None,
+        description="TMDB 影人 ID；有值时前端把这一格链到人物页。豆瓣来源没有此 id",
+    )
 
 
 class MediaFacts(BaseModel):
