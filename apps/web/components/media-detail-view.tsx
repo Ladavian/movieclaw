@@ -131,6 +131,17 @@ export function MediaDetailView({
   const related = detail?.related ?? [];
 
   const isMovie = item.type === "movie";
+  // 词条信息卡里是否还剩下至少一格（导演已上提到元信息行、主演已交给演职员条）
+  const hasFacts = Boolean(
+    info &&
+      (info.released ||
+        info.network ||
+        info.country ||
+        info.language ||
+        item.extent ||
+        info.aliases.length > 0 ||
+        item.badges.length > 0),
+  );
 
   /** 打开订阅弹层：TMDB 入口直接带 tmdb_id；豆瓣入口交给后端收敛。 */
   const openSubscribe = () =>
@@ -157,16 +168,23 @@ export function MediaDetailView({
     // rounded-2xl + overflow 裁切：内容渐变到底部是近实色的深色板，方角会与
     // 全站「浮起圆角卡片」的形状语言冲突——按侧栏同规格圆角收尾
     <div className="scroll-thin h-full overflow-y-auto rounded-2xl">
+      {/* min-h-full + flex 纵向：内容不足一屏时（简介/演职员/剧照都缺的小众条目）
+          内容层仍要撑满剩余高度。否则渐变板只到内容底部就断了，下面直接露出
+          沉浸背景，板子底边成了一道硬边界——正是这套「无缝渐入」要避免的东西。
+          PageNav 仍在滚动容器内（sticky 参照的是最近滚动祖先，中间这层普通 div
+          不影响），其活动范围由这层的高度决定，覆盖整个可滚动区间。 */}
+      <div className="flex min-h-full flex-col">
       {/* —— 1. 顶栏：不再有任何 Hero 卡片图层——全站背景此刻就是本片剧照
           （沉浸覆盖 + 本页豁免全局蒙版，见 app-shell 的 isHome），大图直出、
           零边界。首屏只有一颗圆形返回键浮在剧照上 —— */}
       <PageNav items={trail} />
 
-      {/* 氛围留白：这一段什么都不放，让剧照完整呼吸 */}
-      <div className="h-[30vh] min-h-[180px] max-md:h-[22vh] max-md:min-h-[120px]" />
+      {/* 氛围留白：这一段什么都不放，让剧照完整呼吸。shrink-0 是必须的——
+          它是 flex 子项，不加会在内容长的时候被压扁 */}
+      <div className="h-[30vh] min-h-[180px] shrink-0 max-md:h-[22vh] max-md:min-h-[120px]" />
 
       {/* —— 2. 内容层：从全透明渐入页面底色，与背景之间没有任何接缝 —— */}
-      <div className="bg-[linear-gradient(180deg,rgba(7,9,14,0)_0,rgba(7,9,14,0.66)_130px,rgba(7,9,14,0.88)_360px,rgba(7,9,14,0.93)_100%)] pb-12">
+      <div className="flex-1 bg-[linear-gradient(180deg,rgba(7,9,14,0)_0,rgba(7,9,14,0.66)_130px,rgba(7,9,14,0.88)_360px,rgba(7,9,14,0.93)_100%)] pb-12">
       {/* —— 3. 头部信息区 —— */}
       <div className="relative z-10 flex items-end gap-7 px-12 pt-6 max-md:gap-4 max-md:px-4 max-md:pt-3">
         <div className="w-[186px] shrink-0 overflow-hidden rounded-xl bg-[#141824] shadow-[0_26px_60px_rgba(0,0,0,0.6)] ring-1 ring-white/15 max-md:w-[104px]">
@@ -185,17 +203,25 @@ export function MediaDetailView({
           <h1 className="text-on-image mt-2 text-[38px] font-bold leading-[1.1] tracking-[-0.02em] text-white max-md:mt-1 max-md:text-[21px]">
             {item.title}
           </h1>
-          <p className="text-on-image mt-1.5 truncate text-[14px] text-white/55 max-md:mt-0.5 max-md:text-[12px]">
-            {item.originalTitle}
-          </p>
+          {/* 原名：与中文标题相同就不渲染——国产片在 TMDB 的 original_title
+              往往就是中文名本身，照原样渲染会在标题下面重复一行 */}
+          {item.originalTitle && item.originalTitle !== item.title && (
+            <p className="text-on-image mt-1.5 truncate text-[14px] text-white/55 max-md:mt-0.5 max-md:text-[12px]">
+              {item.originalTitle}
+            </p>
+          )}
 
           {/* 元信息行：评分 / 年份 / 规模 / 质量徽章 */}
           <div className="tnum mt-3.5 flex flex-wrap items-center gap-x-3.5 gap-y-2 text-[13px] text-white/80 max-md:mt-2 max-md:gap-x-2.5 max-md:gap-y-1 max-md:text-[12px]">
-            <span className="flex items-center gap-1.5">
-              <StarIcon className="size-4 text-[#f5c451]" />
-              <span className="text-[16px] font-bold text-white">{item.rating.toFixed(1)}</span>
-            </span>
-            <span>{item.year}</span>
+            {/* 评分 0 = 数据源暂无评分（新片/小众条目），不能照原样渲染成「0.0」
+                ——那读起来是「烂到 0 分」。海报卡片与条目详情页都是这个口径 */}
+            {item.rating > 0 && (
+              <span className="flex items-center gap-1.5">
+                <StarIcon className="size-4 text-[#f5c451]" />
+                <span className="text-[16px] font-bold text-white">{item.rating.toFixed(1)}</span>
+              </span>
+            )}
+            {!!item.year && <span>{item.year}</span>}
             {item.extent && <span>{item.extent}</span>}
             {info && info.directors.length > 0 && (
               <span className="text-white/65">
@@ -288,7 +314,9 @@ export function MediaDetailView({
         {/* 演职员：与条目详情页同一套横滚版式，头像来自 TMDB credits / 豆瓣 actors */}
         {info && info.cast.length > 0 && <CastRow cast={info.cast} />}
 
-        {info && (
+        {/* 词条信息：一格都没有时整段不渲染。把导演与主演移走之后，小众条目
+            很容易落到「每一格都是空」的状态，那时候留下的是一个空玻璃盒子 */}
+        {hasFacts && info && (
           <section>
             <h2 className="text-on-image mb-3 text-[15px] font-semibold tracking-[-0.01em] text-[var(--text)]">
               词条信息
@@ -333,6 +361,7 @@ export function MediaDetailView({
           <MediaRow row={{ id: `related-${item.id}`, title: "相似推荐", items: related }} />
         </div>
       )}
+      </div>
       </div>
     </div>
   );
@@ -574,7 +603,9 @@ function PhotoArrow({
  */
 function DetailFallback({ failed, onBack }: { failed: boolean; onBack: () => void }) {
   return (
-    <div className="flex h-full flex-col items-center justify-center gap-4 px-6 text-center">
+    // ambient-fallback：本页豁免了全局蒙版（isHome），而此刻还没有沉浸背景可铺，
+    // 文案会直接压在用户配的壁纸上——亮壁纸下就读不出来了，兜底态自己带一层底
+    <div className="ambient-fallback flex h-full flex-col items-center justify-center gap-4 px-6 text-center">
       {failed ? (
         <>
           <p className="text-[15px] font-semibold text-[var(--text)]">未能加载该影片详情</p>

@@ -150,7 +150,9 @@ export function LibraryItemDetailView({
 
   if (failed) {
     return (
-      <div className="flex h-full flex-col items-center justify-center gap-4 px-6 text-center">
+      // ambient-fallback：同 MediaDetailView——本页豁免全局蒙版，兜底态没有沉浸
+      // 背景可铺，文案会压在用户壁纸上，自己带一层底才读得清
+      <div className="ambient-fallback flex h-full flex-col items-center justify-center gap-4 px-6 text-center">
         <p className="text-[15px] font-semibold text-[var(--text)]">未能加载该条目</p>
         <p className="max-w-sm text-[13px] leading-6 text-[var(--text-muted)]">
           条目可能已被删除或重新识别为其他作品，请回库存页查看。
@@ -168,7 +170,7 @@ export function LibraryItemDetailView({
 
   if (!detail) {
     return (
-      <div className="flex h-full items-center justify-center gap-2.5 text-[13px] text-[var(--text-muted)]">
+      <div className="ambient-fallback flex h-full items-center justify-center gap-2.5 text-[13px] text-[var(--text-muted)]">
         <span className="size-4 animate-spin rounded-full border-2 border-white/20 border-t-white/70" />
         正在读取本地刮削信息…
       </div>
