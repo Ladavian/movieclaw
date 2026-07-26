@@ -38,7 +38,7 @@ export function NewTask() {
   return (
     <div className="flex h-full flex-col">
       <div className="scroll-thin flex-1 overflow-y-auto">
-        <div className="mx-auto flex min-h-full max-w-2xl flex-col justify-center px-6 py-12">
+        <div className="mx-auto flex min-h-full max-w-2xl flex-col justify-center px-6 py-12 max-md:px-4 max-md:py-8">
           <Composer
             autoFocus={!locked}
             value={input}

@@ -107,7 +107,7 @@ export function MediaSearchResults({
   return (
     <div className="relative flex h-full flex-col">
       {/* 状态行：与站点资源垂直的头部同构（关键词 + 快照提示） */}
-      <header className="shrink-0 px-6 pb-3 pt-4">
+      <header className="shrink-0 px-6 pb-3 pt-4 max-md:px-4 max-md:pt-3">
         <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1.5">
           <h1 className="text-on-image text-[18px] font-semibold tracking-[-0.01em] text-white">
             “{keyword}”
@@ -148,7 +148,7 @@ export function MediaSearchResults({
         </div>
       </header>
 
-      <div className="scroll-thin relative min-h-0 flex-1 overflow-y-auto px-6 pb-6">
+      <div className="scroll-thin relative min-h-0 flex-1 overflow-y-auto px-6 pb-6 max-md:px-4">
         {allEmpty ? (
           <MediaSearchEmpty
             title={anyError ? "影视搜索出错" : "没有找到相关影视条目"}

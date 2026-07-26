@@ -99,7 +99,7 @@ export function DiscoverView({
   }, [cacheKey, mediaType, reloadKey, source]);
 
   const toolbar = (
-    <div className="sticky top-0 z-20 flex items-center justify-end px-6 py-3">
+    <div className="sticky top-0 z-20 flex items-center justify-end px-6 py-3 max-md:px-4 max-md:py-2">
       <SourceSwitcher
         value={source}
         onChange={(nextSource) => {
@@ -130,7 +130,7 @@ export function DiscoverView({
     <div className="scroll-thin flex-1 overflow-y-auto pb-10">
       {toolbar}
       {page.hero.length > 0 && (
-        <div className="px-6">
+        <div className="px-6 max-md:px-4">
           <HeroBanner items={page.hero} />
         </div>
       )}
@@ -183,8 +183,8 @@ function SourceSwitcher({
 /** 加载骨架：按真实页面布局占位（Hero 大块 + 两行海报），避免切页闪白。 */
 function DiscoverSkeleton() {
   return (
-    <div className="flex-1 overflow-hidden px-6 pb-10" aria-busy="true" aria-label="发现页加载中">
-      <div className="h-[46vh] min-h-[320px] animate-pulse rounded-2xl bg-white/[0.05] ring-1 ring-white/10" />
+    <div className="flex-1 overflow-hidden px-6 pb-10 max-md:px-4" aria-busy="true" aria-label="发现页加载中">
+      <div className="h-[46vh] min-h-[320px] animate-pulse rounded-2xl bg-white/[0.05] ring-1 ring-white/10 max-md:h-[38vh] max-md:min-h-[230px]" />
       {[0, 1].map((row) => (
         <div key={row} className="mt-10">
           <div className="h-4 w-28 animate-pulse rounded bg-white/[0.08]" />
@@ -192,7 +192,7 @@ function DiscoverSkeleton() {
             {Array.from({ length: 8 }, (_, i) => (
               <div
                 key={i}
-                className="aspect-[2/3] w-[152px] shrink-0 animate-pulse rounded-2xl bg-white/[0.05] xl:w-[164px]"
+                className="aspect-[2/3] w-[152px] shrink-0 animate-pulse rounded-2xl bg-white/[0.05] max-md:w-[126px] xl:w-[164px]"
               />
             ))}
           </div>
@@ -271,7 +271,7 @@ function HeroBanner({ items }: { items: MediaItem[] }) {
   }, [items.length, index]);
 
   return (
-    <div className="group relative h-[46vh] min-h-[320px] w-full overflow-hidden rounded-2xl shadow-[0_24px_70px_-18px_rgba(0,0,0,0.62)] ring-1 ring-white/10">
+    <div className="group relative h-[46vh] min-h-[320px] w-full overflow-hidden rounded-2xl shadow-[0_24px_70px_-18px_rgba(0,0,0,0.62)] ring-1 ring-white/10 max-md:h-[38vh] max-md:min-h-[230px]">
       {items.map((item, i) => (
         <HeroSlide key={item.id} item={item} active={i === index} />
       ))}
@@ -336,21 +336,21 @@ function HeroSlide({ item, active }: { item: MediaItem; active: boolean }) {
         }`}
       />
       <div className="absolute inset-0 bg-gradient-to-r from-[rgba(7,9,14,0.88)] via-[rgba(7,9,14,0.42)] to-transparent" />
-      <div className="absolute inset-x-0 bottom-0 h-1/2 bg-gradient-to-t from-[rgba(7,9,14,0.72)] to-transparent" />
+      <div className="absolute inset-x-0 bottom-0 h-1/2 bg-gradient-to-t from-[rgba(7,9,14,0.72)] to-transparent max-md:h-3/4 max-md:from-[rgba(7,9,14,0.9)]" />
 
       {/* 文字与操作区：随当前帧轻微上移淡入 */}
       <div
-        className={`absolute inset-0 flex max-w-xl flex-col justify-end p-7 transition-all delay-150 duration-500 ease-out sm:p-9 ${
+        className={`absolute inset-0 flex max-w-xl flex-col justify-end p-7 transition-all delay-150 duration-500 ease-out max-md:p-4 sm:p-9 ${
           active ? "translate-y-0 opacity-100" : "translate-y-3 opacity-0"
         }`}
       >
         <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-[var(--accent-2)]">
           今日精选 · {item.type === "movie" ? "电影" : "剧集"}
         </p>
-        <h2 className="text-on-image mt-2 text-[34px] font-bold leading-[1.1] tracking-[-0.02em] text-white sm:text-[40px]">
+        <h2 className="text-on-image mt-2 text-[34px] font-bold leading-[1.1] tracking-[-0.02em] text-white max-md:mt-1 max-md:text-[23px] sm:text-[40px]">
           {item.title}
         </h2>
-        <p className="text-on-image mt-1 text-[13px] text-white/55">{item.originalTitle}</p>
+        <p className="text-on-image mt-1 truncate text-[13px] text-white/55 max-md:text-[11.5px]">{item.originalTitle}</p>
 
         {/* 元信息行：评分 / 年份 / 类型 / 规模 / 质量徽章（空字段不占位） */}
         <div className="tnum mt-3 flex flex-wrap items-center gap-x-3 gap-y-1.5 text-[12.5px] text-white/80">
@@ -377,11 +377,11 @@ function HeroSlide({ item, active }: { item: MediaItem; active: boolean }) {
           )}
         </div>
 
-        <p className="text-on-image mt-3 line-clamp-2 max-w-lg text-[13px] leading-6 text-white/75 sm:line-clamp-3">
+        <p className="text-on-image mt-3 line-clamp-2 max-w-lg text-[13px] leading-6 text-white/75 max-md:mt-2 max-md:text-[12px] max-md:leading-5 sm:line-clamp-3">
           {item.overview}
         </p>
 
-        <div className="mt-5 flex items-center gap-3">
+        <div className="mt-5 flex flex-wrap items-center gap-3 max-md:mt-3.5 max-md:gap-2">
           <button
             type="button"
             className="btn-accent flex h-10 items-center gap-2 rounded-full px-5 text-[13px] font-semibold"

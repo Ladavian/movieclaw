@@ -80,7 +80,7 @@ export function AgentConversationView({ conversationId }: { conversationId: stri
     // immersive-theme 在容器内切换为中性灰阶 + 系统字体的阅读配色
     <div className="immersive-theme flex h-full flex-col">
       {/* 顶部条：会话标题 + 运行状态 */}
-      <header className="flex h-14 shrink-0 items-center px-5">
+      <header className="flex h-14 shrink-0 items-center px-5 max-md:h-11 max-md:px-4">
         <div className="flex min-w-0 items-center gap-2.5">
           <h1 className="truncate text-[14px] font-semibold tracking-[-0.01em]">
             {conversation.title}
@@ -101,7 +101,7 @@ export function AgentConversationView({ conversationId }: { conversationId: stri
           const el = e.currentTarget;
           nearBottomRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 120;
         }}
-        className="scroll-thin min-h-0 flex-1 overflow-y-auto px-6 py-6"
+        className="scroll-thin min-h-0 flex-1 overflow-y-auto px-6 py-6 max-md:px-4 max-md:py-4"
       >
         <div className="mx-auto max-w-3xl space-y-6">
           {conversation.turns.map((turn) => (
@@ -111,7 +111,7 @@ export function AgentConversationView({ conversationId }: { conversationId: stri
       </div>
 
       {/* 底部输入：生成中可继续打字，发送键变停止键 */}
-      <div className="shrink-0 px-4 pb-5 pt-2">
+      <div className="shrink-0 px-4 pb-5 pt-2 max-md:px-3 max-md:pb-3">
         <div className="mx-auto max-w-3xl">
           <Composer
             flat

@@ -41,7 +41,8 @@ function AuthScreenInner({
   const { backdrop } = useBackdrop();
 
   return (
-    <div className="relative z-10 flex h-screen w-screen items-center justify-center p-6">
+    // 100dvh + 安全区：移动浏览器地址栏收放时卡片仍然居中，刘海屏不被状态栏压住
+    <div className="relative z-10 flex h-[100dvh] w-full items-center justify-center p-6 [padding-bottom:calc(1.5rem+var(--safe-bottom))] [padding-top:calc(1.5rem+var(--safe-top))]">
       <div className="w-full max-w-[400px]">
         {/* 表单是整页文字最密的区域，玻璃必须压得比工作台面板更暗才能保住对比度：
             在主区输入框的配方（darkTint 0.42 / blur 0.22）基础上再深一档。 */}

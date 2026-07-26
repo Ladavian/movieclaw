@@ -231,7 +231,7 @@ export function NetworkConfigSection() {
 
           {form.proxy_mode === "manual" && (
             <div className="px-5 py-4">
-              <div className="flex items-center justify-between gap-4">
+              <div className="flex items-center justify-between gap-4 max-md:flex-col max-md:items-stretch max-md:gap-2">
                 <LabelWithHelp
                   label="代理地址"
                   help={
@@ -250,7 +250,7 @@ export function NetworkConfigSection() {
                   onBlur={(e) => commit({ ...form, proxy_url: e.target.value.trim() })}
                   onKeyDown={(e) => e.key === "Enter" && (e.target as HTMLInputElement).blur()}
                   placeholder="socks5://192.168.1.2:7891"
-                  className="w-[300px] max-w-[55%] rounded-xl border border-white/[0.08] bg-white/[0.04] px-3 py-2 font-mono text-[12.5px] text-[var(--text)] outline-none transition-colors placeholder:text-[var(--text-faint)] focus:border-[var(--accent)]/50"
+                  className="w-[300px] max-w-[55%] rounded-xl border border-white/[0.08] bg-white/[0.04] px-3 py-2 font-mono text-[12.5px] text-[var(--text)] outline-none transition-colors placeholder:text-[var(--text-faint)] focus:border-[var(--accent)]/50 max-md:w-full max-md:max-w-none"
                 />
               </div>
               {(proxyUrlError || !form.proxy_url.trim()) && (
@@ -392,7 +392,7 @@ export function NetworkConfigSection() {
                 ] as const
               ).map(([field, label, help]) => (
                 <div key={field} className="px-5 py-4">
-                  <div className="flex items-center justify-between gap-4">
+                  <div className="flex items-center justify-between gap-4 max-md:flex-col max-md:items-stretch max-md:gap-2">
                     <LabelWithHelp label={label} help={<p>{help} 留空使用默认值。</p>} />
                     <input
                       type="text"
@@ -408,7 +408,7 @@ export function NetworkConfigSection() {
                       }}
                       onKeyDown={(e) => e.key === "Enter" && (e.target as HTMLInputElement).blur()}
                       placeholder={view.mirror_defaults[field] ?? ""}
-                      className="w-[340px] max-w-[60%] rounded-xl border border-white/[0.08] bg-white/[0.04] px-3 py-2 font-mono text-[12.5px] text-[var(--text)] outline-none transition-colors placeholder:text-[var(--text-faint)] focus:border-[var(--accent)]/50"
+                      className="w-[340px] max-w-[60%] rounded-xl border border-white/[0.08] bg-white/[0.04] px-3 py-2 font-mono text-[12.5px] text-[var(--text)] outline-none transition-colors placeholder:text-[var(--text-faint)] focus:border-[var(--accent)]/50 max-md:w-full max-md:max-w-none"
                     />
                   </div>
                   {mirrorErrors[field] && (

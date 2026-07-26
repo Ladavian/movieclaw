@@ -132,8 +132,8 @@ export function MediaDetailView({
     <div className="scroll-thin h-full overflow-y-auto pb-12">
       {/* —— 1. 顶栏（返回 + 吸顶标题）+ Hero 大剧照 —— */}
       <PageNav items={trail} />
-      <div className="px-6">
-        <div className="relative h-[42vh] min-h-[280px] overflow-hidden rounded-2xl shadow-[0_24px_70px_-18px_rgba(0,0,0,0.62)] ring-1 ring-white/10">
+      <div className="px-6 max-md:px-4">
+        <div className="relative h-[42vh] min-h-[280px] overflow-hidden rounded-2xl shadow-[0_24px_70px_-18px_rgba(0,0,0,0.62)] ring-1 ring-white/10 max-md:h-[30vh] max-md:min-h-[190px]">
           <PosterImage
             src={item.backdropUrl}
             alt={`${item.title} 剧照`}
@@ -155,8 +155,8 @@ export function MediaDetailView({
       </div>
 
       {/* —— 2. 头部信息区：海报上浮压住 Hero 底边 —— */}
-      <div className="relative z-10 -mt-44 flex items-end gap-7 px-12">
-        <div className="w-[186px] shrink-0 overflow-hidden rounded-xl bg-[#141824] shadow-[0_26px_60px_rgba(0,0,0,0.6)] ring-1 ring-white/15">
+      <div className="relative z-10 -mt-44 flex items-end gap-7 px-12 max-md:-mt-20 max-md:gap-4 max-md:px-4">
+        <div className="w-[186px] shrink-0 overflow-hidden rounded-xl bg-[#141824] shadow-[0_26px_60px_rgba(0,0,0,0.6)] ring-1 ring-white/15 max-md:w-[104px]">
           <PosterImage
             src={item.posterUrl}
             alt={`${item.title} 海报`}
@@ -169,15 +169,15 @@ export function MediaDetailView({
             {source === "douban" ? "豆瓣" : "TMDB"} · {isMovie ? "电影" : "剧集"}
             {item.genres.length > 0 ? ` · ${item.genres.join(" / ")}` : ""}
           </p>
-          <h1 className="text-on-image mt-2 text-[38px] font-bold leading-[1.1] tracking-[-0.02em] text-white">
+          <h1 className="text-on-image mt-2 text-[38px] font-bold leading-[1.1] tracking-[-0.02em] text-white max-md:mt-1 max-md:text-[21px]">
             {item.title}
           </h1>
-          <p className="text-on-image mt-1.5 truncate text-[14px] text-white/55">
+          <p className="text-on-image mt-1.5 truncate text-[14px] text-white/55 max-md:mt-0.5 max-md:text-[12px]">
             {item.originalTitle}
           </p>
 
           {/* 元信息行：评分 / 年份 / 规模 / 质量徽章 */}
-          <div className="tnum mt-3.5 flex flex-wrap items-center gap-x-3.5 gap-y-2 text-[13px] text-white/80">
+          <div className="tnum mt-3.5 flex flex-wrap items-center gap-x-3.5 gap-y-2 text-[13px] text-white/80 max-md:mt-2 max-md:gap-x-2.5 max-md:gap-y-1 max-md:text-[12px]">
             <span className="flex items-center gap-1.5">
               <StarIcon className="size-4 text-[#f5c451]" />
               <span className="text-[16px] font-bold text-white">{item.rating.toFixed(1)}</span>
@@ -199,7 +199,7 @@ export function MediaDetailView({
           </div>
 
           {/* 操作区：已订阅的影片主按钮变为状态展示（点击进入管理弹层可取消订阅） */}
-          <div className="mt-5 flex flex-wrap items-center gap-3">
+          <div className="mt-5 flex flex-wrap items-center gap-3 max-md:mt-3.5 max-md:gap-2">
             {sub ? (
               <button
                 type="button"
@@ -253,7 +253,7 @@ export function MediaDetailView({
       />
 
       {/* —— 3. 剧情简介 + 词条信息 —— */}
-      <div className="mt-9 space-y-8 px-12">
+      <div className="mt-9 space-y-8 px-12 max-md:mt-6 max-md:space-y-6 max-md:px-4">
         <section>
           <h2 className="text-on-image mb-3 text-[15px] font-semibold tracking-[-0.01em] text-[var(--text)]">
             剧情简介
@@ -268,7 +268,7 @@ export function MediaDetailView({
             <h2 className="text-on-image mb-3 text-[15px] font-semibold tracking-[-0.01em] text-[var(--text)]">
               词条信息
             </h2>
-            <div className="rounded-2xl border border-white/[0.07] bg-[rgba(14,16,22,0.45)] p-6 backdrop-blur-xl">
+            <div className="rounded-2xl border border-white/[0.07] bg-[rgba(14,16,22,0.45)] p-6 backdrop-blur-xl max-md:p-4">
               <dl className="grid gap-x-10 gap-y-5 sm:grid-cols-2 xl:grid-cols-3">
                 {info.directors.length > 0 && (
                   <Fact label={isMovie ? "导演" : "主创"} value={info.directors.join(" / ")} />
@@ -295,7 +295,7 @@ export function MediaDetailView({
 
       {/* —— 4. 剧照与海报 —— */}
       {detail && (detail.backdrops.length > 0 || detail.posters.length > 0) && (
-        <div className="mt-9 px-12">
+        <div className="mt-9 px-12 max-md:mt-6 max-md:px-4">
           <PhotoWall
             title={item.title}
             backdrops={detail.backdrops}
@@ -440,7 +440,7 @@ function PhotoWall({
               aria-label={`查看${active.label}第 ${i + 1} 张`}
               onClick={() => setLightboxIndex(i)}
               className={`shrink-0 overflow-hidden rounded-xl bg-[#141824] ring-1 ring-white/[0.08] transition-all duration-300 ease-out hover:-translate-y-1 hover:shadow-[0_16px_40px_rgba(0,0,0,0.55)] hover:ring-white/30 ${
-                active.id === "backdrops" ? "aspect-video h-[148px]" : "aspect-[2/3] h-[148px]"
+                active.id === "backdrops" ? "aspect-video h-[148px] max-md:h-[104px]" : "aspect-[2/3] h-[148px] max-md:h-[126px]"
               }`}
             >
               <PosterImage

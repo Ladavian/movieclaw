@@ -20,6 +20,7 @@ import { useBackdrop } from "@/lib/backdrop";
 import { sidebarGlass } from "@/lib/glass";
 import { formatRelativeTime } from "@/lib/time";
 import { useUiPrefs } from "@/lib/ui-prefs";
+import { useIsMobile } from "@/lib/use-media-query";
 import { exploreItems } from "@/lib/mock-data";
 import { GlassPanel } from "@/components/glass-panel";
 import { SearchCommand, type SearchSubmitOptions } from "@/components/search-command";
@@ -67,6 +68,10 @@ export function Sidebar({
 }: SidebarProps) {
   const { backdrop } = useBackdrop();
   const { conversations, rename, remove } = useAgentConversations();
+  // 移动端的搜索入口在全局顶栏上（常驻可见），侧栏里这颗就是重复的。
+  // 必须条件渲染而不是 CSS 隐藏：SearchCommand 自带全局 ⌘K 监听，
+  // 挂两份会让一次快捷键把面板开了又关。
+  const isMobile = useIsMobile();
 
   /** 重命名会话：沿用全站的原生弹窗风格；空输入或未改动直接放弃。 */
   const handleRename = (id: string, currentTitle: string) => {
@@ -130,7 +135,7 @@ export function Sidebar({
             />
           </BrandHome>
           <div className="flex items-center gap-1">
-            <SearchCommand onSearch={onSearch} />
+            {!isMobile && <SearchCommand onSearch={onSearch} />}
             <CollapseToggle collapsed={false} onClick={onToggleCollapse} />
           </div>
         </div>
@@ -382,7 +387,7 @@ function RunRow({
           setMenuPos({ left: rect.right - 144, top: rect.bottom + 6 });
         }}
         className={`glass-row !absolute right-1.5 top-1/2 !size-6 -translate-y-1/2 justify-center !rounded-md !p-0 transition-opacity duration-200 ${
-          open ? "opacity-100" : "opacity-0 group-hover/run:opacity-100"
+          open ? "opacity-100" : "touch-reveal opacity-0 group-hover/run:opacity-100"
         }`}
       >
         <MoreIcon className="size-4" />

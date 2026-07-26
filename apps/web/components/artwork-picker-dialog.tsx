@@ -78,16 +78,16 @@ export function ArtworkPickerDialog({
       onClose={applying === null ? onClose : () => {}}
       label="更换图片"
       width="2xl"
-      panelClassName="flex max-h-[80vh] flex-col"
+      panelClassName="flex max-h-[80dvh] flex-col"
     >
-      <div className="flex items-center justify-between gap-4 border-b border-white/[0.08] px-6 py-4">
+      <div className="flex items-center justify-between gap-4 border-b border-white/[0.08] px-6 py-4 max-md:flex-col max-md:items-stretch max-md:gap-3 max-md:px-5 max-md:py-3.5">
         <div className="min-w-0">
           <h3 className="text-[16px] font-semibold text-[var(--text)]">更换图片</h3>
           <p className="mt-1 text-[12px] leading-5 text-[var(--text-muted)]">
             选中即生效，并同步写入媒体目录；此后刷新元数据不会覆盖你选的图
           </p>
         </div>
-        <div className="flex shrink-0 gap-1 rounded-full bg-white/[0.06] p-1">
+        <div className="flex shrink-0 gap-1 self-start rounded-full bg-white/[0.06] p-1">
           {(
             [
               ["backdrop", "背景"],
@@ -109,7 +109,7 @@ export function ArtworkPickerDialog({
       </div>
 
       {locked && (
-        <div className="flex items-center justify-between gap-3 border-b border-white/[0.08] bg-[#7dd3fc]/[0.07] px-6 py-2.5">
+        <div className="flex items-center justify-between gap-3 border-b border-white/[0.08] bg-[#7dd3fc]/[0.07] px-6 py-2.5 max-md:px-5">
           <span className="text-[12px] text-[#7dd3fc]">
             当前{tab === "poster" ? "海报" : "背景"}由你手动选定，刷新元数据不会覆盖
           </span>

@@ -175,19 +175,19 @@ export function LibraryView() {
 
   return (
     <div className="scroll-thin flex-1 overflow-y-auto pb-10">
-      <div className="flex items-start justify-between gap-4 px-6 pt-2">
+      <div className="flex items-start justify-between gap-4 px-6 pt-2 max-md:flex-col max-md:items-stretch max-md:gap-3 max-md:px-4">
         <div>
-          <h2 className="text-on-image text-[26px] font-bold leading-tight tracking-[-0.02em] text-white">
+          <h2 className="text-on-image text-[26px] font-bold leading-tight tracking-[-0.02em] text-white max-md:text-[21px]">
             媒体库
           </h2>
-          <p className="text-on-image mt-1.5 text-[13px] text-[var(--text-muted)]">
+          <p className="text-on-image mt-1.5 text-[13px] text-[var(--text-muted)] max-md:mt-1 max-md:line-clamp-2 max-md:text-[12px]">
             你的影视收藏在这里安家：订阅与下载的内容按「入库到哪个库」落盘，Plex / Emby 可直接识别
           </p>
         </div>
         <button
           type="button"
           onClick={() => setEditing("new")}
-          className="btn-accent flex shrink-0 items-center gap-1 rounded-full py-2 pl-3 pr-4 text-[13px] font-semibold"
+          className="btn-accent flex shrink-0 items-center justify-center gap-1 rounded-full py-2 pl-3 pr-4 text-[13px] font-semibold max-md:self-start"
         >
           <PlusIcon className="size-4" />
           添加媒体库
@@ -195,7 +195,7 @@ export function LibraryView() {
       </div>
 
       {error && (
-        <div className="mx-6 mt-4 rounded-xl border border-[#ff6b6b]/30 bg-[#ff6b6b]/10 px-4 py-3 text-sm text-[#ff6b6b]">
+        <div className="mx-6 mt-4 rounded-xl border border-[#ff6b6b]/30 bg-[#ff6b6b]/10 px-4 py-3 text-sm text-[#ff6b6b] max-md:mx-4">
           {error}
         </div>
       )}
@@ -242,12 +242,12 @@ export function LibraryView() {
       {/* 库卡片横排：库多了不换行堆高，改为一行横滚（与下方「最近添加」
           同一交互），首屏始终保住「库 → 最近添加」的信息层次 */}
       {libraries !== null && !failed && (
-        <HScroller className="mt-6 gap-5 px-6 pb-1 pt-1">
+        <HScroller className="mt-6 gap-5 px-6 pb-1 pt-1 max-md:mt-4 max-md:gap-3.5 max-md:px-4">
           {libraries.map((library) => (
             <div
               key={library.id}
               data-library-card={library.id}
-              className={`w-[268px] shrink-0 rounded-2xl transition ${
+              className={`w-[268px] shrink-0 rounded-2xl transition max-md:w-[230px] ${
                 highlightId === library.id ? "ring-2 ring-[var(--accent-2)] ring-offset-4 ring-offset-transparent" : ""
               }`}
             >
@@ -619,7 +619,7 @@ function LibraryCardMenu({
           setMenuPos({ left: rect.right - 144, top: rect.bottom + 6 });
         }}
         className={`absolute right-3 top-3 flex size-8 items-center justify-center rounded-lg border border-white/[0.14] bg-black/45 text-white/90 backdrop-blur-md transition-opacity duration-200 hover:bg-black/65 ${
-          open ? "opacity-100" : "opacity-0 group-hover/lib:opacity-100"
+          open ? "opacity-100" : "touch-reveal opacity-0 group-hover/lib:opacity-100"
         }`}
       >
         <MoreIcon className="size-4" />
@@ -766,7 +766,7 @@ export function LibraryFormDialog({
   return (
     <>
       <Modal open onClose={onClose} label={library ? `编辑「${library.name}」` : "添加媒体库"}>
-        <div className="max-h-[76vh] space-y-4 overflow-y-auto p-6">
+        <div className="scroll-thin max-h-[76dvh] space-y-4 overflow-y-auto p-6 max-md:p-5">
           <h2 className="text-[17px] font-bold text-white">
             {library ? "编辑媒体库" : "添加媒体库"}
             {library && (
@@ -860,7 +860,7 @@ export function LibraryFormDialog({
                       <button
                         type="button"
                         onClick={() => setRoots([root, ...roots.filter((r) => r !== root)])}
-                        className="shrink-0 rounded-full px-2 py-0.5 text-[10px] font-medium text-[var(--text-faint)] opacity-0 transition-opacity hover:bg-white/10 hover:text-white group-hover:opacity-100"
+                        className="touch-reveal shrink-0 rounded-full px-2 py-0.5 text-[10px] font-medium text-[var(--text-faint)] opacity-0 transition-opacity hover:bg-white/10 hover:text-white group-hover:opacity-100"
                       >
                         设为主根
                       </button>

@@ -191,7 +191,7 @@ export function SubscribeDialog({
 
   return (
     <Modal open onClose={onClose} label={`订阅《${target.title}》`} width="lg">
-      <div className="max-h-[76vh] overflow-y-auto p-6">
+      <div className="scroll-thin max-h-[76dvh] overflow-y-auto p-6 max-md:p-5">
           <h2 className="text-[17px] font-bold text-white">
             订阅追踪
             <span className="ml-2 text-[13px] font-normal text-[var(--text-muted)]">
@@ -227,7 +227,7 @@ export function SubscribeDialog({
               <p className="text-[13px] text-[var(--text-muted)]">
                 找到多个可能的条目，请确认你订阅的是哪一部：
               </p>
-              <div className="mt-3 grid grid-cols-4 gap-3">
+              <div className="mt-3 grid grid-cols-4 gap-3 max-md:grid-cols-3 max-md:gap-2">
                 {prepared.candidates.map((c) => (
                   <button
                     key={c.tmdb_id}

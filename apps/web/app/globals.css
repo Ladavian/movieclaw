@@ -50,6 +50,18 @@
 
   --font-sans: var(--font-inter), ui-sans-serif, system-ui, -apple-system,
     "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+
+  /* —— 安全区（刘海 / 胶囊 / 底部指示条） ——
+     layout.tsx 里 viewport-fit=cover 让页面铺满整块屏幕后，凡是「贴边固定」
+     的元素（移动端顶栏、抽屉、底部输入区、全屏弹层）都要用这几个变量把内容
+     让开系统占用的区域。非刘海设备与桌面端一律解析为 0，写了不产生副作用。 */
+  --safe-top: env(safe-area-inset-top, 0px);
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+  --safe-left: env(safe-area-inset-left, 0px);
+  --safe-right: env(safe-area-inset-right, 0px);
+
+  /* 移动端顶栏高度：抽屉、页面吸顶元素都以它为基准让位 */
+  --mobile-topbar-h: 52px;
 }
 
 * {
@@ -73,6 +85,48 @@ body {
   -moz-osx-font-smoothing: grayscale;
   text-rendering: optimizeLegibility;
   overflow: hidden;
+  /* 移动端浏览器的「橡皮筋」回弹会把整页连同背景大图一起拽动，露出白底。
+     全站本来就是「外壳固定 + 内层容器滚动」，页面级滚动没有存在意义，禁掉。 */
+  overscroll-behavior: none;
+}
+
+/*
+ * —— 移动端全局约定 ——
+ *
+ * 1) 输入控件字号提到 16px：iOS Safari 在聚焦字号 < 16px 的输入框时会强制
+ *    放大整个页面（且不会自动缩回），是移动端最常见的「页面突然歪了」。
+ *    全站输入框在桌面是 12.5~13px 的紧凑排版，这里只在小屏放大，
+ *    不影响桌面观感。用 :where() 保持 0 优先级，组件仍可按需覆盖。
+ * 2) 触摸设备没有 hover：Tailwind v4 的 hover: 变体只在支持悬停的设备上
+ *    生效，于是所有「悬停才浮现」的操作（列表行的下载/详情按钮、卡片上的
+ *    订阅入口、会话行的更多菜单）在手机上永远点不到。给这些元素补一个
+ *    .touch-reveal，在无悬停设备上恒定可见——这是移动端可用性的硬要求。
+ */
+@media (max-width: 767px) {
+  :where(input, textarea, select) {
+    font-size: 16px;
+  }
+}
+
+@media (hover: none) {
+  .touch-reveal {
+    opacity: 1 !important;
+    pointer-events: auto !important;
+    transform: none !important;
+  }
+}
+
+/*
+ * 只在无悬停设备出现的元素：给那些「桌面靠 hover 层承载、触摸端必须另设入口」
+ * 的操作用（如海报卡右下角的常驻订阅圆键）。默认不渲染，不影响桌面版式。
+ */
+.touch-only {
+  display: none;
+}
+@media (hover: none) {
+  .touch-only {
+    display: block;
+  }
 }
 
 /*
@@ -696,6 +750,82 @@ a {
 }
 body.cmdk-open .app-shell {
   transform: scale(0.978);
+}
+
+/*
+ * —— 移动端顶栏 ——
+ * 不做成实心 header 色块，而是与 PageNav 同一套「向下渐隐的雾」：顶边最浓、
+ * 到底部完全化开。这样「新任务」这类大图直出的氛围页不会被一条硬边框拦腰截断，
+ * 而密集内容页向上滚动时文字又能被雾压住、不糊在一起。
+ * 顶部内边距吃安全区，刘海屏上图标不会被状态栏压住。
+ */
+.mobile-topbar {
+  padding-top: var(--safe-top);
+  background: linear-gradient(
+    180deg,
+    rgba(9, 11, 16, 0.86) 0%,
+    rgba(9, 11, 16, 0.6) 58%,
+    rgba(9, 11, 16, 0) 100%
+  );
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  mask-image: linear-gradient(180deg, #000 0%, #000 62%, transparent 100%);
+  -webkit-mask-image: linear-gradient(180deg, #000 0%, #000 62%, transparent 100%);
+}
+
+/*
+ * 移动端主区让位：顶栏是浮在内容之上的 absolute 雾层，主区必须自己空出
+ * 「安全区 + 顶栏」这一段，否则页面第一屏会被压在汉堡和字标下面。
+ * 三条横向/底部内边距同理吃安全区（横屏刘海、底部指示条）。
+ *
+ * 收口在这一条规则里、而不是逐页写 pt-14：全站十几个路由页都是
+ * 「外层 h-full + 内层 overflow-y-auto」的同一形状，主区的内边距会自然
+ * 传导给每一个页面，新增路由无需登记、不会漏。
+ */
+@media (max-width: 767px) {
+  .app-shell > main {
+    padding-top: calc(var(--safe-top) + var(--mobile-topbar-h));
+    padding-right: var(--safe-right);
+    padding-bottom: var(--safe-bottom);
+    padding-left: var(--safe-left);
+  }
+}
+
+/*
+ * —— 移动端抽屉式侧栏 ——
+ * 覆盖式浮层（不是挤压布局）：主区宽度不变，抽屉从左侧滑入盖住内容。
+ * 作为 .app-shell 的兄弟节点固定定位，不受外壳缩放/裁剪影响。
+ * 宽度取视口的 86%（上限 320px），留出右侧一条可点关闭的空白，
+ * 符合移动端「侧滑菜单」的肌肉记忆。
+ */
+.mobile-drawer {
+  position: fixed;
+  z-index: 60;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 86vw;
+  max-width: 320px;
+  padding: calc(var(--safe-top) + 10px) 0 calc(var(--safe-bottom) + 10px) calc(var(--safe-left) + 10px);
+  transition: transform 280ms cubic-bezier(0.2, 0.8, 0.2, 1);
+  will-change: transform;
+}
+.mobile-drawer[data-open="false"] {
+  transform: translateX(-104%);
+  /* 关闭状态彻底不可交互：抽屉里仍挂着 WebGL 玻璃面板，不能让它拦截主区触摸 */
+  pointer-events: none;
+}
+.mobile-drawer[data-open="true"] {
+  transform: translateX(0);
+}
+.mobile-drawer-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 55;
+  background: rgba(4, 6, 10, 0.55);
+  backdrop-filter: blur(2px);
+  -webkit-backdrop-filter: blur(2px);
+  animation: page-scrim-in 200ms ease both;
 }
 
 /* 搜索命令面板（components/search-command.tsx）：纯 CSS 深色实心浮层

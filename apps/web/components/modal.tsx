@@ -65,8 +65,12 @@ export function Modal({
   if (!open || typeof document === "undefined") return null;
 
   return createPortal(
+    // 移动端改为「底部抽屉（bottom sheet）」：面板贴住屏幕下沿、左右满宽、
+    // 只有上方两角圆。这是手机上模态的既定语言——出现位置靠近拇指、
+    // 内容宽度不被 max-w 白白挤掉，长表单也不会被吊在屏幕正中上下都留空。
+    // 底部内边距吃安全区，最后一颗按钮不会压在 Home 指示条上。
     <div
-      className={`fixed inset-0 ${raised ? "z-[60]" : "z-50"} flex items-center justify-center p-6`}
+      className={`fixed inset-0 ${raised ? "z-[60]" : "z-50"} flex items-center justify-center p-6 max-md:items-end max-md:p-0`}
       role="dialog"
       aria-modal="true"
       aria-label={label}
@@ -81,7 +85,7 @@ export function Modal({
         className="absolute inset-0 cursor-default bg-black/60 backdrop-blur-sm"
       />
       <div
-        className={`relative w-full ${WIDTH_CLS[width]} overflow-hidden rounded-2xl border border-white/10 bg-[rgba(16,18,26,0.92)] shadow-[0_32px_90px_rgba(0,0,0,0.7)] backdrop-blur-2xl ${panelClassName}`}
+        className={`relative w-full ${WIDTH_CLS[width]} overflow-hidden rounded-2xl border border-white/10 bg-[rgba(16,18,26,0.92)] shadow-[0_32px_90px_rgba(0,0,0,0.7)] backdrop-blur-2xl max-md:!max-w-none max-md:rounded-b-none max-md:border-x-0 max-md:border-b-0 max-md:pb-[var(--safe-bottom)] ${panelClassName}`}
       >
         {children}
       </div>
