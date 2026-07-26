@@ -172,10 +172,14 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   };
 
   // 全站布局规范：默认所有页面都铺一层模糊蒙版（.page-scrim）压住背景大图、
-  // 突出页面主题内容；例外是「氛围页」——「新任务」首页（路由 /）与媒体库
-  // 影片详情页（进入时全站背景已临时换成该片剧照，见 lib/backdrop 的沉浸
-  // 覆盖）：大图直出，页面自带渐变保证内容可读。新增路由无需登记，自动继承蒙版。
-  const isHome = pathname === "/" || /^\/library\/\d+\/item\/\d+/.test(pathname);
+  // 突出页面主题内容；例外是「氛围页」——「新任务」首页（路由 /）与两个影片
+  // 详情页（媒体库条目 /library/x/item/y 与发现页条目 /media/...，进入时全站
+  // 背景已临时换成该片剧照，见 lib/backdrop 的沉浸覆盖）：大图直出，页面自带
+  // 渐变保证内容可读。新增路由无需登记，自动继承蒙版。
+  const isHome =
+    pathname === "/" ||
+    /^\/library\/\d+\/item\/\d+/.test(pathname) ||
+    pathname.startsWith("/media/");
   // Agent 对话页走沉浸模式：蒙版换成完全不透明的 .page-solid，整页盖掉
   // 背景大图（密集文本页不允许透图）；侧栏切换为实色形态。
   const isImmersive = pathname.startsWith("/runs");

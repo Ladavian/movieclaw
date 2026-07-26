@@ -24,6 +24,7 @@ from movieclaw_cache import AsyncTTLCache
 from movieclaw_media.models import (
     DiscoverPage,
     MediaCard,
+    MediaCastMember,
     MediaDetail,
     MediaFacts,
     MediaImage,
@@ -48,6 +49,9 @@ _MIN_ROW_ITEMS = 4
 _RELATED_LIMIT = 10
 # 详情页剧照/海报各取多少张（TMDB 已按社区评分排好序，取前 N 即最佳 N 张）
 _IMAGES_LIMIT = 20
+# 详情页演职员条最多取多少位。TMDB 的 cast 已按 order 字段（剧组给的主次顺序）
+# 排好，取前 N 即主要演员；条目页是横滚条，比原先「词条信息里一行文字」能放得下更多
+_CAST_LIMIT = 16
 
 # TMDB 详情接口不随 language 参数翻译制片地区/语言字段，这里映射高频值，
 # 映射不到的原样展示（英文/ISO 代码），不影响功能
@@ -362,6 +366,27 @@ class MediaDiscoverService:
         seasons = data.get("number_of_seasons")
         return f"{seasons} 季" if seasons else ""
 
+    def _cast(self, credits: dict[str, Any]) -> list[MediaCastMember]:
+        """credits.cast → 演职员条。
+
+        头像用 w185（横滚条里每格才 104px 宽，再大是白下载）；没有 profile_path
+        的人照样保留——名字与角色本身就是信息，前端渲染占位块即可。
+        """
+        members: list[MediaCastMember] = []
+        for person in credits.get("cast", [])[:_CAST_LIMIT]:
+            name = (person.get("name") or "").strip()
+            if not name:
+                continue
+            profile = person.get("profile_path")
+            members.append(
+                MediaCastMember(
+                    name=name,
+                    role=(person.get("character") or "").strip() or None,
+                    avatar_url=f"{self._image_base}/w185{profile}" if profile else None,
+                )
+            )
+        return members
+
     def _facts(self, data: dict[str, Any], kind: MediaKind) -> MediaFacts:
         credits = data.get("credits") or {}
         if kind is MediaKind.MOVIE:
@@ -377,7 +402,7 @@ class MediaDiscoverService:
         original_language = data.get("original_language") or ""
         return MediaFacts(
             directors=directors[:3],
-            cast=[c["name"] for c in credits.get("cast", [])[:5]],
+            cast=self._cast(credits),
             country=" / ".join(_COUNTRY_NAMES.get(c, c) for c in country_codes if c),
             language=_LANGUAGE_NAMES.get(original_language, original_language),
             released=data.get("release_date") or data.get("first_air_date") or "",

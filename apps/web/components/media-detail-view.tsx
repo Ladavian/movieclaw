@@ -11,6 +11,7 @@ import {
   PlayIcon,
   StarIcon,
 } from "@/components/icons";
+import { HScroller } from "@/components/h-scroller";
 import { PageNav } from "@/components/page-nav";
 import { ImageLightbox, type LightboxAction } from "@/components/image-lightbox";
 import { MediaRow } from "@/components/media-row";
@@ -19,6 +20,7 @@ import { SubscribeDialog, type SubscribeTarget } from "@/components/subscribe-di
 import {
   fetchDoubanMediaDetail,
   fetchMediaDetail,
+  type MediaCastMember,
   type MediaDetailData,
   type MediaImage,
 } from "@/lib/api/discover";
@@ -35,15 +37,27 @@ import {
 /**
  * 影片详情页：点击任意海报后，主内容区整体切换为该影片的详情。
  *
- * 页面纵向结构（Apple TV / 豆瓣式）：
- *   1. 来路面包屑 + Hero 大剧照 —— 有 backdropUrl 用宽幅剧照，没有则用海报
- *      重度模糊铺底（氛围色永远可用，不依赖每部影片都配横图）；面包屑父级
- *      按点进来的列表页动态推导（见 lib/media-detail.tsx），直达时按类型兜底。
- *   2. 头部信息区 —— 海报上浮压住 Hero 底边，右侧标题 / 元信息 / 操作按钮，
+ * 骨架与媒体库条目详情页（LibraryItemDetailView）保持一致——同样是「影片详情」，
+ * 用户不该因为这部片在不在库里就换一套阅读结构。两页的差别只在**信息来源**：
+ * 那边是本地刮削成果与文件本体（我拥有的这份拷贝是什么），这边是 TMDB / 豆瓣
+ * 的在线信息（这部片本身是什么），因此这边多出剧照墙与相似推荐，那边多出
+ * 片源规格与文件区。
+ *
+ * 页面纵向结构：
+ *   1. 沉浸背景 —— 进入本页时把全站背景临时换成该片剧照（setOverrideBackdrop），
+ *      页面本身不再画 Hero 卡片：大图直出、零边界。顶栏首屏只有一颗返回键浮在
+ *      剧照上。没有横幅剧照的条目退回海报（背景层自己会铺满并模糊）。
+ *   2. 氛围留白 + 渐变内容层 —— 留一段什么都不放的高度让剧照呼吸，其下从全透明
+ *      渐入页面底色，与背景之间没有接缝。
+ *   3. 头部信息区 —— 海报 + 标题 / 元信息 / 外部词条链接 / 订阅操作，
  *      已订阅的影片额外显示订阅状态与追更进度。
- *   3. 剧情简介 + 词条信息玻璃卡（导演 / 主演 / 上映 / 地区 / 语言）。
- *   4. 剧照与海报 —— Apple TV+ 式横滚图片条，胶囊标签切换类型，点图开灯箱。
- *   5. 相似推荐 —— TMDB 推荐的相似作品，复用 MediaRow，点击可继续跳详情。
+ *   4. 剧情简介。
+ *   5. 演职员 —— 带头像的横滚条（与条目详情页同一套版式），数据来自 TMDB
+ *      credits / 豆瓣 actors，含角色名。
+ *   6. 词条信息玻璃卡（上映 / 地区 / 语言 / 平台 / 别名）——「主演」已经由
+ *      演职员条完整呈现，不在这里重复成一行文字。
+ *   7. 剧照与海报 —— Apple TV+ 式横滚图片条，胶囊标签切换类型，点图开灯箱。
+ *   8. 相似推荐 —— 复用 MediaRow，点击可继续跳详情。
  *
  * 数据分两段呈现：点卡片时已有的列表字段（标题/海报/简介）立即渲染，
  * 词条信息与相似推荐从 /discover/{type}/{id} 异步补齐（回填片长/季数）。
@@ -97,6 +111,17 @@ export function MediaDetailView({
   const item = detail?.item ?? listItem;
   usePageTitle(item?.title);
 
+  // 沉浸背景：进入本页把全站背景临时换成该片剧照，离开即恢复用户配置的背景。
+  // 与媒体库条目详情页同一条链路（见 lib/backdrop.tsx 的 overrideUrl）。
+  // 没有横幅剧照时退回海报——背景层自己会铺满，竖图拉伸后本就是一层氛围色。
+  const { setOverrideBackdrop } = useBackdrop();
+  const immersiveUrl = item?.backdropUrl || item?.posterUrl || "";
+  useEffect(() => {
+    if (!immersiveUrl) return;
+    setOverrideBackdrop(immersiveUrl);
+    return () => setOverrideBackdrop(null);
+  }, [immersiveUrl, setOverrideBackdrop]);
+
   // 无 seed 且详情尚未到达：直达链接的加载态（或失败兜底）。
   if (!item) {
     return <DetailFallback failed={loadFailed} onBack={close} />;
@@ -129,33 +154,21 @@ export function MediaDetailView({
   ];
 
   return (
-    <div className="scroll-thin h-full overflow-y-auto pb-12">
-      {/* —— 1. 顶栏（返回 + 吸顶标题）+ Hero 大剧照 —— */}
+    // rounded-2xl + overflow 裁切：内容渐变到底部是近实色的深色板，方角会与
+    // 全站「浮起圆角卡片」的形状语言冲突——按侧栏同规格圆角收尾
+    <div className="scroll-thin h-full overflow-y-auto rounded-2xl">
+      {/* —— 1. 顶栏：不再有任何 Hero 卡片图层——全站背景此刻就是本片剧照
+          （沉浸覆盖 + 本页豁免全局蒙版，见 app-shell 的 isHome），大图直出、
+          零边界。首屏只有一颗圆形返回键浮在剧照上 —— */}
       <PageNav items={trail} />
-      <div className="px-6 max-md:px-4">
-        <div className="relative h-[42vh] min-h-[280px] overflow-hidden rounded-2xl shadow-[0_24px_70px_-18px_rgba(0,0,0,0.62)] ring-1 ring-white/10 max-md:h-[30vh] max-md:min-h-[190px]">
-          <PosterImage
-            src={item.backdropUrl}
-            alt={`${item.title} 剧照`}
-            className="absolute inset-0 size-full object-cover object-top"
-            // 无横幅剧照（或加载失败）时的兜底：海报放大 + 重度模糊，产出该片专属的氛围底色
-            fallback={
-              <PosterImage
-                src={item.posterUrl}
-                alt=""
-                className="absolute inset-0 size-full scale-125 object-cover blur-3xl brightness-[0.72] saturate-[1.25]"
-              />
-            }
-          />
-          {/* 双层渐变：左侧压暗、底部渐隐融入页面，保证叠加文字可读 */}
-          <div className="absolute inset-0 bg-gradient-to-r from-[rgba(7,9,14,0.72)] via-[rgba(7,9,14,0.25)] to-transparent" />
-          <div className="absolute inset-x-0 bottom-0 h-2/3 bg-gradient-to-t from-[rgba(7,9,14,0.88)] via-[rgba(7,9,14,0.35)] to-transparent" />
 
-        </div>
-      </div>
+      {/* 氛围留白：这一段什么都不放，让剧照完整呼吸 */}
+      <div className="h-[30vh] min-h-[180px] max-md:h-[22vh] max-md:min-h-[120px]" />
 
-      {/* —— 2. 头部信息区：海报上浮压住 Hero 底边 —— */}
-      <div className="relative z-10 -mt-44 flex items-end gap-7 px-12 max-md:-mt-20 max-md:gap-4 max-md:px-4">
+      {/* —— 2. 内容层：从全透明渐入页面底色，与背景之间没有任何接缝 —— */}
+      <div className="bg-[linear-gradient(180deg,rgba(7,9,14,0)_0,rgba(7,9,14,0.66)_130px,rgba(7,9,14,0.88)_360px,rgba(7,9,14,0.93)_100%)] pb-12">
+      {/* —— 3. 头部信息区 —— */}
+      <div className="relative z-10 flex items-end gap-7 px-12 pt-6 max-md:gap-4 max-md:px-4 max-md:pt-3">
         <div className="w-[186px] shrink-0 overflow-hidden rounded-xl bg-[#141824] shadow-[0_26px_60px_rgba(0,0,0,0.6)] ring-1 ring-white/15 max-md:w-[104px]">
           <PosterImage
             src={item.posterUrl}
@@ -184,6 +197,11 @@ export function MediaDetailView({
             </span>
             <span>{item.year}</span>
             {item.extent && <span>{item.extent}</span>}
+            {info && info.directors.length > 0 && (
+              <span className="text-white/65">
+                {isMovie ? "导演" : "主创"} {info.directors.join(" / ")}
+              </span>
+            )}
             {item.badges.length > 0 && (
               <span className="flex gap-1.5">
                 {item.badges.map((b) => (
@@ -196,6 +214,18 @@ export function MediaDetailView({
                 ))}
               </span>
             )}
+          </div>
+
+          {/* 外部信息源：本条目在数据源站点上的词条地址，用于核对信息或看更多。
+              与条目详情页同一处理——压到元信息行下方的小字，不与主操作争视觉权重 */}
+          <div className="mt-3 flex flex-wrap items-center gap-x-3.5 gap-y-1">
+            {source === "tmdb" && (
+              <SourceLink
+                href={`https://www.themoviedb.org/${item.type}/${item.id}`}
+                label="TMDB"
+              />
+            )}
+            {info?.sourceUrl && <SourceLink href={info.sourceUrl} label="豆瓣" />}
           </div>
 
           {/* 操作区：已订阅的影片主按钮变为状态展示（点击进入管理弹层可取消订阅） */}
@@ -222,16 +252,6 @@ export function MediaDetailView({
                 订阅追踪
               </button>
             )}
-            {source === "douban" && info?.sourceUrl && (
-              <a
-                href={info.sourceUrl}
-                target="_blank"
-                rel="noreferrer"
-                className="btn-glass flex h-10 items-center bg-white/10 px-5 text-[13px] font-medium backdrop-blur-md transition hover:bg-white/15"
-              >
-                去豆瓣查看
-              </a>
-            )}
             {sub && (
               <span className="text-on-image flex items-center gap-1.5 text-[12.5px] text-[var(--text-muted)]">
                 <span
@@ -252,16 +272,21 @@ export function MediaDetailView({
         onChanged={refreshSubscriptions}
       />
 
-      {/* —— 3. 剧情简介 + 词条信息 —— */}
+      {/* —— 4~6. 剧情简介 / 演职员 / 词条信息 —— */}
       <div className="mt-9 space-y-8 px-12 max-md:mt-6 max-md:space-y-6 max-md:px-4">
-        <section>
-          <h2 className="text-on-image mb-3 text-[15px] font-semibold tracking-[-0.01em] text-[var(--text)]">
-            剧情简介
-          </h2>
-          <p className="text-on-image max-w-3xl text-[14px] leading-7 text-white/78">
-            {item.overview}
-          </p>
-        </section>
+        {item.overview && (
+          <section>
+            <h2 className="text-on-image mb-3 text-[15px] font-semibold tracking-[-0.01em] text-[var(--text)]">
+              剧情简介
+            </h2>
+            <p className="text-on-image max-w-3xl text-[14px] leading-7 text-white/78">
+              {item.overview}
+            </p>
+          </section>
+        )}
+
+        {/* 演职员：与条目详情页同一套横滚版式，头像来自 TMDB credits / 豆瓣 actors */}
+        {info && info.cast.length > 0 && <CastRow cast={info.cast} />}
 
         {info && (
           <section>
@@ -269,11 +294,9 @@ export function MediaDetailView({
               词条信息
             </h2>
             <div className="rounded-2xl border border-white/[0.07] bg-[rgba(14,16,22,0.45)] p-6 backdrop-blur-xl max-md:p-4">
+              {/* 「导演」已经在元信息行、「主演」已经由上面的演职员条完整呈现，
+                  这里不再重复成一行文字——词条信息只留它们之外的档案字段 */}
               <dl className="grid gap-x-10 gap-y-5 sm:grid-cols-2 xl:grid-cols-3">
-                {info.directors.length > 0 && (
-                  <Fact label={isMovie ? "导演" : "主创"} value={info.directors.join(" / ")} />
-                )}
-                {info.cast.length > 0 && <Fact label="主演" value={info.cast.join(" / ")} />}
                 {info.released && (
                   <Fact label={isMovie ? "上映日期" : "首播日期"} value={info.released} />
                 )}
@@ -293,7 +316,7 @@ export function MediaDetailView({
         )}
       </div>
 
-      {/* —— 4. 剧照与海报 —— */}
+      {/* —— 7. 剧照与海报 —— */}
       {detail && (detail.backdrops.length > 0 || detail.posters.length > 0) && (
         <div className="mt-9 px-12 max-md:mt-6 max-md:px-4">
           <PhotoWall
@@ -304,13 +327,59 @@ export function MediaDetailView({
         </div>
       )}
 
-      {/* —— 5. 相似推荐 —— */}
+      {/* —— 8. 相似推荐 —— */}
       {related.length > 0 && (
         <div className="mt-9">
           <MediaRow row={{ id: `related-${item.id}`, title: "相似推荐", items: related }} />
         </div>
       )}
+      </div>
     </div>
+  );
+}
+
+/**
+ * 演职员横滚条：与媒体库条目详情页同一套版式（那边的数据来自本地刮削 NFO，
+ * 这边来自 TMDB credits / 豆瓣 actors）。头像缺失的人照样占一格——名字与
+ * 角色本身就是信息，PosterImage 会渲染深色占位块。
+ */
+function CastRow({ cast }: { cast: MediaCastMember[] }) {
+  return (
+    <section>
+      <h2 className="text-on-image mb-3 text-[15px] font-semibold tracking-[-0.01em] text-[var(--text)]">
+        演职员
+      </h2>
+      <HScroller className="-mx-1 gap-3 px-1 pb-1">
+        {/* 同一个人可能以不同角色出现（如一人分饰两角），姓名不足以唯一，附加下标兜底 */}
+        {cast.map((person, index) => (
+          <div key={`${person.name}-${person.role ?? ""}-${index}`} className="w-[104px] shrink-0">
+            <div className="aspect-[2/3] overflow-hidden rounded-xl bg-[#141824] ring-1 ring-white/[0.08]">
+              <PosterImage src={person.avatarUrl} alt={person.name} className="size-full object-cover" />
+            </div>
+            <p className="mt-1.5 truncate text-[12px] font-medium text-[var(--text)]">
+              {person.name}
+            </p>
+            {person.role && (
+              <p className="truncate text-[11px] text-[var(--text-faint)]">饰 {person.role}</p>
+            )}
+          </div>
+        ))}
+      </HScroller>
+    </section>
+  );
+}
+
+/** 外部信息源链接：弱化的小字，与条目详情页同款 */
+function SourceLink({ href, label }: { href: string; label: string }) {
+  return (
+    <a
+      href={href}
+      target="_blank"
+      rel="noreferrer"
+      className="text-[12px] text-[var(--text-faint)] underline-offset-4 transition-colors hover:text-[var(--text)] hover:underline"
+    >
+      {label} ↗
+    </a>
   );
 }
 
