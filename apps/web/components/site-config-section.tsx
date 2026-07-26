@@ -589,7 +589,7 @@ function SiteActionsMenu({
           align="end"
           sideOffset={6}
           collisionPadding={12}
-          className="css-glass z-50 min-w-[9rem] !rounded-xl p-1 shadow-xl backdrop-blur-xl"
+          className="menu-surface z-50 min-w-[9rem] !rounded-xl p-1"
         >
           <DropdownMenu.Item onSelect={onEdit} className={itemClass}>
             {expanded ? "收起编辑" : "编辑配置"}

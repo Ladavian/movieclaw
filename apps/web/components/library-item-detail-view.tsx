@@ -474,7 +474,7 @@ function ItemActionsMenu({
           align="end"
           sideOffset={6}
           collisionPadding={12}
-          className="css-glass z-50 min-w-[11rem] !rounded-xl p-1 shadow-xl backdrop-blur-xl"
+          className="menu-surface z-50 min-w-[11rem] !rounded-xl p-1"
         >
           <DropdownMenu.Item
             onSelect={onReidentify}
