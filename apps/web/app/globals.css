@@ -789,6 +789,16 @@ body.cmdk-open .app-shell {
     padding-bottom: var(--safe-bottom);
     padding-left: var(--safe-left);
   }
+
+  /*
+   * 详情类页面自带 PageNav（返回 + 标题 + 页面操作），外壳的全局顶栏这时不渲染
+   * （见 lib/page-chrome.tsx），主区就不该再为它空出那 52px——否则页面顶上会
+   * 留一段莫名其妙的空白，返回键也被推离屏幕上沿。只让位安全区，PageNav 自己
+   * 吸在最顶上，窄屏于是只有一条顶栏。
+   */
+  .app-shell[data-topbar="false"] > main {
+    padding-top: var(--safe-top);
+  }
 }
 
 /*

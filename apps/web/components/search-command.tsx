@@ -49,6 +49,12 @@ export interface SearchSubmitOptions {
 export interface SearchCommandProps {
   /** 提交搜索的回调：关键词 + 搜索范围（标签换算而来）。由上层负责落地展示。 */
   onSearch: (keyword: string, scope: SearchScope, options?: SearchSubmitOptions) => void;
+  /**
+   * 触发键的样式覆盖。缺省是侧栏/顶栏那副玻璃行图标键；放进别处的控件行时
+   * （如详情页顶栏与 ⋯ 并排，见 components/page-nav.tsx）传入该行自己的按钮
+   * 类名，否则一颗方玻璃挨着一颗圆键，会像两套控件凑在一起。
+   */
+  triggerClassName?: string;
 }
 
 /** 搜索面板上次停留位置的浏览器级记忆，不随账号同步。 */
@@ -117,7 +123,10 @@ function groupHistory(items: SearchHistoryItem[]): HistoryGroup[] {
   return [...groups.values()];
 }
 
-export function SearchCommand({ onSearch }: SearchCommandProps) {
+export function SearchCommand({
+  onSearch,
+  triggerClassName = "glass-row !size-8 shrink-0 justify-center !p-0 max-md:!size-9",
+}: SearchCommandProps) {
   const [open, setOpen] = useState(false);
   // 面板是全屏浮层，Portal 到 body：避免被 sidebar 玻璃面板的 isolation:isolate
   // 层叠上下文困住。portalReady 规避 SSR。
@@ -151,7 +160,7 @@ export function SearchCommand({ onSearch }: SearchCommandProps) {
         aria-label="搜索（⌘K 或 Ctrl+K）"
         aria-haspopup="dialog"
         title="搜索（⌘K 或 Ctrl+K）"
-        className="glass-row !size-8 shrink-0 justify-center !p-0 max-md:!size-9"
+        className={triggerClassName}
       >
         <SearchIcon className="size-[18px]" />
       </button>

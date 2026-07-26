@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import Image from "next/image";
 import type { Route } from "next";
 import { usePathname, useRouter } from "next/navigation";
@@ -18,6 +18,7 @@ import { SubscribeEntryProvider } from "@/components/subscribe-entry";
 import { AgentConversationsProvider } from "@/lib/agent-conversations";
 import { BackdropProvider } from "@/lib/backdrop";
 import type { SearchScope } from "@/lib/categories";
+import { PageChromeProvider } from "@/lib/page-chrome";
 import { SearchPrefsProvider } from "@/lib/search-prefs";
 import { buildSearchPath } from "@/lib/search-url";
 import { UiPrefsProvider } from "@/lib/ui-prefs";
@@ -78,6 +79,13 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const isMobile = useIsMobile();
   // 抽屉开合（仅移动端有意义）
   const [drawerOpen, setDrawerOpen] = useState(false);
+  // 本页是否自带顶栏（详情类页面的 PageNav 会自登记，见 lib/page-chrome.tsx）。
+  // 计数而非布尔：路由切换时新旧页面短暂共存，先卸载的那个不能把状态清零。
+  const [pageNavCount, setPageNavCount] = useState(0);
+  const registerPageNav = useCallback(() => {
+    setPageNavCount((n) => n + 1);
+    return () => setPageNavCount((n) => n - 1);
+  }, []);
 
   const isSettings = pathname.startsWith("/settings");
   const activeNav = navIdFromPath(pathname);
@@ -118,14 +126,19 @@ export function AppShell({ children }: { children: React.ReactNode }) {
    * options.vertical 决定落地垂直（媒体/站点资源，见 URL 的 tab 参数）；
    * options.snapshotId 非空 = 预览某条历史的结果快照（结果页顶部有提示条与「重新搜索」）。
    */
-  const handleSearch = (keyword: string, scope: SearchScope, options?: SearchSubmitOptions) => {
-    router.push(
-      buildSearchPath(
-        { keyword, scope, snapshotId: options?.snapshotId },
-        options?.vertical,
-      ) as Route,
-    );
-  };
+  // useCallback：这个回调要放进 PageChrome 上下文，身份不稳定会让每次外壳
+  // 重渲染都把上下文当作新值推给消费者
+  const handleSearch = useCallback(
+    (keyword: string, scope: SearchScope, options?: SearchSubmitOptions) => {
+      router.push(
+        buildSearchPath(
+          { keyword, scope, snapshotId: options?.snapshotId },
+          options?.vertical,
+        ) as Route,
+      );
+    },
+    [router],
+  );
 
   /** 从用户菜单进入设置：记下当前工作台地址（含查询串），返回时原样回跳 */
   const openSettings = (sectionId: string = settingsSections[0].id) => {
@@ -165,6 +178,14 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     document.documentElement.classList.toggle("immersive-route", isImmersive);
   }, [isImmersive]);
+
+  // 移动端顶栏归属：详情类页面自带 PageNav（返回 + 标题 + 页面操作），
+  // 全局顶栏再叠一条就成了两层顶栏，于是把这一行让给页面自己（见 lib/page-chrome.tsx）。
+  const showMobileTopBar = isMobile && pageNavCount === 0;
+  const pageChrome = useMemo(
+    () => ({ registerPageNav, onSearch: handleSearch }),
+    [registerPageNav, handleSearch],
+  );
 
   // 移动端抽屉：切换路由即自动收起（点导航项跳走后抽屉不该还盖着新页面），
   // 回到桌面版式时也一并复位，避免再切回窄屏时抽屉莫名其妙已经开着。
@@ -217,6 +238,9 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     {/* SubscribeEntryProvider：海报卡片「订阅影片」按钮的全站入口，
       订阅弹层只在这里挂一份（见 components/subscribe-entry.tsx）。 */}
     <SubscribeEntryProvider>
+    {/* PageChromeProvider：移动端顶栏的归属协商——页面自带 PageNav 时由它接管
+      这一行，外壳撤掉自己的全局顶栏（见 lib/page-chrome.tsx）。 */}
+    <PageChromeProvider value={pageChrome}>
     {/* 全屏背景蒙版（.page-scrim）：作为 .app-shell 的兄弟节点、
       z 介于 body::before(0) 与 app-shell(10) 之间：压住背景大图、托住内容。
       全站统一一档，模糊度/暗度由「设置 → 外观 → 界面质感」的滑杆驱动
@@ -230,8 +254,12 @@ export function AppShell({ children }: { children: React.ReactNode }) {
          高度用 100dvh 而非 100vh：移动浏览器的地址栏会收放，100vh 取的是
          「地址栏收起后」的大视口，底部输入区会被推到屏幕外；dvh 跟随实际
          可视高度，是移动端唯一正确的满屏单位。 */
-      <div className="app-shell relative z-10 h-[100dvh] w-full">
-        <MobileTopBar onMenu={() => setDrawerOpen(true)} onSearch={handleSearch} />
+      /* data-topbar：主区要不要为全局顶栏空出那 52px，取决于这一行有没有被
+         页面自己的 PageNav 认领（对应 globals.css 的 .app-shell[data-topbar] 规则）。 */
+      <div className="app-shell relative z-10 h-[100dvh] w-full" data-topbar={showMobileTopBar}>
+        {showMobileTopBar && (
+          <MobileTopBar onMenu={() => setDrawerOpen(true)} onSearch={handleSearch} />
+        )}
         {/* 主区铺满外壳（absolute 而非 flex 子项）：全站页面清一色是
             「外层 h-full + 内层 overflow-y-auto」，h-full 要能解析就必须有一个
             确定的父高度——absolute inset-0 给的是确定值，flex-1 得来的高度在
@@ -284,6 +312,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         </div>
       </>
     )}
+    </PageChromeProvider>
     </SubscribeEntryProvider>
     </AgentConversationsProvider>
     </UiPrefsProvider>

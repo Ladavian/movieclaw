@@ -6,6 +6,9 @@ import type { Route } from "next";
 import { useRouter } from "next/navigation";
 
 import { ChevronLeftIcon } from "@/components/icons";
+import { SearchCommand } from "@/components/search-command";
+import { usePageChrome } from "@/lib/page-chrome";
+import { useIsMobile } from "@/lib/use-media-query";
 
 /** 页面导航节点：href 为空表示当前页；祖先节点提供「向上一级」的回跳地址。 */
 export interface PageNavItem {
@@ -81,6 +84,19 @@ export function PageNav({
 }) {
   const router = useRouter();
   const rootRef = useRef<HTMLDivElement>(null);
+  const chrome = usePageChrome();
+  const isMobile = useIsMobile();
+
+  // 向外壳登记「本页自带顶栏」：移动端据此撤掉全局顶栏，两条顶栏不再摞在一起
+  // （见 lib/page-chrome.tsx）。登记与 items 是否为空无关——空 items 时本组件
+  // 不渲染任何东西，也就没有认领顶栏，因此这个 effect 必须在早退之前声明，
+  // 但真正登记要跟着「本次是否真的渲染了顶栏」走。
+  const registerPageNav = chrome?.registerPageNav;
+  const rendersNav = items.length > 0;
+  useEffect(() => {
+    if (!registerPageNav || !rendersNav) return;
+    return registerPageNav();
+  }, [registerPageNav, rendersNav]);
 
   useEffect(() => {
     const root = rootRef.current;
@@ -153,8 +169,19 @@ export function PageNav({
           {title}
         </span>
         {/* 页面操作靠右：与返回键同一行，页面首屏不再单独占一条工具栏，
-            滚动后又随顶栏留在原地——操作入口的位置从头到尾不动 */}
-        {actions && <div className="ml-auto flex shrink-0 items-center gap-2">{actions}</div>}
+            滚动后又随顶栏留在原地——操作入口的位置从头到尾不动。
+            移动端还要在这里补一颗搜索——本页顶栏顶掉了外壳那条全局顶栏，
+            搜索是其中唯一无处安放的入口（导航在抽屉里、字标只是回首页），
+            排在页面操作左侧。必须条件渲染而不是 CSS 隐藏：SearchCommand 自带
+            全局 ⌘K 监听，桌面上再挂一份会让一次快捷键把面板开了又关。 */}
+        {(actions || (isMobile && chrome)) && (
+          <div className="ml-auto flex shrink-0 items-center gap-2">
+            {isMobile && chrome && (
+              <SearchCommand onSearch={chrome.onSearch} triggerClassName={PAGE_NAV_BUTTON_CLASS} />
+            )}
+            {actions}
+          </div>
+        )}
       </div>
     </div>
   );
