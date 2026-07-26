@@ -29,7 +29,10 @@ if [[ -z "$TMDB_KEY" ]]; then
     exit 1
 fi
 
-BUILD_ARGS=(--build-arg "TMDB_API_KEY=$TMDB_KEY")
+# --shm-size：Docker 默认只给 /dev/shm 64MB，Next.js 构建的并行 worker
+# 靠共享内存通信，页面数量上来后会静默死锁（日志停在 "Creating an optimized
+# production build"、CPU 掉到空闲）。给足 2G 是这一现象的根治手段。
+BUILD_ARGS=(--build-arg "TMDB_API_KEY=$TMDB_KEY" --shm-size=2g)
 
 # 国内网络加速
 if [[ "${CN_MIRROR:-0}" == "1" ]]; then
