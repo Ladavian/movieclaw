@@ -154,6 +154,13 @@ export const SearchIcon = (p: IconProps) => (
   </Base>
 );
 
+/** 汉堡菜单：移动端顶栏唤起抽屉式侧栏 */
+export const MenuIcon = (p: IconProps) => (
+  <Base {...p}>
+    <path d="M4 7h16M4 12h16M4 17h16" />
+  </Base>
+);
+
 /** 图片（相框 + 山形）：用于图片数量徽标等 */
 export const PhotoIcon = (p: IconProps) => (
   <Base {...p}>

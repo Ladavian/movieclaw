@@ -140,7 +140,7 @@ export function ImageLightbox({
       className="fixed inset-0 z-[70] flex flex-col bg-black/85 backdrop-blur-md"
     >
       {/* 顶栏：计数 + 标题 + 关闭 */}
-      <div className="flex shrink-0 items-center gap-3 px-4 py-3 text-white/85">
+      <div className="flex shrink-0 flex-wrap items-center gap-3 px-4 py-3 text-white/85 [padding-top:calc(0.75rem+var(--safe-top))] max-md:gap-2 max-md:px-3">
         <span className="tnum shrink-0 rounded-full bg-white/[0.1] px-2.5 py-0.5 text-[12px]">
           {index + 1} / {images.length}
         </span>
@@ -207,7 +207,7 @@ export function ImageLightbox({
       </div>
 
       {/* 主体：大图 + 两侧切换按钮 */}
-      <div className="relative flex min-h-0 flex-1 items-center justify-center px-14">
+      <div className="relative flex min-h-0 flex-1 items-center justify-center px-14 max-md:px-2">
         {broken.has(index) ? (
           <div
             onClick={(e) => e.stopPropagation()}
@@ -262,7 +262,7 @@ export function ImageLightbox({
       {images.length > 1 && (
         <div
           onClick={(e) => e.stopPropagation()}
-          className="scroll-none shrink-0 overflow-x-auto px-4 py-3"
+          className="scroll-none shrink-0 overflow-x-auto px-4 py-3 [padding-bottom:calc(0.75rem+var(--safe-bottom))] max-md:px-3"
         >
           <div className="mx-auto flex w-max gap-2">
             {images.map((url, i) => (

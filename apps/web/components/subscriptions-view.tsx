@@ -43,12 +43,12 @@ export function SubscriptionsView() {
 
   return (
     <div className="scroll-thin flex-1 overflow-y-auto pb-10">
-      <div className="flex items-start justify-between gap-4 px-6 pt-2">
+      <div className="flex items-start justify-between gap-4 px-6 pt-2 max-md:flex-col max-md:items-stretch max-md:gap-3 max-md:px-4">
         <div>
-          <h2 className="text-on-image text-[26px] font-bold leading-tight tracking-[-0.02em] text-white">
+          <h2 className="text-on-image text-[26px] font-bold leading-tight tracking-[-0.02em] text-white max-md:text-[21px]">
             我的订阅
           </h2>
-          <p className="text-on-image mt-1.5 text-[13px] text-[var(--text-muted)]">
+          <p className="text-on-image mt-1.5 text-[13px] text-[var(--text-muted)] max-md:mt-1 max-md:text-[12px]">
             共 {visible.length} 部{mediaType === "movie" ? "电影" : "剧集"} ·
             movieclaw 会持续追踪并在新资源放出后自动入库
           </p>
@@ -85,7 +85,7 @@ export function SubscriptionsView() {
         </p>
       )}
 
-      <div className="mt-6 grid gap-x-4 gap-y-7 px-6 [grid-template-columns:repeat(auto-fill,minmax(148px,1fr))]">
+      <div className="mt-6 grid gap-x-4 gap-y-7 px-6 [grid-template-columns:repeat(auto-fill,minmax(148px,1fr))] max-md:mt-4 max-md:gap-x-3 max-md:gap-y-5 max-md:px-4 max-md:[grid-template-columns:repeat(auto-fill,minmax(140px,1fr))]">
         {visible.map((sub) => (
           <SubscriptionCell key={sub.id} sub={sub} />
         ))}
@@ -104,7 +104,7 @@ function MediaTypeSwitcher({
 }) {
   return (
     <div
-      className="flex shrink-0 rounded-full border border-white/10 bg-black/35 p-1 backdrop-blur-xl"
+      className="flex shrink-0 self-start rounded-full border border-white/10 bg-black/35 p-1 backdrop-blur-xl"
       aria-label="订阅类型"
     >
       {(["movie", "tv"] as const).map((type) => (

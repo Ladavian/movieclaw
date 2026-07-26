@@ -143,7 +143,7 @@ export function LibraryOrganizeDialog({
       onClose={onClose}
       label={`整理「${library.name}」的文件名`}
       width="2xl"
-      panelClassName="flex max-h-[84vh] flex-col"
+      panelClassName="flex max-h-[84dvh] flex-col"
     >
         {/* —— 头部 —— */}
         <div className="flex items-start justify-between gap-3 border-b border-white/[0.08] px-6 pb-4 pt-5">

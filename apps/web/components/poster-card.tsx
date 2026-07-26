@@ -129,13 +129,6 @@ function PosterCardContent({
   rank?: number;
   action?: PosterCardAction;
 }) {
-  const { open: openSubscribe, subscriptionOf } = useSubscribeEntry();
-  // 订阅入口类动作（subscribe/follow/backfill）才需要判断订阅状态；owned/none 不查询
-  const subscribeMeta =
-    action === "subscribe" || action === "follow" || action === "backfill"
-      ? SUBSCRIBE_ACTION_META[action]
-      : null;
-  const existingSub = subscribeMeta ? subscriptionOf(item) : undefined;
   const badges = item.badges ?? [];
   const genres = item.genres ?? [];
   const overview = item.overview ?? "";
@@ -147,7 +140,7 @@ function PosterCardContent({
         {rank !== undefined && (
           <span
             aria-hidden="true"
-            className="absolute bottom-0 left-0 z-0 select-none text-[108px] font-black leading-[0.78] tracking-[-0.08em]"
+            className="absolute bottom-0 left-0 z-0 select-none text-[108px] font-black leading-[0.78] tracking-[-0.08em] max-md:text-[86px]"
             style={{
               WebkitTextStroke: "2.5px rgba(205, 214, 230, 0.42)",
               color: "rgba(10, 11, 16, 0.55)",
@@ -160,7 +153,7 @@ function PosterCardContent({
         {/* 海报区：ranked 模式固定宽度并整体右移，把左侧空间留给探出的大数字 */}
         <div
           className={`relative z-[1] aspect-[2/3] overflow-hidden rounded-2xl bg-[#141824] shadow-[0_10px_28px_rgba(0,0,0,0.4)] ring-1 ring-white/[0.08] transition-all duration-300 ease-out group-hover/card:-translate-y-1.5 group-hover/card:shadow-[0_22px_50px_rgba(0,0,0,0.6)] group-hover/card:ring-white/25 ${
-            rank !== undefined ? "ml-11 w-[144px]" : "w-full"
+            rank !== undefined ? "ml-11 w-[144px] max-md:ml-9 max-md:w-[118px]" : "w-full"
           }`}
         >
           <PosterImage
@@ -183,6 +176,16 @@ function PosterCardContent({
             </span>
           )}
 
+          {/* 触摸设备的操作入口：没有 hover 就没有下方的信息层，订阅/追新/补齐
+              在手机上会彻底点不到。这里在海报右下角常驻一枚圆形操作键——只放
+              图标不放文案（卡片在两列网格里只有 150px 宽，塞不下胶囊按钮），
+              动作与信息层里的那颗完全一致。仅无悬停设备渲染，桌面端不受影响。 */}
+          {action !== "none" && (
+            <span className="touch-only absolute bottom-2 right-2 z-[2]">
+              <PosterCardActionButton item={item} action={action} compact />
+            </span>
+          )}
+
           {/* hover 信息层：底部渐变升起，展示类型 / 简介 / 快捷操作 */}
           <div className="absolute inset-x-0 bottom-0 translate-y-3 bg-gradient-to-t from-black/90 via-black/60 to-transparent px-3 pb-3 pt-10 opacity-0 transition-all duration-300 ease-out group-hover/card:translate-y-0 group-hover/card:opacity-100">
             {genres.length > 0 && (
@@ -197,56 +200,7 @@ function PosterCardContent({
             )}
             {action !== "none" && (
               <div className="mt-2.5 flex items-center gap-2">
-                {subscribeMeta ? (
-                  /* 订阅入口（打开订阅弹层）。已订阅时切换为状态徽标，点击进入
-                     同一弹层的管理态（可调整/取消订阅）。外层整卡是 button/Link，
-                     内层不能再嵌 button，用 role=button 的 span 承载；
-                     preventDefault 拦掉 Link 跳转，stopPropagation 拦掉整卡 onClick。 */
-                  <span
-                    role="button"
-                    tabIndex={0}
-                    aria-label={
-                      existingSub
-                        ? `管理《${item.title}》的订阅`
-                        : `${subscribeMeta.label}《${item.title}》`
-                    }
-                    onClick={(e) => {
-                      e.preventDefault();
-                      e.stopPropagation();
-                      void openSubscribe(item);
-                    }}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter" || e.key === " ") {
-                        e.preventDefault();
-                        e.stopPropagation();
-                        void openSubscribe(item);
-                      }
-                    }}
-                    className={
-                      existingSub
-                        ? "flex h-7 items-center gap-1.5 rounded-full bg-white/[0.14] px-3 text-[11px] font-semibold text-white/90 backdrop-blur-sm transition-colors hover:bg-white/[0.22]"
-                        : "btn-accent flex h-7 items-center gap-1 rounded-full px-3 text-[11px] font-semibold"
-                    }
-                  >
-                    {existingSub ? (
-                      <>
-                        <CheckIcon className="size-3 text-[#4ade80]" />
-                        已订阅
-                      </>
-                    ) : (
-                      <>
-                        <subscribeMeta.Icon className="size-3" />
-                        {subscribeMeta.label}
-                      </>
-                    )}
-                  </span>
-                ) : (
-                  /* 已入库标识：非交互，与库存格下方的绿点语言一致 */
-                  <span className="flex h-7 items-center gap-1.5 rounded-full bg-white/[0.14] px-3 text-[11px] font-semibold text-white/90 backdrop-blur-sm">
-                    <span className="size-1.5 rounded-full bg-[#4ade80]" />
-                    已入库
-                  </span>
-                )}
+                <PosterCardActionButton item={item} action={action} />
               </div>
             )}
           </div>
@@ -254,7 +208,7 @@ function PosterCardContent({
       </div>
 
       {/* 文字区：常显标题 + 元信息（压在背景大图上，需 text-on-image 投影保证可读） */}
-      <div className={`mt-2 ${rank ? "pl-11" : ""}`}>
+      <div className={`mt-2 ${rank ? "pl-11 max-md:pl-9" : ""}`}>
         <p className="text-on-image truncate text-[13px] font-semibold text-[var(--text)]">
           {item.title}
         </p>
@@ -268,5 +222,99 @@ function PosterCardContent({
         )}
       </div>
     </>
+  );
+}
+
+/**
+ * 卡片上的操作键（订阅 / 追新 / 补齐 / 已入库标识），两处形态共用一份逻辑：
+ *   - 默认（桌面）：hover 信息层里的文字胶囊；
+ *   - compact（触摸设备）：海报右下角常驻的圆形图标键。
+ *
+ * 外层整卡已经是 button / Link，内部不能再嵌 button（HTML 不允许交互元素嵌套），
+ * 所以用 role="button" 的 span 承载：preventDefault 拦掉 Link 跳转，
+ * stopPropagation 拦掉整卡 onClick，点它就只做订阅这一件事。
+ */
+function PosterCardActionButton({
+  item,
+  action,
+  compact = false,
+}: {
+  item: PosterVisualItem;
+  action: PosterCardAction;
+  /** 紧凑圆形形态：只留图标，给触摸设备的常驻入口用 */
+  compact?: boolean;
+}) {
+  const { open: openSubscribe, subscriptionOf } = useSubscribeEntry();
+  // 订阅入口类动作（subscribe/follow/backfill）才需要判断订阅状态；owned/none 不查询
+  const subscribeMeta =
+    action === "subscribe" || action === "follow" || action === "backfill"
+      ? SUBSCRIBE_ACTION_META[action]
+      : null;
+  const existingSub = subscribeMeta ? subscriptionOf(item) : undefined;
+
+  if (!subscribeMeta) {
+    // 已入库标识：非交互，与库存格下方的绿点语言一致。
+    // 紧凑态下退化为一枚绿点——手机上没必要为一个纯状态占掉海报一角。
+    return compact ? (
+      <span
+        aria-label="已入库"
+        className="grid size-5 place-items-center rounded-full bg-black/55 backdrop-blur-sm"
+      >
+        <span className="size-1.5 rounded-full bg-[#4ade80]" />
+      </span>
+    ) : (
+      <span className="flex h-7 items-center gap-1.5 rounded-full bg-white/[0.14] px-3 text-[11px] font-semibold text-white/90 backdrop-blur-sm">
+        <span className="size-1.5 rounded-full bg-[#4ade80]" />
+        已入库
+      </span>
+    );
+  }
+
+  const trigger = () => void openSubscribe(item);
+  const label = existingSub
+    ? `管理《${item.title}》的订阅`
+    : `${subscribeMeta.label}《${item.title}》`;
+
+  return (
+    <span
+      role="button"
+      tabIndex={0}
+      aria-label={label}
+      title={compact ? label : undefined}
+      onClick={(e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        trigger();
+      }}
+      onKeyDown={(e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          e.stopPropagation();
+          trigger();
+        }
+      }}
+      className={
+        compact
+          ? // 32px 圆键：低于这个尺寸在手机上就点不准了（触摸目标下限）
+            existingSub
+            ? "grid size-8 place-items-center rounded-full bg-black/60 text-white/90 shadow-lg backdrop-blur-sm active:scale-90"
+            : "btn-accent grid size-8 place-items-center rounded-full active:scale-90"
+          : existingSub
+            ? "flex h-7 items-center gap-1.5 rounded-full bg-white/[0.14] px-3 text-[11px] font-semibold text-white/90 backdrop-blur-sm transition-colors hover:bg-white/[0.22]"
+            : "btn-accent flex h-7 items-center gap-1 rounded-full px-3 text-[11px] font-semibold"
+      }
+    >
+      {existingSub ? (
+        <>
+          <CheckIcon className={compact ? "size-4 text-[#4ade80]" : "size-3 text-[#4ade80]"} />
+          {!compact && "已订阅"}
+        </>
+      ) : (
+        <>
+          <subscribeMeta.Icon className={compact ? "size-4" : "size-3"} />
+          {!compact && subscribeMeta.label}
+        </>
+      )}
+    </span>
   );
 }

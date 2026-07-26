@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Image from "next/image";
 import type { Route } from "next";
 import { usePathname, useRouter } from "next/navigation";
 
@@ -9,7 +10,8 @@ const SIDEBAR_COLLAPSED_KEY = "movieclaw.sidebar-collapsed";
 /** 进设置前所在的工作台地址（含查询串），设置页「返回工作台」按原样回跳 */
 const SETTINGS_RETURN_KEY = "movieclaw.settings-return";
 
-import { type SearchSubmitOptions } from "@/components/search-command";
+import { MenuIcon } from "@/components/icons";
+import { SearchCommand, type SearchSubmitOptions } from "@/components/search-command";
 import { SettingsSidebar } from "@/components/settings-view";
 import { Sidebar } from "@/components/sidebar";
 import { SubscribeEntryProvider } from "@/components/subscribe-entry";
@@ -19,6 +21,7 @@ import type { SearchScope } from "@/lib/categories";
 import { SearchPrefsProvider } from "@/lib/search-prefs";
 import { buildSearchPath } from "@/lib/search-url";
 import { UiPrefsProvider } from "@/lib/ui-prefs";
+import { useIsMobile } from "@/lib/use-media-query";
 import { settingsSections } from "@/lib/mock-data";
 
 /**
@@ -71,6 +74,10 @@ function pathOfNavId(id: string): Route {
 export function AppShell({ children }: { children: React.ReactNode }) {
   const router = useRouter();
   const pathname = usePathname();
+  // 移动端（< 768px）走另一套骨架：单栏 + 顶栏 + 抽屉式侧栏，见文件末尾的分支渲染
+  const isMobile = useIsMobile();
+  // 抽屉开合（仅移动端有意义）
+  const [drawerOpen, setDrawerOpen] = useState(false);
 
   const isSettings = pathname.startsWith("/settings");
   const activeNav = navIdFromPath(pathname);
@@ -159,6 +166,43 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     document.documentElement.classList.toggle("immersive-route", isImmersive);
   }, [isImmersive]);
 
+  // 移动端抽屉：切换路由即自动收起（点导航项跳走后抽屉不该还盖着新页面），
+  // 回到桌面版式时也一并复位，避免再切回窄屏时抽屉莫名其妙已经开着。
+  useEffect(() => {
+    setDrawerOpen(false);
+  }, [pathname, isMobile]);
+
+  // 抽屉打开时按 Esc 关闭（外接键盘 / 平板场景）
+  useEffect(() => {
+    if (!drawerOpen) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setDrawerOpen(false);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [drawerOpen]);
+
+  // 侧栏本体：桌面常驻左栏、移动端装进抽屉，两处共用同一份实例。
+  // 必须只渲染一份——面板是真实 WebGL 液态玻璃，多一份就多吃一个 WebGL 上下文。
+  const sidebarNode = isSettings ? (
+    <SettingsSidebar
+      active={activeSettings}
+      onSelect={(id) => router.push(`/settings/${id}` as Route)}
+      onBack={backToWorkspace}
+    />
+  ) : (
+    <Sidebar
+      activeNav={activeNav}
+      onSelect={handleSelect}
+      onSearch={handleSearch}
+      onOpenSettings={openSettings}
+      // 移动端抽屉里没有「折叠成图标窄条」的意义（抽屉本身就是收起态）
+      collapsed={!isMobile && sidebarCollapsed}
+      onToggleCollapse={isMobile ? () => setDrawerOpen(false) : toggleSidebar}
+      flat={isImmersive}
+    />
+  );
+
   return (
     // BackdropProvider 提供全站唯一的背景图数据源（CSS 大图 + 玻璃折射纹理），
     // 让「外观」设置里上传的图能同步作用到 body::before 与所有玻璃面板。
@@ -181,44 +225,123 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     {!isHome && (
       <div className={isImmersive ? "page-solid" : "page-scrim"} aria-hidden="true" />
     )}
-    {/* 浮起圆角卡片布局（对齐参考站 liquid-glass-oss）：外层留 padding、两栏留间隙，
-      背景大图在卡片四周与中缝透出，面板作为浮于图上的玻璃卡片。
-      app-shell 类名是给命令面板的「主界面后推」纵深效果用的锚点（见 globals.css 的
-      body.cmdk-open .app-shell）：面板打开时整个外壳轻微缩放后退，浮层则漂在其上。 */}
-    <div className="app-shell relative z-10 flex h-screen w-screen gap-3.5 p-3.5">
-      {/* —— 左栏：浮起的玻璃侧栏卡片 ——
-        宽度随折叠态动画（仅工作台可折叠；设置模式的分区菜单始终全宽）。 */}
-      <aside
-        className={`h-full shrink-0 transition-[width] duration-300 ease-[cubic-bezier(0.2,0.8,0.2,1)] ${
-          !isSettings && sidebarCollapsed ? "w-[68px]" : "w-[300px]"
-        }`}
-      >
-        {isSettings ? (
-          <SettingsSidebar
-            active={activeSettings}
-            onSelect={(id) => router.push(`/settings/${id}` as Route)}
-            onBack={backToWorkspace}
-          />
-        ) : (
-          <Sidebar
-            activeNav={activeNav}
-            onSelect={handleSelect}
-            onSearch={handleSearch}
-            onOpenSettings={openSettings}
-            collapsed={sidebarCollapsed}
-            onToggleCollapse={toggleSidebar}
-            flat={isImmersive}
+    {isMobile ? (
+      /* —— 移动端骨架：单栏 + 顶栏，侧栏收进覆盖式抽屉 ——
+         高度用 100dvh 而非 100vh：移动浏览器的地址栏会收放，100vh 取的是
+         「地址栏收起后」的大视口，底部输入区会被推到屏幕外；dvh 跟随实际
+         可视高度，是移动端唯一正确的满屏单位。 */
+      <div className="app-shell relative z-10 h-[100dvh] w-full">
+        <MobileTopBar onMenu={() => setDrawerOpen(true)} onSearch={handleSearch} />
+        {/* 主区铺满外壳（absolute 而非 flex 子项）：全站页面清一色是
+            「外层 h-full + 内层 overflow-y-auto」，h-full 要能解析就必须有一个
+            确定的父高度——absolute inset-0 给的是确定值，flex-1 得来的高度在
+            百分比解析上是灰色地带。让位顶栏与安全区的内边距由 globals.css
+            的 .app-shell > main 统一提供。 */}
+        <main className="absolute inset-0">{children}</main>
+      </div>
+    ) : (
+      /* 浮起圆角卡片布局（对齐参考站 liquid-glass-oss）：外层留 padding、两栏留间隙，
+        背景大图在卡片四周与中缝透出，面板作为浮于图上的玻璃卡片。
+        app-shell 类名是给命令面板的「主界面后推」纵深效果用的锚点（见 globals.css 的
+        body.cmdk-open .app-shell）：面板打开时整个外壳轻微缩放后退，浮层则漂在其上。 */
+      <div className="app-shell relative z-10 flex h-[100dvh] w-full gap-3.5 p-3.5">
+        {/* —— 左栏：浮起的玻璃侧栏卡片 ——
+          宽度随折叠态动画（仅工作台可折叠；设置模式的分区菜单始终全宽）。 */}
+        <aside
+          className={`h-full shrink-0 transition-[width] duration-300 ease-[cubic-bezier(0.2,0.8,0.2,1)] ${
+            !isSettings && sidebarCollapsed ? "w-[68px]" : "w-[300px]"
+          }`}
+        >
+          {sidebarNode}
+        </aside>
+
+        {/* —— 右区：当前路由页面 —— */}
+        <main className="h-full min-w-0 flex-1">{children}</main>
+      </div>
+    )}
+
+    {/* —— 移动端抽屉 ——
+      作为 .app-shell 的兄弟节点固定定位：外壳有缩放变换与内容裁剪，
+      抽屉挂在里面会被一起缩放/裁掉。关闭时保持挂载（只做位移），
+      侧栏的 WebGL 玻璃与最近会话列表因此不必反复销毁重建。 */}
+    {isMobile && (
+      <>
+        {drawerOpen && (
+          <button
+            type="button"
+            aria-label="关闭侧边栏"
+            onClick={() => setDrawerOpen(false)}
+            className="mobile-drawer-scrim cursor-default"
           />
         )}
-      </aside>
-
-      {/* —— 右区：当前路由页面 —— */}
-      <main className="h-full min-w-0 flex-1">{children}</main>
-    </div>
+        <div
+          className="mobile-drawer"
+          data-open={drawerOpen}
+          aria-hidden={!drawerOpen}
+          inert={!drawerOpen}
+        >
+          {sidebarNode}
+        </div>
+      </>
+    )}
     </SubscribeEntryProvider>
     </AgentConversationsProvider>
     </UiPrefsProvider>
     </SearchPrefsProvider>
     </BackdropProvider>
+  );
+}
+
+/**
+ * 移动端顶栏：汉堡（唤起抽屉）+ 品牌字标（回首页）+ 搜索。
+ *
+ * 为什么是「浮在内容之上」而不是「占一行把内容推下去」：全站有一半页面是
+ * 大图氛围页与 Hero 大剧照，顶栏若占位会在画面顶端切出一条硬边。这里做成
+ * absolute 的渐隐雾层（同 PageNav 的处理）。内容的让位收口在 globals.css 的
+ * 一条 `.app-shell > main` 规则里（安全区 + --mobile-topbar-h），
+ * 各页面不必各写各的 padding，新增路由自动继承。
+ *
+ * 只放三个入口是有意为之：手机上顶栏的每一个图标都在跟内容抢宽度，
+ * 导航（抽屉里全都有）、设置（抽屉底部用户菜单里）都不该在这里再占一格。
+ */
+function MobileTopBar({
+  onMenu,
+  onSearch,
+}: {
+  onMenu: () => void;
+  onSearch: (keyword: string, scope: SearchScope, options?: SearchSubmitOptions) => void;
+}) {
+  const router = useRouter();
+  return (
+    <header className="mobile-topbar pointer-events-none absolute inset-x-0 top-0 z-40">
+      <div className="pointer-events-auto flex h-[52px] items-center gap-2 px-3">
+        <button
+          type="button"
+          onClick={onMenu}
+          aria-label="打开侧边栏"
+          className="grid size-9 shrink-0 place-items-center rounded-full text-white/85 transition active:scale-95 active:bg-white/10"
+        >
+          <MenuIcon className="size-[20px]" />
+        </button>
+        <button
+          type="button"
+          onClick={() => router.push("/")}
+          aria-label="回到首页"
+          className="shrink-0 transition-opacity active:opacity-60"
+        >
+          <Image
+            src="/movieclaw-logo-rotor.png"
+            alt="MovieClaw"
+            width={1920}
+            height={525}
+            priority
+            className="h-7 w-auto max-w-[104px] object-contain"
+          />
+        </button>
+        <div className="ml-auto shrink-0">
+          <SearchCommand onSearch={onSearch} />
+        </div>
+      </div>
+    </header>
   );
 }

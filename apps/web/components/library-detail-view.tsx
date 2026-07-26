@@ -299,9 +299,9 @@ export function LibraryDetailView({ libraryId }: { libraryId: number }) {
         actions={actionsMenu}
       />
       {/* —— 库头部 —— */}
-      <div className="px-6">
+      <div className="px-6 max-md:px-4">
         <div className="flex items-center gap-2.5">
-          <h2 className="text-on-image truncate text-[26px] font-bold leading-tight tracking-[-0.02em] text-white">
+          <h2 className="text-on-image truncate text-[26px] font-bold leading-tight tracking-[-0.02em] text-white max-md:text-[20px]">
             {library.name}
           </h2>
           {library.is_default && (
@@ -311,7 +311,7 @@ export function LibraryDetailView({ libraryId }: { libraryId: number }) {
           )}
         </div>
         <p
-          className="text-on-image mt-1.5 truncate text-[13px] text-[var(--text-muted)]"
+          className="text-on-image mt-1.5 truncate text-[13px] text-[var(--text-muted)] max-md:text-[12px]"
           title={library.root_paths.join("\n")}
         >
           {meta.label}库 · {stats.item_count} 部作品 · {stats.file_count} 个文件 ·{" "}
@@ -440,7 +440,7 @@ export function LibraryDetailView({ libraryId }: { libraryId: number }) {
           点右上角 ⋯ 里的「扫描库」把根路径下已有的影片识别入库；订阅的内容下载完成后也会自动进来。
         </p>
       ) : (
-        <div className="mt-6 grid gap-x-4 gap-y-7 px-6 [grid-template-columns:repeat(auto-fill,minmax(148px,1fr))]">
+        <div className="mt-6 grid gap-x-4 gap-y-7 px-6 [grid-template-columns:repeat(auto-fill,minmax(148px,1fr))] max-md:mt-4 max-md:gap-x-3 max-md:gap-y-5 max-md:px-4 max-md:[grid-template-columns:repeat(auto-fill,minmax(140px,1fr))]">
           {items.map((item) => (
             <InventoryCell
               key={item.media_item_id}
@@ -454,14 +454,14 @@ export function LibraryDetailView({ libraryId }: { libraryId: number }) {
 
       {/* —— 追踪中（订阅已指向本库、文件未落地）—— */}
       {pending.length > 0 && (
-        <div className="mt-10 px-6">
+        <div className="mt-10 px-6 max-md:mt-7 max-md:px-4">
           <h3 className="text-on-image text-[15px] font-semibold text-white/85">
             追踪中
             <span className="ml-2 text-[12px] font-normal text-[var(--text-faint)]">
               已订阅、资源到位后自动入库
             </span>
           </h3>
-          <div className="mt-4 grid gap-x-4 gap-y-7 [grid-template-columns:repeat(auto-fill,minmax(148px,1fr))]">
+          <div className="mt-4 grid gap-x-4 gap-y-7 [grid-template-columns:repeat(auto-fill,minmax(148px,1fr))] max-md:gap-x-3 max-md:gap-y-5 max-md:[grid-template-columns:repeat(auto-fill,minmax(140px,1fr))]">
             {pending.map((sub) => (
               <PendingCell key={sub.id} sub={sub} />
             ))}
@@ -846,7 +846,7 @@ function IssueDrawer({
         onClick={onClose}
         className="absolute inset-0 cursor-default bg-black/50 backdrop-blur-[2px]"
       />
-      <div className="absolute right-0 top-0 flex h-full w-full max-w-[600px] flex-col border-l border-white/10 bg-[rgba(16,18,26,0.94)] shadow-[-24px_0_70px_rgba(0,0,0,0.55)] backdrop-blur-2xl">
+      <div className="absolute right-0 top-0 flex h-full w-full max-w-[600px] flex-col border-l border-white/10 bg-[rgba(16,18,26,0.94)] shadow-[-24px_0_70px_rgba(0,0,0,0.55)] backdrop-blur-2xl max-md:max-w-none">
         {/* 头部：tab + 关闭 */}
         <div className="flex items-center justify-between gap-3 border-b border-white/[0.08] px-5 py-3.5">
           <div className="flex items-center gap-1.5">

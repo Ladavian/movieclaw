@@ -102,7 +102,7 @@ export function Top250View() {
   };
 
   return (
-    <div className="scroll-thin flex-1 overflow-y-auto px-6 pb-12">
+    <div className="scroll-thin flex-1 overflow-y-auto px-6 pb-12 max-md:px-4">
       {/* 顶栏：返回发现电影（保留豆瓣数据源视角）+ 吸顶榜单名；
           容器已有 px-6，用 -mx-6 让吸顶蒙版铺满整宽 */}
       <PageNav
@@ -110,7 +110,7 @@ export function Top250View() {
           { label: "发现电影", href: "/discover/movie?source=douban" },
           { label: "豆瓣电影 Top 250" },
         ]}
-        className="-mx-6"
+        className="-mx-6 max-md:-mx-4"
       />
       <header className="mx-auto max-w-[1500px]">
         <div className="mt-1 flex flex-col justify-between gap-5 sm:flex-row sm:items-end">
@@ -137,7 +137,7 @@ export function Top250View() {
           </label>
         </div>
         {genres.length > 0 && (
-          <div className="mt-6 flex flex-wrap items-center gap-2">
+          <div className="mt-6 flex flex-wrap items-center gap-2 max-md:mt-4">
             <span className="mr-1 text-xs font-semibold text-[var(--text-muted)]">类型</span>
             <button
               type="button"

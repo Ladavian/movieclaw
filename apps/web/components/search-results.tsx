@@ -717,7 +717,7 @@ export function SearchResults({ query, onResearch }: SearchResultsProps) {
           工具栏 = 类型分段/分辨率（左）+ 筛选/排序/视图（右）
           条件回显行只在筛选激活时出现；流式期间再加一条 2px 进度线 */}
       {/* pt-4：上方还有 /search 页的垂直选项卡行（影视 | 站点资源），间距略收 */}
-      <header className="relative z-20 shrink-0 px-6 pb-3 pt-4">
+      <header className="relative z-20 shrink-0 px-6 pb-3 pt-4 max-md:px-4 max-md:pt-3">
         <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1.5">
           <h1 className="text-on-image text-[18px] font-semibold tracking-[-0.01em] text-white">
             “{query.keyword}”
@@ -813,7 +813,7 @@ export function SearchResults({ query, onResearch }: SearchResultsProps) {
       </header>
 
       {/* 主体：结果随 site_result 事件渐进出现，首批结果到达前保持骨架屏 */}
-      <div className="scroll-thin relative z-0 min-h-0 flex-1 overflow-y-auto px-6 pb-6">
+      <div className="scroll-thin relative z-0 min-h-0 flex-1 overflow-y-auto px-6 pb-6 max-md:px-4">
         {streaming && items.length === 0 && (
           <SkeletonList siteCount={siteProgress.length} />
         )}
@@ -1127,9 +1127,9 @@ function FilterToolbar({
 
         {/* 分辨率：最高频的筛选维度，直接平铺 chips；只放命中最多的前 3 个
             （聚合已按计数降序），长尾分辨率进「筛选」弹层 */}
-        {facets.resolution.slice(0, 3).map(({ value, count }) => (
+        {facets.resolution.slice(0, 3).map(({ value, count }, i) => (
+        <span key={value} className={i >= 2 ? "max-md:hidden" : undefined}>
         <FacetChip
-          key={value}
           label={value}
           count={count}
           active={filters.resolution.has(value)}
@@ -1137,6 +1137,7 @@ function FilterToolbar({
             onChange({ ...filters, resolution: toggleIn(filters.resolution, value) })
           }
         />
+        </span>
         ))}
 
         {/* 高频维度前置成单维度下拉（按重要性排：年份/季/压制组——年份直接
@@ -1144,6 +1145,7 @@ function FilterToolbar({
             只有可选值 ≥2（即真有区分度）才出现：搜具体片名时维度往往只剩单值，
             下拉毫无决策价值，隐去让工具栏随结果复杂度自适应收缩。
             全维度组合仍走右侧「筛选」弹层，两边共享同一份筛选状态 */}
+        <div className="flex items-center gap-2 max-md:hidden">
         {facets.years.length >= 2 && (
           <FacetDropdown
             label="年份"
@@ -1180,6 +1182,7 @@ function FilterToolbar({
             onToggle={(v) => onChange({ ...filters, group: toggleIn(filters.group, v) })}
           />
         )}
+        </div>
       </div>
 
       {/* 右侧：视图切换（分组/列表/图览）+ 筛选弹层入口（最后） */}
@@ -1314,7 +1317,7 @@ function FacetDropdown<T extends string | number>({
         </span>
       </button>
       {open && (
-        <div className="absolute left-0 top-full z-30 mt-2 max-h-[46vh] w-max max-w-[420px] overflow-y-auto rounded-2xl border border-white/[0.12] bg-[rgba(14,16,22,0.96)] p-3 shadow-2xl backdrop-blur-2xl">
+        <div className="absolute left-0 top-full z-30 mt-2 max-h-[46vh] w-max max-w-[420px] overflow-y-auto rounded-2xl border border-white/[0.12] bg-[rgba(14,16,22,0.96)] p-3 shadow-2xl backdrop-blur-2xl max-md:max-w-[calc(100vw-2rem)]">
           <div className="flex flex-wrap gap-1.5">
             {options.map((o) => (
               <FacetChip
@@ -1940,9 +1943,12 @@ function TorrentPosterCard({ hit }: { hit: TorrentHit }) {
             )}
           </p>
         </div>
-        {/* hover：压暗 + 浮出操作（stopPropagation：点链接不触发灯箱） */}
+        {/* hover：压暗 + 浮出操作（stopPropagation：点链接不触发灯箱）。
+            touch-reveal：触摸设备没有 hover，操作按钮改为常驻——此时压暗层
+            （group-hover:bg-black/35）不生效，按钮自带的深色底已足够在海报上
+            读清，海报本身也不会被一直压着。 */}
         {(hit.detail_url || hit.download_url) && (
-          <div className="absolute inset-0 flex items-center justify-center gap-2 bg-black/0 opacity-0 transition duration-200 group-hover:bg-black/35 group-hover:opacity-100">
+          <div className="touch-reveal absolute inset-0 flex items-center justify-center gap-2 bg-black/0 opacity-0 transition duration-200 group-hover:bg-black/35 group-hover:opacity-100">
             {hit.detail_url && (
               <a
                 href={hit.detail_url}
@@ -2185,7 +2191,7 @@ function TorrentRow({
             同时保留 focus-within，确保键盘用户可以访问操作。渐变遮罩覆盖下方指标列，
             避免按钮出现时文字相互叠压。 */}
         {(hit.detail_url || hit.download_url) && (
-          <div className="pointer-events-none absolute inset-y-0 right-2 flex items-center gap-1.5 rounded-r-2xl bg-gradient-to-l from-[rgba(20,23,31,0.98)] from-65% to-transparent pl-16 pr-2 opacity-0 transition-opacity duration-150 group-hover:pointer-events-auto group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100">
+          <div className="touch-reveal pointer-events-none absolute inset-y-0 right-2 flex items-center gap-1.5 rounded-r-2xl bg-gradient-to-l from-[rgba(20,23,31,0.98)] from-65% to-transparent pl-16 pr-2 opacity-0 transition-opacity duration-150 group-hover:pointer-events-auto group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100">
             {hit.detail_url && (
               <a
                 href={hit.detail_url}

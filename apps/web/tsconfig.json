@@ -33,6 +33,7 @@
     "**/*.ts",
     "**/*.tsx",
     ".next-breadcrumb/types/**/*.ts",
+    ".next-check/types/**/*.ts",
     ".next-dockercheck/types/**/*.ts",
     ".next-extinstall/types/**/*.ts",
     ".next-importbadge/types/**/*.ts",

@@ -1,4 +1,4 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import { Inter } from "next/font/google";
 
 import { publicEnv } from "@/lib/env";
@@ -26,6 +26,22 @@ export const metadata: Metadata = {
     template: `%s · ${publicEnv.appName}`,
   },
   description: "Movieclaw 控制台 —— 液态玻璃风格的影视追踪工作台。",
+};
+
+/**
+ * 视口规范（移动端适配的地基）：
+ * - viewportFit: "cover" —— 让页面铺满刘海屏的整块屏幕，随后由各处的
+ *   env(safe-area-inset-*) 把内容从刘海/胶囊/底部指示条里让开（见 globals.css
+ *   的 --safe-* 变量）。不写它则 iOS 会自动留出黑边，背景大图铺不满。
+ * - 不锁死缩放（不设 maximumScale）：捏合放大是无障碍的基本能力。iOS 上
+ *   「聚焦小字号输入框自动放大页面」的问题另行解决——globals.css 在移动端
+ *   把输入控件的字号提到 16px，从根上不触发那次自动缩放。
+ */
+export const viewport: Viewport = {
+  width: "device-width",
+  initialScale: 1,
+  viewportFit: "cover",
+  themeColor: "#0a0b10",
 };
 
 /**

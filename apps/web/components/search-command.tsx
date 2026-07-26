@@ -151,7 +151,7 @@ export function SearchCommand({ onSearch }: SearchCommandProps) {
         aria-label="搜索（⌘K 或 Ctrl+K）"
         aria-haspopup="dialog"
         title="搜索（⌘K 或 Ctrl+K）"
-        className="glass-row !size-8 shrink-0 justify-center !p-0"
+        className="glass-row !size-8 shrink-0 justify-center !p-0 max-md:!size-9"
       >
         <SearchIcon className="size-[18px]" />
       </button>
@@ -364,14 +364,14 @@ function SearchPalette({
   return (
     // 遮罩：mousedown 落在遮罩本身（而非面板内）即关闭
     <div
-      className="search-palette-overlay fixed inset-0 z-[80] flex items-start justify-center px-4 pt-[13vh]"
+      className="search-palette-overlay fixed inset-0 z-[80] flex items-start justify-center px-4 pt-[13vh] max-md:px-2 max-md:pt-[calc(var(--safe-top)+10px)]"
       onMouseDown={(event) => event.target === event.currentTarget && onClose()}
     >
       <div
         role="dialog"
         aria-modal="true"
         aria-label="搜索"
-        className="search-palette-panel w-full max-w-[600px] overflow-hidden rounded-2xl border border-white/[0.09] bg-[rgba(21,23,29,0.96)] shadow-[0_24px_80px_rgba(0,0,0,0.55),0_2px_8px_rgba(0,0,0,0.4)] backdrop-blur-2xl"
+        className="search-palette-panel flex w-full max-w-[600px] flex-col overflow-hidden rounded-2xl border border-white/[0.09] bg-[rgba(21,23,29,0.96)] shadow-[0_24px_80px_rgba(0,0,0,0.55),0_2px_8px_rgba(0,0,0,0.4)] backdrop-blur-2xl max-md:max-h-[calc(100dvh-var(--safe-top)-20px)]"
         onKeyDown={handleKeyDown}
       >
         {/* —— 输入行 —— */}
@@ -417,7 +417,7 @@ function SearchPalette({
         <div className="h-px bg-white/[0.06]" />
 
         {/* —— 主体：最近搜索（媒体/资源混排）—— */}
-        <div className="scroll-thin max-h-[336px] min-h-[96px] overflow-y-auto p-2">
+        <div className="scroll-thin max-h-[336px] min-h-[96px] overflow-y-auto p-2 max-md:max-h-none max-md:min-h-0 max-md:flex-1">
           {items !== null && items.length > 0 && (
             <div className="flex items-center justify-between px-2.5 pb-1 pt-1">
               <span className="text-[11px] font-medium tracking-wide text-[var(--text-faint)]">
@@ -463,11 +463,11 @@ function SearchPalette({
         </div>
 
         {/* —— 页脚：左侧模式说明，右侧快捷键 —— */}
-        <div className="flex h-10 items-center justify-between border-t border-white/[0.06] px-4">
+        <div className="flex h-10 shrink-0 items-center justify-between border-t border-white/[0.06] px-4">
           <span className="text-[11px] text-[var(--text-faint)]">
             {mode === "media" ? "在豆瓣中搜索影视条目" : "跨全部已配置站点搜索种子"}
           </span>
-          <span className="flex items-center gap-3 text-[11px] text-[var(--text-faint)]">
+          <span className="flex items-center gap-3 text-[11px] text-[var(--text-faint)] max-md:hidden">
             <span className="flex items-center gap-1">
               <Kbd>⏎</Kbd> 搜索
             </span>
@@ -667,7 +667,7 @@ function HistoryGroupRow({
         <DeleteHistoryButton
           label={`删除搜索历史组：${group.keyword}`}
           onClick={onRemoveGroup}
-          className="mr-1 opacity-0 group-hover/history:opacity-100"
+          className="touch-reveal mr-1 opacity-0 group-hover/history:opacity-100"
         />
       </div>
 
@@ -733,7 +733,7 @@ function HistorySingleRow({
       <DeleteHistoryButton
         label={`删除搜索历史：${item.keyword}`}
         onClick={onRemove}
-        className="absolute right-2 top-1/2 -translate-y-1/2 opacity-0 group-hover/single:opacity-100"
+        className="touch-reveal absolute right-2 top-1/2 -translate-y-1/2 opacity-0 group-hover/single:opacity-100"
       />
     </li>
   );
@@ -771,7 +771,7 @@ function HistoryVariantRow({
       <DeleteHistoryButton
         label={`删除搜索历史：${item.keyword}（${item.vertical === "media" ? "影视" : item.label ?? "资源全部"}）`}
         onClick={onRemove}
-        className="mr-1 opacity-0 group-hover/variant:opacity-100"
+        className="touch-reveal mr-1 opacity-0 group-hover/variant:opacity-100"
       />
     </li>
   );

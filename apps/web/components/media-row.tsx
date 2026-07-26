@@ -34,7 +34,7 @@ export function MediaRow({
 }) {
   return (
     <section className="relative">
-      <div className="mb-3 flex items-center justify-between gap-4 px-6">
+      <div className="mb-3 flex items-center justify-between gap-4 px-6 max-md:mb-2 max-md:px-4">
         <h3 className="text-on-image text-[15px] font-semibold tracking-[-0.01em] text-[var(--text)]">
           {row.title}
         </h3>
@@ -48,11 +48,11 @@ export function MediaRow({
         )}
       </div>
 
-      <HScroller className="gap-4 px-6 pb-1 pt-1">
+      <HScroller className="gap-4 px-6 pb-1 pt-1 max-md:gap-3 max-md:px-4">
         {row.items.map((item, i) => (
           <div
             key={`${row.id}-${item.id}`}
-            className={`shrink-0 ${row.ranked ? "w-[188px]" : "w-[152px] xl:w-[164px]"}`}
+            className={`shrink-0 ${row.ranked ? "w-[188px] max-md:w-[156px]" : "w-[152px] max-md:w-[126px] xl:w-[164px]"}`}
           >
             <PosterCard
               item={item}

@@ -65,8 +65,9 @@ function scrollParentOf(node: HTMLElement | null): HTMLElement | null {
  * 注意这些属性一律不加 transition：变量驱动的属性加过渡会被 Chromium 卡住旧值。
  *
  * 位置约定：必须作为滚动容器的直接子节点（sticky 的定位参照就是它），
- * 组件自带 px-6 横向留白；容器本身已经有 px-6 的页面，调用处补一个 -mx-6
- * 让吸顶蒙版铺满整个宽度。
+ * 组件自带 px-6 横向留白（移动端 px-4）；容器本身已经有 px-6 的页面，调用处补一个
+ * -mx-6 max-md:-mx-4 让吸顶蒙版铺满整个宽度——两个断点的负边距必须与容器各自的
+ * 内边距一一对应，否则窄屏会多探出 8px、把页面横向撑出滚动条。
  */
 export function PageNav({
   items,
@@ -106,7 +107,7 @@ export function PageNav({
   const backLabel = parent ? `返回${parent.label}` : "返回上一页";
 
   return (
-    <div ref={rootRef} className={`sticky top-0 z-30 px-6 ${className}`}>
+    <div ref={rootRef} className={`sticky top-0 z-30 px-6 max-md:px-4 ${className}`}>
       {/* 吸顶蒙版：不是一条「header 色块」，而是一层向下渐隐的雾——顶边最浓、
           到底部完全化开，没有分隔线，因此看不出边界，只感觉标题那一块变干净了。
           模糊同样用 mask 做渐隐（只模糊上半段），否则会在雾的下沿出现一道

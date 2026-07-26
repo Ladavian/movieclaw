@@ -126,11 +126,11 @@ export function SubscriptionInspectorView({ id }: { id: number }) {
   };
 
   return (
-    <div className="scroll-thin flex-1 overflow-y-auto px-6 pb-12">
+    <div className="scroll-thin flex-1 overflow-y-auto px-6 pb-12 max-md:px-4">
       {/* 顶栏：返回订阅列表 + 吸顶片名（容器已有 px-6，用 -mx-6 让吸顶蒙版铺满） */}
       <PageNav
         items={[{ label: "我的订阅", href: "/subscriptions" }, { label: detail.media.title }]}
-        className="-mx-6"
+        className="-mx-6 max-md:-mx-4"
       />
       {/* —— 1. Hero 氛围横幅：模糊海报铺底 + 订阅摘要 —— */}
       <div className="relative overflow-hidden rounded-2xl bg-[#10131b] shadow-[0_24px_70px_-18px_rgba(0,0,0,0.62)] ring-1 ring-white/10">
@@ -144,7 +144,7 @@ export function SubscriptionInspectorView({ id }: { id: number }) {
         {/* 左深右浅的横向渐变：左侧文字区压暗保可读，右侧透出氛围色 */}
         <div className="absolute inset-0 bg-gradient-to-r from-[rgba(7,9,14,0.82)] via-[rgba(7,9,14,0.58)] to-[rgba(7,9,14,0.36)]" />
 
-        <div className="relative z-10 flex items-start gap-5 p-6">
+        <div className="relative z-10 flex flex-wrap items-start gap-5 p-6 max-md:gap-4 max-md:p-4">
           {poster && (
             <Link
               href={`/media/${detail.media.kind}/${detail.media.tmdb_id}`}
@@ -162,7 +162,7 @@ export function SubscriptionInspectorView({ id }: { id: number }) {
             <p className="text-[11px] font-semibold tracking-[0.22em] text-[var(--accent-2)]">
               {isMovie ? "电影订阅" : "剧集订阅"}
             </p>
-            <h1 className="mt-1.5 flex items-baseline gap-2.5 text-[26px] font-bold leading-tight tracking-[-0.02em] text-white">
+            <h1 className="mt-1.5 flex flex-wrap items-baseline gap-2.5 text-[26px] font-bold leading-tight tracking-[-0.02em] text-white max-md:text-[20px]">
               <Link
                 href={`/media/${detail.media.kind}/${detail.media.tmdb_id}`}
                 className="truncate hover:underline"
@@ -198,7 +198,7 @@ export function SubscriptionInspectorView({ id }: { id: number }) {
             <ProgressStrip progress={detail.progress} />
           </div>
 
-          <div className="flex shrink-0 gap-2.5 pt-0.5">
+          <div className="flex shrink-0 gap-2.5 pt-0.5 max-md:w-full">
             <button
               type="button"
               disabled={busy || detail.status === "completed"}

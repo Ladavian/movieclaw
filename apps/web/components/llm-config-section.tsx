@@ -522,7 +522,7 @@ function LlmProviderForm({ config, presets, onSubmit, onCancel, onError }: LlmPr
               {...NO_AUTOFILL}
             />
           </div>
-          <div className="grid grid-cols-3 gap-3">
+          <div className="grid grid-cols-3 gap-3 max-md:grid-cols-1">
             <div>
               <label className={labelClass}>上下文长度 *</label>
               <input

@@ -241,15 +241,15 @@ export function LibraryItemDetailView({
       />
 
       {/* 氛围留白：这一段什么都不放，让剧照完整呼吸 */}
-      <div className="h-[30vh] min-h-[180px]" />
+      <div className="h-[30vh] min-h-[180px] max-md:h-[22vh] max-md:min-h-[120px]" />
 
       {/* —— 内容层：从全透明渐入页面底色，与背景之间没有任何接缝 —— */}
       <div className="bg-[linear-gradient(180deg,rgba(7,9,14,0)_0,rgba(7,9,14,0.66)_130px,rgba(7,9,14,0.88)_360px,rgba(7,9,14,0.93)_100%)] pb-12">
       {/* —— 头部信息区 —— */}
-      <div className="relative z-10 flex items-end gap-7 px-12 pt-6">
+      <div className="relative z-10 flex items-end gap-7 px-12 pt-6 max-md:gap-4 max-md:px-4 max-md:pt-3">
         {/* 海报：悬浮浮出「更换图片」——选图入口放在它作用的对象上
             （Emby/Plex 同款位置），不必再进顶栏的 ⋯ 菜单绕一圈 */}
-        <div className="group/poster relative w-[186px] shrink-0 overflow-hidden rounded-xl bg-[#141824] shadow-[0_26px_60px_rgba(0,0,0,0.6)] ring-1 ring-white/15">
+        <div className="group/poster relative w-[186px] shrink-0 overflow-hidden rounded-xl bg-[#141824] shadow-[0_26px_60px_rgba(0,0,0,0.6)] ring-1 ring-white/15 max-md:w-[104px]">
           <PosterImage
             src={posterUrl}
             alt={`${detail.title} 海报`}
@@ -258,7 +258,7 @@ export function LibraryItemDetailView({
           <button
             type="button"
             onClick={() => setArtworkOpen(true)}
-            className="absolute inset-x-0 bottom-0 flex h-11 items-center justify-center bg-black/70 text-[12.5px] font-medium text-white opacity-0 backdrop-blur-sm transition group-hover/poster:opacity-100"
+            className="touch-reveal absolute inset-x-0 bottom-0 flex h-11 items-center justify-center bg-black/70 text-[12.5px] font-medium text-white opacity-0 backdrop-blur-sm transition group-hover/poster:opacity-100 max-md:h-8 max-md:text-[11px]"
           >
             更换图片
           </button>
@@ -269,7 +269,7 @@ export function LibraryItemDetailView({
             已入库 · {isMovie ? "电影" : "剧集"}
             {meta && meta.genres.length > 0 ? ` · ${meta.genres.join(" / ")}` : ""}
           </p>
-          <h1 className="text-on-image mt-2 text-[38px] font-bold leading-[1.1] tracking-[-0.02em] text-white">
+          <h1 className="text-on-image mt-2 text-[38px] font-bold leading-[1.1] tracking-[-0.02em] text-white max-md:mt-1 max-md:text-[21px]">
             {detail.title}
           </h1>
           {detail.original_title && detail.original_title !== detail.title && (
@@ -278,7 +278,7 @@ export function LibraryItemDetailView({
             </p>
           )}
 
-          <div className="tnum mt-3.5 flex flex-wrap items-center gap-x-3.5 gap-y-2 text-[13px] text-white/80">
+          <div className="tnum mt-3.5 flex flex-wrap items-center gap-x-3.5 gap-y-2 text-[13px] text-white/80 max-md:mt-2 max-md:gap-x-2.5 max-md:gap-y-1 max-md:text-[12px]">
             {meta?.rating != null && (
               <span className="flex items-center gap-1.5">
                 <StarIcon className="size-4 text-[#f5c451]" />
@@ -364,7 +364,7 @@ export function LibraryItemDetailView({
         </div>
       </div>
 
-      <div className="mt-9 space-y-8 px-12">
+      <div className="mt-9 space-y-8 px-12 max-md:mt-6 max-md:space-y-6 max-md:px-4">
         {/* —— 片源规格：电影多版本合并切换（剧集走下方分集区逐集展示）—— */}
         {isMovie && detail.files.length > 0 && <MovieVersionSpecs files={detail.files} />}
 

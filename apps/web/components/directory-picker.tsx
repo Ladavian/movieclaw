@@ -113,7 +113,7 @@ export function DirectoryPicker({
       label="选择服务器目录"
       width="lg"
       raised
-      panelClassName="flex max-h-[76vh] flex-col"
+      panelClassName="flex max-h-[76dvh] flex-col"
     >
         <div className="space-y-3 p-5 pb-3">
           <h2 className="text-[15px] font-bold text-white">选择服务器目录</h2>

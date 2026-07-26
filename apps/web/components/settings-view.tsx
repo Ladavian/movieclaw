@@ -118,7 +118,7 @@ export function SettingsPanel({ active }: SettingsPanelProps) {
     <div className="scroll-thin h-full overflow-y-auto">
       {/* 日志分区放宽到 4xl：日志行信息密度高，窄容器折行太碎 */}
       <div
-        className={`mx-auto w-full px-6 pb-20 pt-12 ${
+        className={`mx-auto w-full px-6 pb-20 pt-12 max-md:px-4 max-md:pb-12 max-md:pt-6 ${
           section.id === "logs" ? "max-w-4xl" : "max-w-2xl"
         }`}
       >
@@ -129,7 +129,7 @@ export function SettingsPanel({ active }: SettingsPanelProps) {
           <div className="min-w-0">
             {/* 实色 + 暗投影（不用 text-sheen 渐变裁切——全站蒙版默认轻档、
                 背景大图透上来时，半透明渐变字压在亮背景上会发灰，实色白字最稳） */}
-            <h1 className="text-on-image text-[22px] font-semibold tracking-tight text-[var(--text)]">
+            <h1 className="text-on-image text-[22px] font-semibold tracking-tight text-[var(--text)] max-md:text-[19px]">
               {section.label}
             </h1>
             <p className="text-on-image mt-0.5 text-[13px] text-[var(--text-muted)]">
@@ -226,7 +226,7 @@ function ProfileSection() {
           {/* hover / 上传中：圆形遮罩浮出提示，暗示头像可点击更换 */}
           <span
             className={`absolute inset-0 flex items-center justify-center rounded-full bg-black/55 text-[11px] font-semibold text-white transition-opacity ${
-              avatarBusy ? "opacity-100" : "opacity-0 group-hover:opacity-100"
+              avatarBusy ? "opacity-100" : "touch-reveal opacity-0 group-hover:opacity-100"
             }`}
           >
             {avatarBusy ? "上传中…" : "更换"}
@@ -579,7 +579,7 @@ function BackdropGroup() {
               </p>
             </div>
             {/* hover：轻压暗 + 中央浮出更换按钮 */}
-            <div className="pointer-events-none absolute inset-0 flex items-center justify-center bg-black/0 opacity-0 transition duration-300 group-hover:bg-black/25 group-hover:opacity-100">
+            <div className="touch-reveal pointer-events-none absolute inset-0 flex items-center justify-center bg-black/0 opacity-0 transition duration-300 group-hover:bg-black/25 group-hover:opacity-100">
               <span className="btn-accent rounded-full px-4.5 py-2 text-xs font-semibold">
                 更换图片
               </span>
