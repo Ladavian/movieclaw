@@ -5,7 +5,7 @@ import Link from "next/link";
 import type { Route } from "next";
 import { useRouter } from "next/navigation";
 
-import { ChevronLeftIcon } from "@/components/icons";
+import { ChevronLeftIcon, MenuIcon } from "@/components/icons";
 import { SearchCommand } from "@/components/search-command";
 import { usePageChrome } from "@/lib/page-chrome";
 import { useIsMobile } from "@/lib/use-media-query";
@@ -141,21 +141,36 @@ export function PageNav({
         }}
       />
       <div className="relative flex h-[52px] items-center gap-3">
-        {parent ? (
-          <Link href={parent.href as Route} aria-label={backLabel} title={backLabel} className={backClass}>
-            <ChevronLeftIcon className="size-[18px]" />
-          </Link>
-        ) : (
-          <button
-            type="button"
-            onClick={() => router.back()}
-            aria-label={backLabel}
-            title={backLabel}
-            className={backClass}
-          >
-            <ChevronLeftIcon className="size-[18px]" />
-          </button>
-        )}
+        {/* 左侧控件组：移动端补一颗 ☰ 排在返回键左边。本页顶栏顶掉了外壳那条
+            全局顶栏，抽屉入口不在这儿补回来，详情页就只能先返回才能换区。
+            组内 gap-2 与右侧控件组一致，组与标题之间才是外层的 gap-3。 */}
+        <div className="flex shrink-0 items-center gap-2">
+          {isMobile && chrome && (
+            <button
+              type="button"
+              onClick={chrome.openDrawer}
+              aria-label="打开侧边栏"
+              className={backClass}
+            >
+              <MenuIcon className="size-[18px]" />
+            </button>
+          )}
+          {parent ? (
+            <Link href={parent.href as Route} aria-label={backLabel} title={backLabel} className={backClass}>
+              <ChevronLeftIcon className="size-[18px]" />
+            </Link>
+          ) : (
+            <button
+              type="button"
+              onClick={() => router.back()}
+              aria-label={backLabel}
+              title={backLabel}
+              className={backClass}
+            >
+              <ChevronLeftIcon className="size-[18px]" />
+            </button>
+          )}
+        </div>
         {/* 吸顶标题：内容区下方本来就有同名大标题，这里只是滚动后的补位视觉，
             对读屏隐藏，避免同一个标题被念两遍。 */}
         <span

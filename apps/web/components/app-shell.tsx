@@ -182,9 +182,10 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   // 移动端顶栏归属：详情类页面自带 PageNav（返回 + 标题 + 页面操作），
   // 全局顶栏再叠一条就成了两层顶栏，于是把这一行让给页面自己（见 lib/page-chrome.tsx）。
   const showMobileTopBar = isMobile && pageNavCount === 0;
+  const openDrawer = useCallback(() => setDrawerOpen(true), []);
   const pageChrome = useMemo(
-    () => ({ registerPageNav, onSearch: handleSearch }),
-    [registerPageNav, handleSearch],
+    () => ({ registerPageNav, onSearch: handleSearch, openDrawer }),
+    [registerPageNav, handleSearch, openDrawer],
   );
 
   // 移动端抽屉：切换路由即自动收起（点导航项跳走后抽屉不该还盖着新页面），
@@ -257,9 +258,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       /* data-topbar：主区要不要为全局顶栏空出那 52px，取决于这一行有没有被
          页面自己的 PageNav 认领（对应 globals.css 的 .app-shell[data-topbar] 规则）。 */
       <div className="app-shell relative z-10 h-[100dvh] w-full" data-topbar={showMobileTopBar}>
-        {showMobileTopBar && (
-          <MobileTopBar onMenu={() => setDrawerOpen(true)} onSearch={handleSearch} />
-        )}
+        {showMobileTopBar && <MobileTopBar onMenu={openDrawer} onSearch={handleSearch} />}
         {/* 主区铺满外壳（absolute 而非 flex 子项）：全站页面清一色是
             「外层 h-full + 内层 overflow-y-auto」，h-full 要能解析就必须有一个
             确定的父高度——absolute inset-0 给的是确定值，flex-1 得来的高度在
