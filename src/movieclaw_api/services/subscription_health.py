@@ -55,6 +55,7 @@ class LibraryPipeline:
     is_default: bool
     mode: str  # watch / inplace / downloader_default
     path: str | None  # 投递基底目录（movieclaw 视角）
+    library_root: str | None  # 库主根（入库节点的落点展示）
     status: str  # 全链路最坏状态
     checks: list[HealthCheck] = field(default_factory=list)
 
@@ -73,6 +74,33 @@ async def _default_downloader(session: AsyncSession) -> DownloaderClient | None:
         )
     )
     return result.scalars().first()
+
+
+async def _site_check(session: AsyncSession) -> HealthCheck:
+    """资源搜索段（全局，链路第一环）：有没有可用站点决定"搜不搜得到资源"。"""
+    from movieclaw_db.models import SiteCredential
+
+    result = await session.execute(
+        select(SiteCredential).where(
+            SiteCredential.enabled.is_(True),  # type: ignore[attr-defined]
+            SiteCredential.status == ConfigStatus.ACTIVE,
+        )
+    )
+    count = len(result.scalars().all())
+    if count == 0:
+        return HealthCheck(
+            key="sites",
+            label="资源搜索",
+            status="error",
+            detail="没有可用的资源站点——订阅搜不到任何资源",
+            fix_section="sites",
+        )
+    return HealthCheck(
+        key="sites",
+        label="资源搜索",
+        status="ok",
+        detail=f"已接入 {count} 个可用站点",
+    )
 
 
 def _watched_dirs() -> frozenset[str]:
@@ -159,6 +187,7 @@ async def pipeline_health(session: AsyncSession) -> dict:
     from movieclaw_api.services.torrent_submit import mapping_covers
 
     downloader = await _default_downloader(session)
+    site_check = await _site_check(session)
     watched = _watched_dirs()
     libraries = await LibraryRepository(session).list_all()
 
@@ -239,8 +268,9 @@ async def pipeline_health(session: AsyncSession) -> dict:
                         status="error",
                         detail=(
                             f"目录 {base} 不在下载器「{downloader.name}」的路径映射"
-                            "覆盖范围内，投递会被拒绝——请补一条路径映射"
-                            "（下载器可直达同名路径时，添加两边相同的一条即可）"
+                            f"覆盖范围内，投递会被拒绝。建议映射：本机 {base} → "
+                            "下载器视角的对应路径（下载器可直达同名路径时，"
+                            "两边填相同的即可）"
                         ),
                         fix_section="downloaders",
                     )
@@ -259,15 +289,22 @@ async def pipeline_health(session: AsyncSession) -> dict:
                 is_default=library.is_default,
                 mode=mode,
                 path=base,
+                library_root=library.primary_root,
                 status=status,
                 checks=checks,
             )
         )
 
-    overall = _worst([p.status for p in pipelines])
+    # 全局段（站点/下载器）计入整体状态：没有站点或下载器时即使各库自身
+    # 无恙，订阅也跑不起来——横幅与开局清单都依赖这个口径
+    overall = _worst([p.status for p in pipelines] + [site_check.status])
+    if downloader is None:
+        overall = "error"
     return {
         "status": overall,
         "error_count": sum(1 for p in pipelines if p.status == "error"),
         "warn_count": sum(1 for p in pipelines if p.status == "warn"),
+        "site_check": asdict(site_check),
+        "downloader_ok": downloader is not None,
         "libraries": [asdict(p) for p in pipelines],
     }

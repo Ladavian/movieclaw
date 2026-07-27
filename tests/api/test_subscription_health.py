@@ -55,10 +55,45 @@ async def _make_downloader(db, *, mappings: list[dict] | None = None) -> None:
         await session.commit()
 
 
+async def _make_site(db) -> None:
+    from movieclaw_db.models import SiteCredential
+    from movieclaw_db.models.site_credential import AuthType
+
+    async with db.session() as session:
+        session.add(
+            SiteCredential(
+                site_id="testsite",
+                auth_type=AuthType.COOKIE,
+                cookie="x",
+                enabled=True,
+                status=ConfigStatus.ACTIVE,
+            )
+        )
+        await session.commit()
+
+
 def _check(pipeline: dict, key: str) -> dict:
     matches = [c for c in pipeline["checks"] if c["key"] == key]
     assert matches, f"链路里缺少 {key} 段：{[c['key'] for c in pipeline['checks']]}"
     return matches[0]
+
+
+@pytest.mark.asyncio
+async def test_site_check_is_global_first_segment(db, tmp_path) -> None:
+    """全局站点段：无站点 error 且拖垮整体；接入后 ok 并计数。"""
+    await _make_library(db, root=tmp_path / "movies")
+    await _make_downloader(db)
+    async with db.session() as session:
+        result = await pipeline_health(session)
+    assert result["site_check"]["status"] == "error"
+    assert result["site_check"]["fix_section"] == "sites"
+    assert result["status"] == "error"  # 各库自身无恙，但搜不到资源照样跑不起来
+
+    await _make_site(db)
+    async with db.session() as session:
+        result = await pipeline_health(session)
+    assert result["site_check"]["status"] == "ok" and "1 个" in result["site_check"]["detail"]
+    assert result["status"] == "ok" and result["downloader_ok"] is True
 
 
 @pytest.mark.asyncio
@@ -77,6 +112,7 @@ async def test_no_downloader_is_error(db, tmp_path) -> None:
 async def test_mapping_coverage_verdicts(db, tmp_path) -> None:
     root = tmp_path / "movies"
     await _make_library(db, root=root)
+    await _make_site(db)
     # 映射不覆盖库根：error + 指向下载器设置（与真实投递被拒同口径）
     await _make_downloader(db, mappings=[{"local": "/somewhere/else", "remote": "/dl"}])
     async with db.session() as session:
@@ -103,6 +139,7 @@ async def test_watch_mode_transfer_segments(db, tmp_path) -> None:
     root, watch = tmp_path / "movies", tmp_path / "watch"
     watch.mkdir()
     library_id = await _make_library(db, root=root)
+    await _make_site(db)
     await _make_downloader(db)
     async with db.session() as session:
         session.add(ImportWatch(source_path=str(watch), strategy="hardlink", library_id=library_id))

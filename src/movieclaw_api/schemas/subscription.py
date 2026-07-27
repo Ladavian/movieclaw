@@ -382,6 +382,7 @@ class LibraryPipelineView(BaseModel):
     is_default: bool
     mode: Literal["watch", "inplace", "downloader_default"]
     path: str | None = Field(default=None, description="投递基底目录（movieclaw 视角）")
+    library_root: str | None = Field(default=None, description="库主根（入库节点的落点）")
     status: Literal["ok", "warn", "error"] = Field(description="全链路最坏状态")
     checks: list[HealthCheckView]
 
@@ -389,9 +390,13 @@ class LibraryPipelineView(BaseModel):
 class PipelineHealthView(BaseModel):
     """订阅链路体检的整体结论（订阅设定页与订阅列表警示横幅共用）。"""
 
-    status: Literal["ok", "warn", "error"]
-    error_count: int = Field(description="链路有 error 的库数（横幅只看它）")
+    status: Literal["ok", "warn", "error"] = Field(
+        description="整体状态：库链路 + 全局段（站点/下载器）的最坏值"
+    )
+    error_count: int = Field(description="链路有 error 的库数")
     warn_count: int
+    site_check: HealthCheckView = Field(description="资源搜索段（全局，链路第一环）")
+    downloader_ok: bool = Field(description="是否有可用的默认下载器（开局清单用）")
     libraries: list[LibraryPipelineView]
 
 

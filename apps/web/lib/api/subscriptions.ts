@@ -194,16 +194,23 @@ export interface LibraryPipeline {
   /** watch=投监听目录 / inplace=直下库根 / downloader_default=下载器默认目录 */
   mode: "watch" | "inplace" | "downloader_default";
   path: string | null;
+  /** 库主根（入库节点的落点展示） */
+  library_root: string | null;
   status: "ok" | "warn" | "error";
   checks: PipelineCheck[];
 }
 
 /** 订阅链路体检整体结论（订阅设定页与订阅列表警示横幅共用）。 */
 export interface PipelineHealth {
+  /** 整体状态：库链路 + 全局段（站点/下载器）的最坏值 */
   status: "ok" | "warn" | "error";
-  /** 链路有 error 的库数（横幅只看它） */
+  /** 链路有 error 的库数 */
   error_count: number;
   warn_count: number;
+  /** 资源搜索段（全局，链路第一环） */
+  site_check: PipelineCheck;
+  /** 是否有可用的默认下载器（开局清单用） */
+  downloader_ok: boolean;
   libraries: LibraryPipeline[];
 }
 
