@@ -832,6 +832,12 @@ function IssueDrawer({
   const missingFileTotal = missing.reduce((n, item) => n + item.files.length, 0);
   const unidentifiedFileTotal = unidentified.reduce((n, g) => n + g.file_count, 0);
   const ignoredFileTotal = ignored.reduce((n, g) => n + g.file_count, 0);
+  // 「放错库了」的文件数：认领解决不了（TMDB 的 movie/tv 是两套 id 空间），
+  // 得挪文件或删库重建，单独给一条修复引导
+  const kindMismatchFiles = unidentified.reduce(
+    (n, g) => (g.code === "kind_mismatch" ? n + g.file_count : n),
+    0,
+  );
 
   const tabClass = (active: boolean) =>
     `rounded-full px-3.5 py-1.5 text-[12.5px] font-semibold transition ${
@@ -957,6 +963,16 @@ function IssueDrawer({
                 ? "识别器升级后重新核对了这些条目，新结论与现有身份不一致。身份没有被自动改动——由你拍板：采纳新结论改挂条目，或维持现状。拍板后不再提醒。"
                 : "这些文件你选择过「忽略」，之后每次扫描都会直接跳过，不再占用待识别清单（磁盘文件一直都在）。识别器在持续变强，当初认不出的现在未必认不出——「恢复」即可让它重新参与识别。"}
         </p>
+
+        {/* 「放错库了」修复引导：认领解决不了这一类，不给引导用户会在认领里打转 */}
+        {open === "unidentified" && kindMismatchFiles > 0 && (
+          <p className="mx-5 mt-3 rounded-lg bg-[#f5c451]/[0.1] px-3 py-2 text-[11.5px] leading-5 text-[#f5c451]">
+            有 {kindMismatchFiles} 个文件的实际类型与本库不符（
+            {movie ? "剧集文件在电影库" : "电影文件在剧集库"}
+            ），认领无法解决。个别文件放错了：把文件移到对应类型的库即可；整库类型建错了：
+            删除本库并以正确类型重建（删库不会动磁盘文件），重新扫描即可恢复。
+          </p>
+        )}
 
         {/* 列表区：独立滚动 */}
         <div className="scroll-thin min-h-0 flex-1 space-y-2 overflow-y-auto px-5 py-4">
