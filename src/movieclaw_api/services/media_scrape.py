@@ -32,6 +32,7 @@ from dataclasses import dataclass, field
 from datetime import timedelta
 from pathlib import Path
 
+from sqlalchemy import delete, insert, tuple_
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
 
@@ -407,24 +408,46 @@ async def apply_people_credits(
         ).scalars()
     }
     seen: set[tuple[int, str]] = set()
+    # 新关系走 Core 批量插入而不是逐行 session.add：一部片 20~45 条关系，
+    # 逐行插会让整库扫描的 INSERT 次数直接等于「条目数 × 演职员数」，
+    # 实测那是首次扫描里最大的一项 SQL 开销。这些行插完不需要回读对象，
+    # 绕开 ORM 的单元工作正合适
+    new_links: list[dict] = []
     for credit in credits:
         key = (person_ids[credit.tmdb_person_id], credit.department)
         seen.add(key)
         link = existing.get(key)
         if link is None:
-            link = MediaItemPerson(
-                media_item_id=media_item_id,
-                person_id=key[0],
-                department=credit.department,
+            new_links.append(
+                {
+                    "media_item_id": media_item_id,
+                    "person_id": key[0],
+                    "department": credit.department,
+                    "character": credit.character,
+                    "credit_order": credit.credit_order,
+                    "created_at": now,
+                    "updated_at": now,
+                }
             )
+            continue
+        # 已有关系：只在真有变化时才动，避免整库刷新时白写
         if link.character != credit.character or link.credit_order != credit.credit_order:
             link.character = credit.character
             link.credit_order = credit.credit_order
             link.updated_at = now
-        session.add(link)
-    for key, link in existing.items():
-        if key not in seen:
-            await session.delete(link)
+            session.add(link)
+    if new_links:
+        await session.execute(insert(MediaItemPerson), new_links)
+
+    stale = [key for key in existing if key not in seen]
+    if stale:
+        # 同理批量删：逐个 session.delete 会产生 N 条 DELETE
+        await session.execute(
+            delete(MediaItemPerson).where(
+                MediaItemPerson.media_item_id == media_item_id,
+                tuple_(MediaItemPerson.person_id, MediaItemPerson.department).in_(stale),
+            )
+        )
 
 
 async def apply_display_profile(

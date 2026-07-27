@@ -74,8 +74,10 @@ class MediaItemRepository:
         if metadata is not None:
             metadata.media_item_id = item.id
             self._session.add(metadata)
+        # 提交后不 refresh：会话是 expire_on_commit=False，提交不会让属性过期，
+        # 而全部列（含 id 与时间戳）都是应用侧赋的值，没有库端默认值要读回来。
+        # 每建一档白搭一次全表列的 SELECT，首次扫描上千部片就是上千次
         await self._session.commit()
-        await self._session.refresh(item)
         return item
 
     async def rollback(self) -> None:
@@ -87,5 +89,4 @@ class MediaItemRepository:
         item.updated_at = utcnow()
         self._session.add(item)
         await self._session.commit()
-        await self._session.refresh(item)
         return item

@@ -73,6 +73,9 @@ class LibraryFile(TimestampMixin, table=True):
             "season_number",
             "episode_number",
         ),
+        # 改名归并的候选池查询（同库同尺寸）。缺了它，首次扫描每落一个新文件
+        # 都要扫一遍本库全部台账行，整轮就是 O(文件数²)
+        Index("ix_library_file_library_size", "library_id", "size_bytes"),
     )
 
     id: int | None = Field(default=None, primary_key=True)

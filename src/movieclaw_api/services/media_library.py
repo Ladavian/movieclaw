@@ -39,6 +39,11 @@ class MediaLibraryService:
         self._repo = MediaItemRepository(session)
         self._client = tmdb_client
         self._language = language
+        # 预取档案缓存：(kind, tmdb_id) -> 已经拉回来的 TMDB 档案。
+        # 扫描器会在处理每一窗文件前并发填充它（见 library_scan._prefetch_profiles），
+        # 建档时命中即省掉一次 TMDB 往返。取用即弹出，不做长期缓存——
+        # 档案很大，且"元数据保鲜"是刷新任务的职责，不该有第二份陈旧副本
+        self.profile_cache: dict[tuple[MediaKind, int], MediaProfile] = {}
 
     async def ensure_media_item(
         self,
@@ -59,9 +64,14 @@ class MediaLibraryService:
         """
         existing = await self._repo.get_by_anchor(kind.value, tmdb_id)
         if existing is not None:
+            self.profile_cache.pop((kind, tmdb_id), None)  # 用不上了，别占内存
             return await self._backfill(existing, douban_id, extra_aliases)
 
-        profile = await fetch_media_profile(self._client, kind, tmdb_id, language=self._language)
+        profile = self.profile_cache.pop((kind, tmdb_id), None)
+        if profile is None:
+            profile = await fetch_media_profile(
+                self._client, kind, tmdb_id, language=self._language
+            )
         item, seasons, episodes, metadata = self._to_rows(profile, douban_id, extra_aliases)
         try:
             item = await self._repo.create_with_seasons(item, seasons, episodes, metadata)
@@ -95,6 +105,23 @@ class MediaLibraryService:
             len(seasons),
         )
         return item
+
+    async def prefetch_profile(self, kind: MediaKind, tmdb_id: int) -> None:
+        """把一份 TMDB 档案提前拉进缓存，供随后的 ``ensure_media_item`` 直接取用。
+
+        扫描器用它把"每部新片串行干等一次往返"变成"每窗并发拉一批"
+        （见 library_scan._prefetch_profiles）。纯属加速，失败一律吞掉——
+        没预取到就等建档时自己去拉，那里才有完整的错误分类与用户可读文案。
+        """
+        key = (kind, tmdb_id)
+        if key in self.profile_cache:
+            return
+        try:
+            self.profile_cache[key] = await fetch_media_profile(
+                self._client, kind, tmdb_id, language=self._language
+            )
+        except Exception as exc:  # noqa: BLE001 -- 预取失败不是错误，建档时会重来
+            logger.debug("TMDB 档案预取失败（改由建档时重试）：%s/%s：%s", kind.value, tmdb_id, exc)
 
     async def resolve_douban(
         self,

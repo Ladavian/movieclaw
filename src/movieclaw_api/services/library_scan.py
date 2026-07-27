@@ -102,6 +102,24 @@ _PINNED_YEAR_TOLERANCE = 2
 # 只看 mtime 不看大小——BT 客户端预分配全尺寸文件，大小从一开始就不变
 NEW_FILE_QUIET_SECONDS = 300
 
+# 收尾补图片资产的并发路数。与整库刷新取同一个值（media_scrape.
+# _REFRESH_CONCURRENCY = 3）：瓶颈是等图床响应，3 路明显快过串行，
+# 真正的下载并发另有图床闸把着，不会因为这里放宽就打爆对方
+_ASSET_CONCURRENCY = 3
+
+# TMDB 档案预取窗口：逐文件串行建档时，每部新片都要干等一次 TMDB 往返
+# （国内直连常在数百毫秒），一千部片就是几分钟纯等待。这里在处理每一窗
+# 文件之前，把这一窗里**身份已经写死在 NFO/路径标记里**的新条目并发拉
+# 回来，随后的建档直接吃缓存。
+#
+# 为什么是"窗口"而不是"整库一次拉完"：一份带演职员与图片列表的档案几十
+# 到几百 KB，整库预取会把几百 MB 档案压在内存里。按窗推进内存恒定，
+# 且不影响停止请求的响应速度（一窗之内即可响应）。
+#
+# 只覆盖显式身份（NFO / [tmdbid=N]）：靠文件名解析的条目要先搜一次 TMDB
+# 才知道 id，预取不了；它们照常走原来的串行链路，不受影响。
+_PREFETCH_WINDOW = 16
+
 
 class ScanPhase(StrEnum):
     """扫描类任务的阶段。
@@ -308,6 +326,11 @@ async def _scan(library_id: int, summary: ScanSummary, state: ScanState) -> Scan
                 continue
             scanned_roots.append(str(root_path))
             for file, is_disc in _walk_videos(root_path):
+                # 根路径互相嵌套时同一个文件会被遍历两次，去重后才是"每个文件
+                # 处理一次"：重复处理不只是白跑一趟识别链，第二趟还会拿着过期的
+                # 台账快照去插入已存在的路径
+                if str(file) in seen_paths:
+                    continue
                 seen_paths.add(str(file))
                 pending.append((root_path, file, is_disc))
 
@@ -318,6 +341,17 @@ async def _scan(library_id: int, summary: ScanSummary, state: ScanState) -> Scan
         now_ts = time.time()
         min_remaining: float | None = None
         for done, (root_path, file, is_disc) in enumerate(pending, start=1):
+            # 每进入新的一窗，先把这一窗要用到的 TMDB 档案并发拉回来（详见
+            # _PREFETCH_WINDOW 的说明）。串行链路本身一行不改，只是轮到它
+            # 建档时档案已经在手边了
+            if (done - 1) % _PREFETCH_WINDOW == 0:
+                await _prefetch_profiles(
+                    session,
+                    media_service,
+                    kind,
+                    pending[done - 1 : done - 1 + _PREFETCH_WINDOW],
+                    known,
+                )
             # 用户请求停止：提前收尾。已入账的保留，剩余文件下次扫描继续
             if library_id in _stop_requests:
                 summary.cancelled = True
@@ -470,11 +504,15 @@ async def _scan(library_id: int, summary: ScanSummary, state: ScanState) -> Scan
     )
 
     # 一次入库刮削的资产补齐：文本档案在建档时已随 ensure_media_item 落库，
-    # 这里给本轮新挂锚的条目补图片资产与媒体目录镜像（逐条串行，受图床
-    # 并发闸约束；失败只记日志，任一后续刷新入口自愈）。
+    # 这里给本轮新挂锚的条目补图片资产与媒体目录镜像（失败只记日志，任一
+    # 后续刷新入口自愈）。
     # 这是扫描的**独立阶段**而非附带动作：一部剧几百张分集剧照能下十几
     # 分钟，必须换上自己的分子分母，否则进度会僵在"文件数/文件数"上，
-    # 用户只能看到一个不动的进度条（这正是它曾经的样子）
+    # 用户只能看到一个不动的进度条（这正是它曾经的样子）。
+    #
+    # 并发处理：这一阶段的时间几乎全花在等图床响应上，串行等于把几百次
+    # 往返一个一个排队。与整库刷新同一套 queue + worker 写法；每个条目
+    # 各自开会话、彼此无共享状态，真正的下载并发另有图床闸把着
     if summary.identified_item_ids:
         from movieclaw_api.services.media_scrape import ensure_assets
 
@@ -482,19 +520,31 @@ async def _scan(library_id: int, summary: ScanSummary, state: ScanState) -> Scan
         state.phase = ScanPhase.ASSETS
         state.processed, state.total = 0, len(item_ids)
         logger.info("媒体库 #%s 开始补齐 %d 个条目的图片资产", library_id, len(item_ids))
-        for done, item_id in enumerate(item_ids, start=1):
-            # 停止请求在这里同样生效：文件都已入账，缺的图片由任一后续
-            # 刷新入口自愈，没有理由让用户点了停止还得干等
-            if library_id in _stop_requests:
-                logger.info(
-                    "媒体库 #%s 图片资产补齐被手动停止（已完成 %d / 共 %d，缺的图片下次刷新自愈）",
-                    library_id,
-                    done - 1,
-                    len(item_ids),
-                )
-                break
-            await ensure_assets(item_id)
-            state.processed = done
+        queue: asyncio.Queue[int] = asyncio.Queue()
+        for item_id in item_ids:
+            queue.put_nowait(item_id)
+
+        async def _asset_worker() -> None:
+            while True:
+                try:
+                    item_id = queue.get_nowait()
+                except asyncio.QueueEmpty:
+                    return
+                # 停止请求在这里同样生效：文件都已入账，缺的图片由任一后续
+                # 刷新入口自愈，没有理由让用户点了停止还得干等
+                if library_id in _stop_requests:
+                    return
+                await ensure_assets(item_id)
+                state.processed += 1
+
+        await asyncio.gather(*(_asset_worker() for _ in range(_ASSET_CONCURRENCY)))
+        if library_id in _stop_requests:
+            logger.info(
+                "媒体库 #%s 图片资产补齐被手动停止（已完成 %d / 共 %d，缺的图片下次刷新自愈）",
+                library_id,
+                state.processed,
+                len(item_ids),
+            )
     return summary
 
 
@@ -669,7 +719,9 @@ async def _ingest_file(
             identity_source=identity_source,
             resolved_version=resolved_version,
             review_suggestion=review_suggestion,
-        )
+        ),
+        # 同路径旧行调用方已经持有（扫描开场的整库快照），不必再查一次
+        existing=existing,
     )
     if item_id is not None:
         # 库存对账：单元在库成立即关闭对应的订阅工单（订阅止于投递，
@@ -770,6 +822,76 @@ async def _review_identity(
 
 # 时长互证容差：同一文件两次 ffprobe 结果应一致，留 2 秒余量防版本差异
 _RELINK_DURATION_TOLERANCE_SECONDS = 2
+
+
+async def _prefetch_profiles(
+    session,
+    media_service: MediaLibraryService,
+    kind: MediaKind,
+    window: list[tuple[Path, Path, bool]],
+    known: dict[str, LibraryFile],
+) -> None:
+    """并发拉回这一窗里"身份已写死、且库里还没有"的条目档案，喂进建档缓存。
+
+    见 ``_PREFETCH_WINDOW`` 的说明：解决的是"每部新片都要串行干等一次 TMDB
+    往返"。只处理 NFO / ``[tmdbid=N]`` 声明过身份的文件——靠文件名解析的
+    条目要先搜一次 TMDB 才知道 id，预取不到，它们走原来的串行链路。
+
+    这一步纯属**加速**，失败一律吞掉：拉不到就等串行链路自己去拉，那里有
+    完整的错误分类与用户可读的原因文案（TMDB 不通 / 确实找不到）。加速手段
+    绝不能变成新的失败点，因此整段都在 try 里——包括算"该拉哪些"的部分。
+    """
+    try:
+        await _collect_and_prefetch(session, media_service, kind, window, known)
+    except Exception:  # noqa: BLE001 -- 预取失败等于没预取，扫描照常往下走
+        logger.debug("TMDB 档案预取整窗失败（改由建档时逐个重试）", exc_info=True)
+
+
+async def _collect_and_prefetch(
+    session,
+    media_service: MediaLibraryService,
+    kind: MediaKind,
+    window: list[tuple[Path, Path, bool]],
+    known: dict[str, LibraryFile],
+) -> None:
+    """_prefetch_profiles 的正题：挑出该拉的 id 并发拉回来。"""
+    wanted: set[int] = set()
+    for root_path, file, _is_disc in window:
+        existing = known.get(str(file))
+        # 与主循环的跳过条件对齐：已忽略、以及已识别且在位的行都不会建档
+        if existing is not None and (
+            existing.ignored_at is not None
+            or (existing.missing_since is None and existing.media_item_id is not None)
+        ):
+            continue
+        nfo = _entry_nfo(kind, root_path, file)
+        tmdb_id, source = pinned_tmdb_id(kind, root_path, file, nfo=nfo)
+        if tmdb_id is not None and source is not None:
+            wanted.add(tmdb_id)
+    # 上一窗预取了却没被消费的档案（文件被静默窗暂缓、或钉死身份被本地证据
+    # 推翻）到这里就该丢了，否则一轮长扫描会把它们一直攒在内存里
+    keep = {(kind, tid) for tid in wanted}
+    cache = media_service.profile_cache
+    for stale_key in [key for key in cache if key not in keep]:
+        del cache[stale_key]
+    wanted -= {tid for _kind, tid in cache}
+    if not wanted:
+        return
+    # 库里已有的条目建档时会走 get_by_anchor 直接复用，拉档案是白拉
+    rows = await session.execute(
+        select(MediaItem.tmdb_id).where(
+            MediaItem.kind == kind.value,
+            MediaItem.tmdb_id.in_(wanted),  # type: ignore[attr-defined]
+        )
+    )
+    wanted -= {row[0] for row in rows.all()}
+    if not wanted:
+        return
+
+    await asyncio.gather(
+        *(media_service.prefetch_profile(kind, tid) for tid in sorted(wanted)),
+        return_exceptions=True,  # 一个 id 拉挂了不该连累同窗其余的
+    )
 
 
 async def _try_relink(
