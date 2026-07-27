@@ -210,3 +210,47 @@ async def test_stale_credit_is_removed_on_refresh(db, tmp_path) -> None:
     # 张国立只剩片 401；片 402 的关系整体换成了陈道明
     assert [c.title for c in view.credits] == ["一九四二"]
     assert len(links) == 1
+
+
+async def test_credits_persist_without_caller_commit(db, tmp_path) -> None:
+    """建档路径必须自己提交影人数据，不能指望调用方。
+
+    ``create_with_seasons`` 已经提交过，影人关系写的是**新事务**，而 get_session
+    明确不提交（事务边界交给上层）。订阅 prepare 那条链路只读不提交——建档服务
+    不自己收口的话，通过订阅建出来的条目会静默丢掉全部影人数据。
+    """
+    from movieclaw_api.services.media_library import MediaLibraryService
+    from movieclaw_media.models import MediaKind
+
+    # 只调 ensure_media_item 并让会话关闭，全程不显式 commit
+    async with db.session() as session:
+        svc = MediaLibraryService(session, _fake_tmdb())
+        await svc.ensure_media_item(MediaKind.MOVIE, 401)
+
+    async with db.session() as session:
+        people = (await session.execute(select(Person))).scalars().all()
+        links = (await session.execute(select(MediaItemPerson))).scalars().all()
+
+    assert {p.name for p in people} == {"张国立", "李雪健", "冯小刚"}
+    assert len(links) == 3
+
+
+async def test_person_without_any_credit_returns_404(db, tmp_path) -> None:
+    """影人还在、但他的片都已从库里删掉 → 404，而不是「库内 0 部」的空壳页。
+
+    person 行只增不删（一个人参演多部，删一部不代表这个人该消失），所以这种
+    孤儿行一定会出现；页面的前提「他在我库里的作品」此时不成立。
+    """
+    from movieclaw_db.models import MediaItem as _MediaItem
+
+    await _scan_two_movies(db, tmp_path)
+    async with db.session() as session:
+        for item in (await session.execute(select(_MediaItem))).scalars().all():
+            await session.delete(item)
+        await session.commit()
+
+    async with db.session() as session:
+        # 影人行仍在（只增不删），但已经没有任何作品
+        assert (await session.execute(select(Person))).scalars().first() is not None
+        with pytest.raises(NotFoundException):
+            await get_person(901, session)

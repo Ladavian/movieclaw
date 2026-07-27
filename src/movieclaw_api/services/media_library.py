@@ -75,10 +75,16 @@ class MediaLibraryService:
             return await self._backfill(existing, douban_id, extra_aliases)
         # 影人关系要等 media_item.id 落库后才能建（人物页的数据来源）。
         # 与刷新路径（media_scrape.apply_display_profile）同一个函数，口径一致。
+        #
+        # 必须自己 commit：create_with_seasons 已经提交过，这里写的是**新事务**，
+        # 而 get_session 明确不提交（事务边界交给上层）。调用方里只有扫描链路
+        # 后续恰好会提交，订阅 prepare 那条只读不提交——不自己收口的话，
+        # 通过订阅建档的条目会静默丢掉全部影人数据。
         from movieclaw_api.services.media_scrape import apply_people_credits
 
         if item.id is not None:
             await apply_people_credits(self._session, item.id, profile)
+            await self._session.commit()
         logger.info(
             "媒体条目已建档：%s/%s《%s》(%s)，别名 %d 个，季 %d 个",
             kind.value,

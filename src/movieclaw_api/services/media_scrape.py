@@ -363,25 +363,40 @@ async def apply_people_credits(
     """
     now = now or utcnow()
     credits = profile.people
-    person_ids: dict[int, int] = {}  # tmdb_person_id -> person.id
-
-    for credit in credits:
-        row = (
-            await session.execute(
-                select(Person).where(Person.tmdb_person_id == credit.tmdb_person_id)
-            )
-        ).scalars().first()
-        if row is None:
-            row = Person(tmdb_person_id=credit.tmdb_person_id, name=credit.name)
-            session.add(row)
-        # 姓名/头像以最近一次刮削为准：换了刮削语言时人物页要跟着变
-        row.name = credit.name
-        row.original_name = credit.original_name
-        row.profile_path = credit.profile_path
-        row.updated_at = now
+    if not credits:
+        # 仍要往下走：本次没有演职员时，残留的旧关系同样必须清掉
+        person_ids: dict[int, int] = {}
+    else:
+        # 一次 IN 查询取回已有影人，而不是逐个 SELECT。一部片最多 45 位
+        # （40 演员 + 5 导演），逐个查会让整库刷新的 SQL 次数乘以两位数
+        tmdb_ids = [c.tmdb_person_id for c in credits]
+        rows = {
+            r.tmdb_person_id: r
+            for r in (
+                await session.execute(select(Person).where(Person.tmdb_person_id.in_(tmdb_ids)))
+            ).scalars()
+        }
+        for credit in credits:
+            row = rows.get(credit.tmdb_person_id)
+            if row is None:
+                row = Person(tmdb_person_id=credit.tmdb_person_id, name=credit.name)
+                session.add(row)
+                rows[credit.tmdb_person_id] = row
+            # 姓名/头像以最近一次刮削为准：换了刮削语言时人物页要跟着变。
+            # 先比对再赋值：整库刷新时绝大多数影人一字未改，无条件写会让
+            # 每轮刷新平白产生「条目数 × 演职员数」行的 UPDATE
+            if (
+                row.name != credit.name
+                or row.original_name != credit.original_name
+                or row.profile_path != credit.profile_path
+            ):
+                row.name = credit.name
+                row.original_name = credit.original_name
+                row.profile_path = credit.profile_path
+                row.updated_at = now
+        # 一次 flush 拿到全部新行的自增 id（逐个 flush 是上一版的性能问题所在）
         await session.flush()
-        assert row.id is not None
-        person_ids[credit.tmdb_person_id] = row.id
+        person_ids = {tid: r.id for tid, r in rows.items() if r.id is not None}
 
     existing = {
         (r.person_id, r.department): r
@@ -402,9 +417,10 @@ async def apply_people_credits(
                 person_id=key[0],
                 department=credit.department,
             )
-        link.character = credit.character
-        link.credit_order = credit.credit_order
-        link.updated_at = now
+        if link.character != credit.character or link.credit_order != credit.credit_order:
+            link.character = credit.character
+            link.credit_order = credit.credit_order
+            link.updated_at = now
         session.add(link)
     for key, link in existing.items():
         if key not in seen:

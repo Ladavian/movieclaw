@@ -186,19 +186,21 @@ function CreditCard({ credit, showCharacter }: { credit: PersonCredit; showChara
 }
 
 /**
- * 空状态。「库内没有这个人」与「加载失败」必须分开说：前者的实际原因通常是
- * 存量库还没做过一次「刷新元数据」（老档案里没有 TMDB 影人 ID，见后端迁移
- * c4d7a9e2b581），把它说成错误会让用户去查网络，白费功夫。
+ * 空状态。「库内没有他的作品」与「加载失败」必须分开说：前者不是错误，
+ * 把它说成错误会让用户去查网络、白费功夫。它有两个成因，文案要都盖住：
+ *   1. 存量库还没做过一次「刷新元数据」（老档案里没有 TMDB 影人 ID，
+ *      见后端迁移 c4d7a9e2b581）；
+ *   2. 他参演的片都已从库里删掉（影人行只增不删，会留下孤儿）。
  */
 function PersonFallback({ failure }: { failure: "missing" | "error" }) {
   return (
     <div className="flex h-full flex-col items-center justify-center gap-4 px-6 text-center">
       {failure === "missing" ? (
         <>
-          <p className="text-[15px] font-semibold text-[var(--text)]">库内还没有这位影人的记录</p>
+          <p className="text-[15px] font-semibold text-[var(--text)]">库内没有这位影人的作品</p>
           <p className="max-w-md text-[13px] leading-6 text-[var(--text-muted)]">
-            影人档案是入库刮削时一并建立的。如果这个库是早前扫描的，在媒体库页对它执行一次
-            「刷新元数据」即可补齐；之后这里就会列出他在库内的全部作品。
+            可能是他参演的片都已从库里移除；也可能这个库是早前扫描的——影人档案随入库刮削
+            一并建立，对它执行一次「刷新元数据」即可补齐，之后这里就会列出他在库内的全部作品。
           </p>
           <Link href={"/library" as Route} className="btn-glass px-4 py-2 text-[13px] font-medium">
             <ArrowLeftIcon className="size-4" />

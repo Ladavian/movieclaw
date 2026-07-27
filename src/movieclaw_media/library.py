@@ -403,7 +403,9 @@ def _parse_people(kind: MediaKind, data: dict) -> list[PersonCredit]:
             return
         # 同一个人同一身份出现第二次：合并角色名，顺序取更靠前的那个
         if character and character not in (existing.character or ""):
-            existing.character = f"{existing.character} / {character}" if existing.character else character
+            existing.character = (
+                f"{existing.character} / {character}" if existing.character else character
+            )
         existing.credit_order = min(existing.credit_order, order)
 
     for c in credits.get("cast", [])[:_MAX_CAST]:

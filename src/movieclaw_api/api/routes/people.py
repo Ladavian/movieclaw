@@ -41,6 +41,13 @@ async def get_person(
         raise NotFoundException("库内没有这个影人的记录")
 
     credits = await repo.list_credits(person.id)
+    if not credits:
+        # person 行只增不删（一个人参演多部，删一部不代表这个人该消失），因此
+        # 会出现「有这个人、但他的片都已从库里删掉」的孤儿行。此时页面的前提
+        # ——「他在我库里的作品」——不成立，给 404 让前端走空状态，
+        # 而不是渲染一个「库内 0 部」的空壳页
+        raise NotFoundException("库内没有这位影人的作品")
+
     base = get_settings().tmdb_image_base_url.rstrip("/")
 
     # 海报优先本地资产：一次查完再配对，不逐条目查（N+1）
