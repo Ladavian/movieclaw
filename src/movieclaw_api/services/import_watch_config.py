@@ -167,18 +167,22 @@ class ImportWatchConfigService:
                     f"{_KIND_LABELS[kind]}已有自动路由规则（{existing_auto.source_path}）——"
                     "每个类型至多一条，请编辑既有规则"
                 )
-            # auto 的硬链检测对象 = 该 kind 全部可能目标：声明收藏范围的库 + 默认库
             candidates = list(
                 (await self._session.execute(select(Library).where(Library.kind == kind)))
                 .scalars()
                 .all()
             )
-            hardlink_targets = [
+            # auto 目录的可能目标不止"声明库+默认库"：订阅认领的内容沿用
+            # 订阅**定格**的库，而定格可以是用户手选的任意同类型库——
+            # 硬链同盘检测必须覆盖全部有根路径的同类型库，漏一个都会在
+            # 未来某次搬运时才暴露跨盘失败
+            hardlink_targets = [lib for lib in candidates if lib.primary_root]
+            routable = [
                 lib
                 for lib in candidates
                 if (lib.match_rules or lib.is_default) and lib.primary_root
             ]
-            if not hardlink_targets:
+            if not routable:
                 raise BadRequestException(
                     f"当前没有任何可路由的{_KIND_LABELS[kind]}库（需要有根路径的默认库"
                     "或声明了收藏范围的库），请先到「媒体库」创建"

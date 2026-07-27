@@ -369,7 +369,8 @@ class HealthCheckView(BaseModel):
     )
     detail: str = Field(description="中文事实陈述，直接展示")
     fix_section: str | None = Field(
-        default=None, description="修复去处：设置分区 id（downloaders/import-watch）或 libraries"
+        default=None,
+        description="修复去处：设置分区 id（sites/downloaders/import-watch）或 libraries",
     )
 
 
@@ -396,7 +397,12 @@ class PipelineHealthView(BaseModel):
     error_count: int = Field(description="链路有 error 的库数")
     warn_count: int
     site_check: HealthCheckView = Field(description="资源搜索段（全局，链路第一环）")
-    downloader_ok: bool = Field(description="是否有可用的默认下载器（开局清单用）")
+    downloader_ok: bool = Field(description="是否有可用的默认下载器")
+    sites_configured: bool = Field(
+        description="是否配置过站点（无论当前可用与否）——开局清单只看它，"
+        "配置过但失效的老用户看到的是体检红项而非新手清单"
+    )
+    downloaders_configured: bool = Field(description="是否配置过下载器（同上语义）")
     libraries: list[LibraryPipelineView]
 
 

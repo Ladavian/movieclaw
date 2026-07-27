@@ -247,6 +247,14 @@ async def preview_dispatch_route(
         warning = (
             "没有可用的媒体库（或库未配置根路径），下载会落到下载器默认目录且不会自动入库"
         )
+    elif library is None:
+        # 无库但存在同类型 auto 监听规则：种子有目录可投，但完成后无库可
+        # 路由、无法入库——不能因为"投得出去"就报可行
+        ok = False
+        warning = (
+            "没有可用的媒体库——种子会投到监听导入目录，但下载完成后无法自动入库；"
+            "请先到「媒体库」创建"
+        )
     elif downloader.path_mappings and not mapping_covers(base, downloader.path_mappings):
         ok = False
         warning = (

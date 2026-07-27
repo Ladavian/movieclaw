@@ -97,6 +97,56 @@ async def test_site_check_is_global_first_segment(db, tmp_path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_configured_but_broken_is_not_setup_state(db, tmp_path) -> None:
+    """配置过但失效 ≠ 从未配置：站点 FAILED 时 sites_configured 仍为 True。
+
+    前端开局清单只看 configured 标志——cookie 过期的老用户看到的必须是
+    体检红项，而不是"把订阅跑起来需要三步"的新手清单。
+    """
+    from movieclaw_db.models import SiteCredential
+    from movieclaw_db.models.site_credential import AuthType
+
+    await _make_library(db, root=tmp_path / "movies")
+    await _make_downloader(db)
+    async with db.session() as session:
+        session.add(
+            SiteCredential(
+                site_id="dead",
+                auth_type=AuthType.COOKIE,
+                cookie="x",
+                enabled=True,
+                status=ConfigStatus.FAILED,
+            )
+        )
+        await session.commit()
+        result = await pipeline_health(session)
+    assert result["sites_configured"] is True and result["downloaders_configured"] is True
+    assert result["site_check"]["status"] == "error"
+    assert "不可用" in result["site_check"]["detail"]  # 文案区分"配了但坏了"
+
+
+@pytest.mark.asyncio
+async def test_preview_rejects_auto_dir_without_libraries(db, tmp_path) -> None:
+    """零媒体库 + auto 监听规则：种子投得出去但无库可入——预检不得报可行。"""
+    from movieclaw_api.services.download_dispatch import preview_dispatch_route
+
+    watch = tmp_path / "auto"
+    watch.mkdir()
+    await _make_site(db)
+    await _make_downloader(db)
+    async with db.session() as session:
+        # 绕过 CRUD 校验直插（校验会拦"无可路由库"——这里模拟规则建好后库被删光）
+        session.add(
+            ImportWatch(source_path=str(watch), strategy="copy", library_id=None, kind="tv")
+        )
+        await session.commit()
+        preview = await preview_dispatch_route(session, kind="tv", library_id=None)
+    assert preview["mode"] == "watch" and preview["path"] == str(watch)
+    assert preview["ok"] is False
+    assert "无法自动入库" in (preview["warning"] or "")
+
+
+@pytest.mark.asyncio
 async def test_no_downloader_is_error(db, tmp_path) -> None:
     await _make_library(db, root=tmp_path / "movies")
     async with db.session() as session:

@@ -98,12 +98,12 @@ function PipelineHealthPanel() {
     };
   }, [reload]);
 
-  // 开局清单条件：三个必要件（站点/下载器/媒体库）任一缺失
+  // 开局清单条件：三个必要件（站点/下载器/媒体库）任一**从未配置**。
+  // 用"配置过"而非"当前可用"判断——站点 cookie 过期的老用户该看到的是
+  // 体检红项，不是新手三步清单
   const setupNeeded =
     health !== null &&
-    (health.site_check.status === "error" ||
-      !health.downloader_ok ||
-      health.libraries.length === 0);
+    (!health.sites_configured || !health.downloaders_configured || health.libraries.length === 0);
 
   return (
     <section>
@@ -161,14 +161,14 @@ function PipelineHealthPanel() {
 function SetupChecklist({ health }: { health: PipelineHealth }) {
   const steps: { done: boolean; label: string; hint: string; href: string; action: string }[] = [
     {
-      done: health.site_check.status === "ok",
+      done: health.sites_configured,
       label: "接入资源站点",
       hint: "订阅从这里搜索资源",
       href: "/settings/sites",
       action: "去接入",
     },
     {
-      done: health.downloader_ok,
+      done: health.downloaders_configured,
       label: "接入下载器",
       hint: "qBittorrent / Transmission，找到的资源交给它下载",
       href: "/settings/downloaders",

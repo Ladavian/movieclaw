@@ -76,30 +76,37 @@ async def _default_downloader(session: AsyncSession) -> DownloaderClient | None:
     return result.scalars().first()
 
 
-async def _site_check(session: AsyncSession) -> HealthCheck:
-    """资源搜索段（全局，链路第一环）：有没有可用站点决定"搜不搜得到资源"。"""
+async def _site_check(session: AsyncSession) -> tuple[HealthCheck, bool]:
+    """资源搜索段（全局，链路第一环）。
+
+    返回 (检查结论, 是否配置过站点)。"配置过"与"当前可用"必须分开：
+    前者决定前端展示开局清单（从未配置）还是体检红项（配了但坏了，如
+    cookie 过期）——老用户的站点失效不该被当成新手对待。
+    """
     from movieclaw_db.models import SiteCredential
 
-    result = await session.execute(
-        select(SiteCredential).where(
-            SiteCredential.enabled.is_(True),  # type: ignore[attr-defined]
-            SiteCredential.status == ConfigStatus.ACTIVE,
+    rows = list((await session.execute(select(SiteCredential))).scalars().all())
+    active = [r for r in rows if r.enabled and r.status == ConfigStatus.ACTIVE]
+    if active:
+        return (
+            HealthCheck(
+                key="sites",
+                label="资源搜索",
+                status="ok",
+                detail=f"已接入 {len(active)} 个可用站点",
+            ),
+            True,
         )
+    detail = (
+        "没有可用的资源站点——订阅搜不到任何资源"
+        if not rows
+        else "已配置的站点当前都不可用（验证失败或已停用）——订阅搜不到任何资源"
     )
-    count = len(result.scalars().all())
-    if count == 0:
-        return HealthCheck(
-            key="sites",
-            label="资源搜索",
-            status="error",
-            detail="没有可用的资源站点——订阅搜不到任何资源",
-            fix_section="sites",
-        )
-    return HealthCheck(
-        key="sites",
-        label="资源搜索",
-        status="ok",
-        detail=f"已接入 {count} 个可用站点",
+    return (
+        HealthCheck(
+            key="sites", label="资源搜索", status="error", detail=detail, fix_section="sites"
+        ),
+        bool(rows),
     )
 
 
@@ -187,7 +194,11 @@ async def pipeline_health(session: AsyncSession) -> dict:
     from movieclaw_api.services.torrent_submit import mapping_covers
 
     downloader = await _default_downloader(session)
-    site_check = await _site_check(session)
+    site_check, sites_configured = await _site_check(session)
+    # 下载器同理区分"配置过"与"当前可用"（验证中/失效 ≠ 从未接入）
+    downloaders_configured = (
+        await session.execute(select(DownloaderClient))
+    ).scalars().first() is not None
     watched = _watched_dirs()
     libraries = await LibraryRepository(session).list_all()
 
@@ -306,5 +317,7 @@ async def pipeline_health(session: AsyncSession) -> dict:
         "warn_count": sum(1 for p in pipelines if p.status == "warn"),
         "site_check": asdict(site_check),
         "downloader_ok": downloader is not None,
+        "sites_configured": sites_configured,
+        "downloaders_configured": downloaders_configured,
         "libraries": [asdict(p) for p in pipelines],
     }

@@ -209,8 +209,12 @@ export interface PipelineHealth {
   warn_count: number;
   /** 资源搜索段（全局，链路第一环） */
   site_check: PipelineCheck;
-  /** 是否有可用的默认下载器（开局清单用） */
+  /** 是否有可用的默认下载器 */
   downloader_ok: boolean;
+  /** 是否配置过站点（无论当前可用与否）——开局清单只看它 */
+  sites_configured: boolean;
+  /** 是否配置过下载器（同上语义） */
+  downloaders_configured: boolean;
   libraries: LibraryPipeline[];
 }
 
