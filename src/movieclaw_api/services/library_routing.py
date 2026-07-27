@@ -166,6 +166,23 @@ async def route_for_item(session: AsyncSession, kind: str, item: MediaItem) -> R
     return await route(session, kind, await gather_facts(session, item))
 
 
+async def route_for_tmdb(session: AsyncSession, kind: str, tmdb_id: int) -> RouteDecision:
+    """按 TMDB 锚路由（投递预检用：弹窗打开时条目可能尚未建档）。
+
+    条目已在库时走常规三级来源；未建档时用**临时条目**（不落库）直接走
+    TMDB 轻量详情——预检是只读操作，不该有建档副作用。
+    """
+    existing = (
+        await session.execute(
+            select(MediaItem).where(MediaItem.kind == kind, MediaItem.tmdb_id == tmdb_id)
+        )
+    ).scalar_one_or_none()
+    item = existing or MediaItem(
+        kind=kind, tmdb_id=tmdb_id, title=f"tmdb#{tmdb_id}", original_title="", aliases=[]
+    )
+    return await route_for_item(session, kind, item)
+
+
 def validate_match_rules(raw: list | None) -> list[dict]:
     """收藏范围条件的写入侧校验（library_config 保存时调用）。
 

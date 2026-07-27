@@ -143,14 +143,20 @@ async def create_subscription(
 )
 async def dispatch_preview(
     kind: str = Query(description="movie / tv"),
-    library_id: int | None = Query(default=None, description="目标库；缺省该类型默认库"),
+    library_id: int | None = Query(default=None, description="目标库；缺省走收藏范围路由"),
+    tmdb_id: int | None = Query(
+        default=None, description="TMDB 条目 ID；缺省库时据此按收藏范围路由选库"
+    ),
     session: AsyncSession = Depends(get_session),
 ) -> ApiResponse[DispatchPreviewView]:
     """订阅弹窗选库时调用：与真实投递同源的三级兜底 + 映射守门判定，
-    配置有问题（映射不覆盖/无下载器/无库根）在订阅那一刻就亮出来。"""
+    配置有问题（映射不覆盖/无下载器/无库根）在订阅那一刻就亮出来；
+    未手选库时返回收藏范围路由结论（预选库 + 中文理由徽标）。"""
     from movieclaw_api.services.download_dispatch import preview_dispatch_route
 
-    preview = await preview_dispatch_route(session, kind=kind, library_id=library_id)
+    preview = await preview_dispatch_route(
+        session, kind=kind, library_id=library_id, tmdb_id=tmdb_id
+    )
     return ok(DispatchPreviewView(**preview))
 
 

@@ -171,8 +171,16 @@ class DispatchPreviewView(BaseModel):
         description="投递路由：监听导入目录 / 直接下载进库 / 下载器默认目录"
     )
     path: str | None = Field(default=None, description="movieclaw 视角的投递基底目录")
+    library_id: int | None = Field(default=None, description="解析出的目标库（前端预选用）")
     library_name: str | None = None
     downloader_name: str | None = None
+    route_matched: bool | None = Field(
+        default=None,
+        description="收藏范围路由结论：true=命中声明库 / false=默认库兜底；未走路由为 null",
+    )
+    route_reason: str | None = Field(
+        default=None, description="路由理由（中文整句，弹窗徽标直接展示）"
+    )
     ok: bool = Field(description="按当前配置投递能否顺利入库")
     warning: str | None = Field(default=None, description="不 ok 时的中文指引")
 
