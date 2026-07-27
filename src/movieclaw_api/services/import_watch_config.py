@@ -228,16 +228,17 @@ class ImportWatchConfigService:
         return source, kind
 
 
-async def resolve_dispatch_dir(
+async def resolve_dispatch_rule(
     session: AsyncSession, library_id: int | None, *, kind: str | None = None
-) -> str | None:
-    """投递目录：目标库的专属监听规则 → 同 kind 的自动路由规则 → None。
+) -> ImportWatch | None:
+    """投递会命中的监听导入规则：目标库的专属规则 → 同 kind 的自动路由规则 → None。
 
     订阅/手动下载止于投递——把种子投到会被监听导入接管的目录（分离布局），
     或不指定目录退下载器默认。auto 规则兜底让"一个混合下载目录服务所有库"
     成立：完成后按 info_hash 认领回订阅身份，目标库=订阅定格的库，与投递
     预检的结论必然一致（docs/design/library-routing.md 2.3）。
     多条规则指向同一库时取最早创建的一条。
+    投递方（dispatch/预检）只关心源目录，链路体检还要读策略——故返回规则本体。
     """
     if library_id is not None:
         rule = (
@@ -252,9 +253,9 @@ async def resolve_dispatch_dir(
             .first()
         )
         if rule is not None:
-            return rule.source_path
+            return rule
     if kind is not None:
-        auto = (
+        return (
             (
                 await session.execute(
                     select(ImportWatch)
@@ -268,9 +269,15 @@ async def resolve_dispatch_dir(
             .scalars()
             .first()
         )
-        if auto is not None:
-            return auto.source_path
     return None
+
+
+async def resolve_dispatch_dir(
+    session: AsyncSession, library_id: int | None, *, kind: str | None = None
+) -> str | None:
+    """投递目录（resolve_dispatch_rule 的便捷形态：只要源目录）。"""
+    rule = await resolve_dispatch_rule(session, library_id, kind=kind)
+    return rule.source_path if rule else None
 
 
 async def _refresh_watcher() -> None:

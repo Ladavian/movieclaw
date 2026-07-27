@@ -172,6 +172,46 @@ export function getDispatchPreview(
   );
 }
 
+/** 订阅链路体检里的一段检查结论。 */
+export interface PipelineCheck {
+  key: string;
+  /** 段落名（「下载器」「路径映射」「硬链接同盘」…） */
+  label: string;
+  /** ok=正常 / warn=能转但降级 / error=会失败，必须修 */
+  status: "ok" | "warn" | "error";
+  /** 中文事实陈述，直接展示 */
+  detail: string;
+  /** 修复去处：设置分区 id（downloaders/import-watch）或 libraries（媒体库页） */
+  fix_section: string | null;
+}
+
+/** 一个库的完整入库链路结论。 */
+export interface LibraryPipeline {
+  library_id: number;
+  library_name: string;
+  kind: "movie" | "tv";
+  is_default: boolean;
+  /** watch=投监听目录 / inplace=直下库根 / downloader_default=下载器默认目录 */
+  mode: "watch" | "inplace" | "downloader_default";
+  path: string | null;
+  status: "ok" | "warn" | "error";
+  checks: PipelineCheck[];
+}
+
+/** 订阅链路体检整体结论（订阅设定页与订阅列表警示横幅共用）。 */
+export interface PipelineHealth {
+  status: "ok" | "warn" | "error";
+  /** 链路有 error 的库数（横幅只看它） */
+  error_count: number;
+  warn_count: number;
+  libraries: LibraryPipeline[];
+}
+
+/** 订阅链路体检：逐库预演「投递 → 转移 → 入库」，与真实投递同源判定。 */
+export function getPipelineHealth(init?: RequestInit): Promise<PipelineHealth> {
+  return unwrap(request<ApiEnvelope<PipelineHealth>>("/subscriptions/pipeline-health", init));
+}
+
 /** 订阅预检：建档条目并返回季集结构（打开订阅弹层时调用，幂等）。 */
 export function prepareSubscription(payload: PreparePayload): Promise<PrepareResult> {
   return unwrap(

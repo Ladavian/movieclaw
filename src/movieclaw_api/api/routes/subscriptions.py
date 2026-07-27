@@ -9,6 +9,7 @@ from movieclaw_api.schemas.subscription import (
     ActivityView,
     DispatchPreviewView,
     MediaBrief,
+    PipelineHealthView,
     PreparePayload,
     PrepareView,
     ResolveCandidateView,
@@ -158,6 +159,21 @@ async def dispatch_preview(
         session, kind=kind, library_id=library_id, tmdb_id=tmdb_id
     )
     return ok(DispatchPreviewView(**preview))
+
+
+@router.get(
+    "/pipeline-health",
+    response_model=ApiResponse[PipelineHealthView],
+    summary="订阅链路体检：逐库预演「投递 → 转移 → 入库」，联合约束一次亮清",
+)
+async def pipeline_health_check(
+    session: AsyncSession = Depends(get_session),
+) -> ApiResponse[PipelineHealthView]:
+    """订阅设定页与订阅列表警示横幅的数据源。判定与真实投递/搬运同一批
+    原语（兜底顺序、映射覆盖、同盘检测），不存在体检与执行的口径漂移。"""
+    from movieclaw_api.services.subscription_health import pipeline_health
+
+    return ok(PipelineHealthView(**await pipeline_health(session)))
 
 
 @router.get(

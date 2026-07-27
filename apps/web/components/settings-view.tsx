@@ -11,6 +11,7 @@ import { LlmConfigSection } from "@/components/llm-config-section";
 import { NetworkConfigSection } from "@/components/network-config-section";
 import { SearchSection } from "@/components/search-settings";
 import { SiteConfigSection } from "@/components/site-config-section";
+import { SubscriptionSettingsSection } from "@/components/subscription-settings-section";
 import { SystemLogsSection } from "@/components/system-logs-section";
 import { GlassPanel } from "@/components/glass-panel";
 import { ArrowLeftIcon, CheckIcon, PlusIcon, XIcon } from "@/components/icons";
@@ -147,6 +148,8 @@ export function SettingsPanel({ active }: SettingsPanelProps) {
           <AppearanceSection />
         ) : section.id === "search" ? (
           <SearchSection />
+        ) : section.id === "subscription" ? (
+          <SubscriptionSettingsSection />
         ) : section.id === "sites" ? (
           <SiteConfigSection />
         ) : section.id === "downloaders" ? (

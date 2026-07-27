@@ -357,6 +357,44 @@ class RuleSetPayload(BaseModel):
     spec: dict = Field(default_factory=dict, description="RuleSetSpec 形态的 JSON")
 
 
+class HealthCheckView(BaseModel):
+    """订阅链路体检里的一段检查结论。"""
+
+    key: str = Field(
+        description="downloader / dispatch_dir / mapping / transfer_disk / watch_active"
+    )
+    label: str = Field(description="段落名（如「下载器」「路径映射」）")
+    status: Literal["ok", "warn", "error"] = Field(
+        description="ok=正常 / warn=能转但降级 / error=会失败，必须修"
+    )
+    detail: str = Field(description="中文事实陈述，直接展示")
+    fix_section: str | None = Field(
+        default=None, description="修复去处：设置分区 id（downloaders/import-watch）或 libraries"
+    )
+
+
+class LibraryPipelineView(BaseModel):
+    """一个库的完整入库链路结论。"""
+
+    library_id: int
+    library_name: str
+    kind: str
+    is_default: bool
+    mode: Literal["watch", "inplace", "downloader_default"]
+    path: str | None = Field(default=None, description="投递基底目录（movieclaw 视角）")
+    status: Literal["ok", "warn", "error"] = Field(description="全链路最坏状态")
+    checks: list[HealthCheckView]
+
+
+class PipelineHealthView(BaseModel):
+    """订阅链路体检的整体结论（订阅设定页与订阅列表警示横幅共用）。"""
+
+    status: Literal["ok", "warn", "error"]
+    error_count: int = Field(description="链路有 error 的库数（横幅只看它）")
+    warn_count: int
+    libraries: list[LibraryPipelineView]
+
+
 class RuleSetView(BaseModel):
     id: int
     name: str
