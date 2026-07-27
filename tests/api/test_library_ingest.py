@@ -99,11 +99,16 @@ def _stub_identify(monkeypatch, item):
     monkeypatch.setattr(ingest_mod, "_identify", identify)
 
 
+def _fixed_rule(watch, strategy="hardlink", library_id=None) -> ImportWatch:
+    """指定库规则的瞬时对象（_sweep_dir 只读 source_path/strategy/kind）。"""
+    return ImportWatch(source_path=str(watch), strategy=strategy, library_id=library_id)
+
+
 async def _sweep_twice(db, library_id, watch, strategy="hardlink"):
     """两轮巡检：第一轮记录指纹，第二轮确认静默后处理。"""
     for _ in range(2):
         library = await _get_library(db, library_id)
-        await ingest_mod._sweep_dir(library, str(watch), strategy)
+        await ingest_mod._sweep_dir(_fixed_rule(watch, strategy, library_id), library)
 
 
 @pytest.mark.asyncio
@@ -147,11 +152,12 @@ async def test_unstable_fingerprint_defers_import(db, tmp_path, monkeypatch):
     video.write_bytes(b"part1")
 
     library = await _get_library(db, library_id)
-    await ingest_mod._sweep_dir(library, str(watch), "hardlink")  # 记录指纹 A
+    rule = _fixed_rule(watch, library_id=library_id)
+    await ingest_mod._sweep_dir(rule, library)  # 记录指纹 A
     video.write_bytes(b"part1-part2")  # 下载继续，指纹变为 B
-    await ingest_mod._sweep_dir(library, str(watch), "hardlink")  # B 首见，重新起算
+    await ingest_mod._sweep_dir(rule, library)  # B 首见，重新起算
     assert not (root / "某电影 (2020)").exists()
-    await ingest_mod._sweep_dir(library, str(watch), "hardlink")  # B 稳定 → 导入
+    await ingest_mod._sweep_dir(rule, library)  # B 稳定 → 导入
     assert (root / "某电影 (2020)" / "某电影 (2020).mkv").read_bytes() == b"part1-part2"
 
 
@@ -337,7 +343,7 @@ async def test_downloader_signal_is_authoritative(db, tmp_path, monkeypatch):
     # 下载器确认完成：无需静默等待，单轮巡检立即导入
     brief.completed = True
     library = await _get_library(db, library_id)
-    await ingest_mod._sweep_dir(library, str(watch), "hardlink")
+    await ingest_mod._sweep_dir(_fixed_rule(watch, library_id=library_id), library)
     assert (root / "某电影 (2020)" / "某电影 (2020).mkv").read_bytes() == b"video"
 
 
@@ -433,7 +439,8 @@ async def test_wanted_identity_claim_via_info_hash(db, tmp_path, monkeypatch):
     (entry / "video.mkv").write_bytes(b"video")
 
     library = await _get_library(db, library_id)
-    await ingest_mod._sweep_dir(library, str(watch), "hardlink")  # 下载器确认完成,单轮即处理
+    # 下载器确认完成,单轮即处理
+    await ingest_mod._sweep_dir(_fixed_rule(watch, library_id=library_id), library)
     assert (root / "某电影 (2020)" / "某电影 (2020).mkv").read_bytes() == b"video"
 
     # 库存对账闭环：入库单元关闭了对应工单（订阅止于投递的另一半）
@@ -455,8 +462,8 @@ async def test_fallback_only_sweeps_unwatched_dirs(db, tmp_path, monkeypatch):
 
     swept: list[str] = []
 
-    async def record_sweep(library, watch_root, strategy):
-        swept.append(watch_root)
+    async def record_sweep(rule, library):
+        swept.append(rule.source_path)
 
     monkeypatch.setattr(ingest_mod, "_sweep_dir", record_sweep)
 

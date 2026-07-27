@@ -34,14 +34,15 @@ class IngestEntry(TimestampMixin, table=True):
 
     id: int | None = Field(default=None, primary_key=True)
 
-    library_id: int = Field(
+    library_id: int | None = Field(
+        default=None,
         sa_column=Column(
             Integer,
             ForeignKey("library.id", ondelete="CASCADE"),
-            nullable=False,
+            nullable=True,
             index=True,
         ),
-        description="归属库",
+        description="归属库；NULL=自动路由规则的条目在选定目标库之前失败（识别不出等）",
     )
     entry_path: str = Field(
         sa_column=Column(Text, nullable=False, unique=True, index=True),

@@ -82,7 +82,9 @@ async def dispatch(
     save_path = derive_save_path(library, title=item.title, year=item.year) if library else None
     from movieclaw_api.services.import_watch_config import resolve_dispatch_dir
 
-    rule_dir = await resolve_dispatch_dir(session, library.id if library else None)
+    rule_dir = await resolve_dispatch_dir(
+        session, library.id if library else None, kind=subscription.kind
+    )
     dispatch_dir = rule_dir or save_path
     # entry_level = 投递目录就是库内条目目录（②）：可以安全锚定副标题线索，
     # 帮扫描器收敛拼音命名的种子内容（监听目录/默认目录锚线索会波及无关内容）
@@ -221,7 +223,7 @@ async def preview_dispatch_route(
         route_reason = decision.reason
     else:
         library = await LibraryConfigService(session).resolve_for_subscription(library_id, kind)
-    rule_dir = await resolve_dispatch_dir(session, library.id if library else None)
+    rule_dir = await resolve_dispatch_dir(session, library.id if library else None, kind=kind)
     root = library.primary_root if library else None
     base = rule_dir or root
 

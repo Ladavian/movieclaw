@@ -6,7 +6,9 @@
 - ``media_metadata.genre_ids``：类型的 TMDB genre ID（语言无关，路由匹配用；
   老档案行为空列表，路由回落 TMDB 轻量详情，重刮自愈）；
 - ``import_watch.library_id`` 放宽为可空 + 新增 ``kind``：NULL=自动路由模式
-  （识别出作品后按收藏范围选库，kind 提供识别链必需的类型先验）。
+  （识别出作品后按收藏范围选库，kind 提供识别链必需的类型先验）；
+- ``ingest_entry.library_id`` 同步放宽为可空：auto 规则的条目在识别失败时
+  尚无归属库，台账仍要落（幂等与退避依赖它）。
 
 Revision ID: f7a0c3e8d596
 Revises: e6f9b2d7c485
@@ -40,10 +42,15 @@ def upgrade() -> None:
     with op.batch_alter_table("import_watch", schema=None) as batch_op:
         batch_op.alter_column("library_id", existing_type=sa.Integer(), nullable=True)
         batch_op.add_column(sa.Column("kind", sa.String(), nullable=True))
+    with op.batch_alter_table("ingest_entry", schema=None) as batch_op:
+        batch_op.alter_column("library_id", existing_type=sa.Integer(), nullable=True)
 
 
 def downgrade() -> None:
-    # 回退前清掉 auto 规则（library_id 为 NULL 的行），否则 NOT NULL 收紧失败
+    # 回退前清掉无归属库的行（auto 模式产物），否则 NOT NULL 收紧失败
+    op.execute("DELETE FROM ingest_entry WHERE library_id IS NULL")
+    with op.batch_alter_table("ingest_entry", schema=None) as batch_op:
+        batch_op.alter_column("library_id", existing_type=sa.Integer(), nullable=False)
     op.execute("DELETE FROM import_watch WHERE library_id IS NULL")
     with op.batch_alter_table("import_watch", schema=None) as batch_op:
         batch_op.drop_column("kind")

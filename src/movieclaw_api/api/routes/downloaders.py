@@ -57,7 +57,7 @@ async def submit_download(
         derived_path = payload.save_path
     elif payload.library_id is not None:
         library = await LibraryConfigService(session).get(payload.library_id)
-        rule_dir = await resolve_dispatch_dir(session, library.id)
+        rule_dir = await resolve_dispatch_dir(session, library.id, kind=library.kind)
         if rule_dir is not None:
             derived_path = rule_dir
         elif payload.title:
