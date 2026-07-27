@@ -132,6 +132,7 @@ class ScanPhase(StrEnum):
 
     WALKING = "walking"  # 盘点根路径下的文件（分母还没定）
     INGESTING = "ingesting"  # 逐文件走识别链、写台账（分母 = 待处理文件数）
+    PROBING = "probing"  # 补探缺规格的在位行（分母 = 待补探的台账行数）
     ASSETS = "assets"  # 收尾补齐图片资产（分母 = 本轮新挂锚的条目数）
     REIDENTIFYING = "reidentifying"  # 单条目重识别（与扫描共用同一把库级锁）
 
@@ -140,13 +141,19 @@ class ScanPhase(StrEnum):
 PHASE_LABELS: dict[ScanPhase, str] = {
     ScanPhase.WALKING: "正在盘点文件",
     ScanPhase.INGESTING: "正在扫描",
+    ScanPhase.PROBING: "正在补探介质规格",
     ScanPhase.ASSETS: "正在补齐图片资产",
     ScanPhase.REIDENTIFYING: "正在重新识别条目",
 }
 
 # 可以中途叫停的阶段：重识别在改身份锚，半途而废会留下不一致的台账，
 # 因此不给停止入口（它本身也只处理单个条目、很快结束）
-_STOPPABLE_PHASES = {ScanPhase.WALKING, ScanPhase.INGESTING, ScanPhase.ASSETS}
+_STOPPABLE_PHASES = {
+    ScanPhase.WALKING,
+    ScanPhase.INGESTING,
+    ScanPhase.PROBING,
+    ScanPhase.ASSETS,
+}
 
 
 @dataclass
@@ -189,6 +196,7 @@ class ScanSummary:
     retried: int = 0  # 识别重试：在位但待识别的台账行重走识别链（不算新入账）
     reviewed: int = 0  # 身份复核：识别器升级后重走识别链的已识别行
     review_flagged: int = 0  # 复核发现新旧结论不一致、已写入复核建议的行
+    probed: int = 0  # 补探：给缺介质规格的在位行补上 ffprobe 结果
     cancelled: bool = False  # 用户手动停止：已入账的保留，未处理的留待下次扫描
     errors: list[str] = field(default_factory=list)
     # 暂缓文件的最近到期秒数（补扫的等待时长；对外接口不暴露）
@@ -457,6 +465,14 @@ async def _scan(library_id: int, summary: ScanSummary, state: ScanState) -> Scan
             assert row.id is not None
             await repo.mark_missing(row.id, since=now)
             summary.marked_missing += 1
+
+        # —— 介质规格补探 ——
+        # 「扫描 = 把台账与磁盘对齐」，介质规格同样是磁盘真相的一部分。
+        # 入账时每个新文件都探过一次，但**后装 ffprobe 的用户拿不到**：
+        # 已识别且在位的行在上面的循环里整体秒过，永远走不到探测那一步。
+        # 没有这一步，「装好 ffmpeg 再重新扫描」这个最直觉的动作就是无效的，
+        # 用户只能一个条目一个条目点开、靠详情页那点限量补探慢慢磨。
+        await _probe_backfill(session, library_id, summary, state)
 
     if min_remaining is not None:
         summary.recheck_delay_seconds = max(5.0, min(min_remaining + 1.0, NEW_FILE_QUIET_SECONDS))
@@ -822,6 +838,57 @@ async def _review_identity(
 
 # 时长互证容差：同一文件两次 ffprobe 结果应一致，留 2 秒余量防版本差异
 _RELINK_DURATION_TOLERANCE_SECONDS = 2
+
+
+async def _probe_backfill(
+    session, library_id: int, summary: ScanSummary, state: ScanState
+) -> None:
+    """给本库里「在位、却从没探测过介质规格」的台账行补上 ffprobe 结果。
+
+    判据用 ``audio_streams IS NULL``：它是"这行从没探测成功过"的标记
+    （空列表 = 探过、文件确实没有音轨，两者必须分开）。
+
+    不限量、但有自己的分子分母与停止响应——整库补探在网络挂载上可能是
+    小时级的活，用户要看得到进度、也要停得下来。ffprobe 不可用时整段跳过，
+    否则每轮扫描都会白跑一遍必然失败的探测。
+    """
+    from movieclaw_api.services.library_items import backfill_streams
+    from movieclaw_api.services.media_probe import ffprobe_available
+
+    if not ffprobe_available():
+        return
+    rows = list(
+        (
+            await session.execute(
+                select(LibraryFile).where(
+                    LibraryFile.library_id == library_id,
+                    LibraryFile.audio_streams.is_(None),  # type: ignore[union-attr]
+                    LibraryFile.missing_since.is_(None),  # type: ignore[union-attr]
+                    LibraryFile.ignored_at.is_(None),  # type: ignore[union-attr]
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    if not rows:
+        return
+    state.phase = ScanPhase.PROBING
+    state.processed, state.total = 0, len(rows)
+    logger.info("媒体库 #%s 开始补探 %d 个文件的介质规格", library_id, len(rows))
+
+    def _tick() -> bool:
+        state.processed += 1
+        return library_id not in _stop_requests
+
+    summary.probed = await backfill_streams(session, rows, limit=None, on_probed=_tick)
+    logger.info(
+        "媒体库 #%s 介质规格补探结束：探测 %d / 待补 %d%s",
+        library_id,
+        summary.probed,
+        len(rows),
+        "（被手动停止，剩余的下次扫描继续）" if library_id in _stop_requests else "",
+    )
 
 
 async def _prefetch_profiles(

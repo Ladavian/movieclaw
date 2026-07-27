@@ -8,6 +8,17 @@ from sqlmodel import Field
 
 from movieclaw_db.models.base import TimestampMixin
 
+# 三态 JSON 列专用：Python None 落成**SQL NULL**，而不是 JSON 文本 'null'。
+#
+# SQLAlchemy 的 JSON 类型默认把 None 序列化成 JSON 的 null（因为 JSON 文档里
+# null 是个合法值，与"这一列没有值"不是一回事）。对本表的三态列来说这个默认
+# 是灾难性的：`WHERE audio_streams IS NULL` 永远匹配不到任何行，`IS NOT NULL`
+# 则匹配到每一行——身份复核清单曾因此把整个库都列了出来。
+#
+# 只有语义上真·三态的列才该用它（NULL=没有 / []=有但为空）。默认 [] 的
+# 列表列（aliases、genres…）不受影响，也不需要改。
+_NullableJson = JSON(none_as_null=True)
+
 
 class FileSource(StrEnum):
     """library_file.source 的取值。"""
@@ -118,12 +129,12 @@ class LibraryFile(TimestampMixin, table=True):
     # 元素结构见 media_probe 的 _audio_stream_info / _subtitle_stream_info
     audio_streams: list | None = Field(
         default=None,
-        sa_column=Column(JSON, nullable=True),
+        sa_column=Column(_NullableJson, nullable=True),
         description="音轨列表 JSON；NULL=未探测",
     )
     subtitle_streams: list | None = Field(
         default=None,
-        sa_column=Column(JSON, nullable=True),
+        sa_column=Column(_NullableJson, nullable=True),
         description="内封字幕轨列表 JSON；NULL=未探测",
     )
 
@@ -165,7 +176,7 @@ class LibraryFile(TimestampMixin, table=True):
     # 待识别清单直接列出来点选，省得用户自己去 TMDB 查 id 手输
     unidentified_candidates: list | None = Field(
         default=None,
-        sa_column=Column(JSON, nullable=True),
+        sa_column=Column(_NullableJson, nullable=True),
         description="待识别文件的 TMDB 候选清单；NULL=没有候选可选",
     )
 
@@ -182,6 +193,6 @@ class LibraryFile(TimestampMixin, table=True):
     # 不直接改身份——宁可待确认，不静默翻案；用户在复核清单里拍板
     review_suggestion: dict | None = Field(
         default=None,
-        sa_column=Column(JSON, nullable=True),
+        sa_column=Column(_NullableJson, nullable=True),
         description="身份复核建议；NULL=无待复核建议",
     )

@@ -73,6 +73,7 @@ export interface MediaLibrary {
 export type ScanPhase =
   | "walking" // 盘点根路径下的文件（分母未知）
   | "ingesting" // 逐文件走识别链、写台账
+  | "probing" // 补探缺介质规格的在位行（分母 = 待补探的台账行数）
   | "assets" // 收尾补齐图片资产（分母 = 本轮新挂锚的条目数）
   | "reidentifying" // 单条目重识别（占同一把库级锁，不可中途停止）
   | "organizing"; // 批量规范化改名
@@ -81,6 +82,7 @@ export type ScanPhase =
 export const SCAN_PHASE_LABELS: Record<ScanPhase, string> = {
   walking: "正在盘点文件",
   ingesting: "正在扫描",
+  probing: "正在补探画质与音轨",
   assets: "正在补齐海报与剧照",
   reidentifying: "正在重新识别条目",
   organizing: "正在整理文件名",
@@ -90,6 +92,7 @@ export const SCAN_PHASE_LABELS: Record<ScanPhase, string> = {
 export const SCAN_PHASE_HINTS: Record<ScanPhase, string> = {
   walking: "正在统计待处理的文件数",
   ingesting: "识别到的内容会自动入库",
+  probing: "文件已全部入库，正在读取文件本体的规格",
   assets: "文件已全部入库，正在下载图片",
   reidentifying: "完成后条目身份会更新",
   organizing: "完成后自动刷新",

@@ -218,7 +218,7 @@ async def test_probe_gate_blocks_partial_file(db, tmp_path, monkeypatch):
     watch.mkdir()
     library_id = await _make_library(db, kind=MediaKind.MOVIE, root=root)
     monkeypatch.setattr(ingest_mod, "probe_media", lambda p: None)
-    monkeypatch.setattr(ingest_mod, "_ffprobe_available", lambda: True)
+    monkeypatch.setattr(ingest_mod, "ffprobe_available", lambda: True)
 
     entry = watch / "某电影 (2020)"
     entry.mkdir()
@@ -349,7 +349,7 @@ async def test_probe_gate_applies_per_file(db, tmp_path, monkeypatch):
     library_id = await _make_library(db, kind=MediaKind.TV, root=root)
     item = await _make_item(db, kind=MediaKind.TV, title="测试剧集", year=2024)
     _stub_identify(monkeypatch, item)
-    monkeypatch.setattr(ingest_mod, "_ffprobe_available", lambda: True)
+    monkeypatch.setattr(ingest_mod, "ffprobe_available", lambda: True)
     # ep2 残缺：探测失败；其余正常
     monkeypatch.setattr(
         ingest_mod, "probe_media", lambda p: None if "ep2" in str(p) else _FAKE_SPEC

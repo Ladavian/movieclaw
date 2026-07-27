@@ -744,7 +744,8 @@ function SpecRows({ file }: { file: LibraryItemFile }) {
       <SpecRow label="音频">
         {file.audio_streams === null ? (
           <span className="text-[12.5px] text-[var(--text-muted)]">
-            尚未探测——安装 ffmpeg（含 ffprobe）后刷新本页即可读取
+            尚未探测——后台正在读取，稍候自动刷新；持续为空请检查文件是否可达，
+            以及（源码部署时）是否装了 ffmpeg
           </span>
         ) : file.audio_streams.length === 0 ? (
           <span className="text-[12.5px] text-[var(--text-muted)]">文件内没有音轨</span>
