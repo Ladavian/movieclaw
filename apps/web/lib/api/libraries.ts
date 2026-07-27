@@ -32,6 +32,16 @@ export interface LibraryStats {
   ignored_count: number;
 }
 
+/**
+ * 收藏范围条件（docs/design/library-routing.md）：条件间 AND、条件内任一匹配。
+ * genres 存 TMDB 类型 **ID**（语言无关），origin_countries 存 ISO 国家码。
+ */
+export interface MatchRule {
+  field: "genres" | "origin_countries";
+  op: "any_of";
+  values: (number | string)[];
+}
+
 export interface MediaLibrary {
   id: number;
   name: string;
@@ -42,6 +52,8 @@ export interface MediaLibrary {
   primary_root: string | null;
   /** 是否为该类型的默认库（订阅/手动下载不选库时用它） */
   is_default: boolean;
+  /** 收藏范围声明；空=未声明（只作为显式指定或默认库兜底的目标） */
+  match_rules: MatchRule[];
   /** 库存统计（library_file 台账聚合） */
   stats: LibraryStats;
   /** 是否正在扫描 */
@@ -263,6 +275,32 @@ export interface LibraryPayload {
   name: string;
   kind: MediaType;
   root_paths: string[];
+  /** 收藏范围条件；缺省/空=不声明 */
+  match_rules?: MatchRule[];
+}
+
+/** 收藏范围的可选项（后端唯一真相源：类型 chips 与区域预设）。 */
+export interface RoutingOptions {
+  movie_genres: { id: number; label: string }[];
+  tv_genres: { id: number; label: string }[];
+  region_presets: { key: string; label: string; countries: string[] }[];
+  /** 国家码 → 中文名（映射外的少见国家直接显示码） */
+  country_names: Record<string, string>;
+}
+
+let _routingOptionsCache: Promise<RoutingOptions> | null = null;
+
+/** 收藏范围可选项（进程内缓存：静态常量，一次拉取全程复用）。 */
+export function getRoutingOptions(): Promise<RoutingOptions> {
+  if (!_routingOptionsCache) {
+    _routingOptionsCache = unwrap(
+      request<ApiEnvelope<RoutingOptions>>("/libraries/routing-options"),
+    ).catch((e) => {
+      _routingOptionsCache = null;
+      throw e;
+    });
+  }
+  return _routingOptionsCache;
 }
 
 /** 列出全部媒体库（可按类型过滤）。 */

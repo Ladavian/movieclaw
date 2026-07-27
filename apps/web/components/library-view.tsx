@@ -17,9 +17,12 @@ import { Tooltip } from "@/components/tooltip";
 import {
   type LibraryItem,
   type LibraryPayload,
+  type MatchRule,
   type MediaLibrary,
+  type RoutingOptions,
   createLibrary,
   deleteLibrary,
+  getRoutingOptions,
   listLibraries,
   listLibraryItems,
   SCAN_PHASE_LABELS,
@@ -38,6 +41,99 @@ export const LIBRARY_KIND_META: Record<MediaType, { label: string; Icon: typeof 
   movie: { label: "电影", Icon: FilmIcon },
   tv: { label: "剧集", Icon: TvIcon },
 };
+
+/** 收藏范围可选项（后端静态常量）；加载失败降级为 null（相关 UI 不渲染）。 */
+function useRoutingOptions(): RoutingOptions | null {
+  const [options, setOptions] = useState<RoutingOptions | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    void getRoutingOptions()
+      .then((o) => {
+        if (!cancelled) setOptions(o);
+      })
+      .catch(() => {
+        /* 静默降级：收藏范围区显示加载失败提示 */
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+  return options;
+}
+
+/** 收藏范围条件 → 表单状态（v1 两个维度：类型 ID / 区域国家码）。 */
+function parseMatchRules(rules: MatchRule[]): { genres: number[]; regions: string[] } {
+  const genres = rules.find((r) => r.field === "genres")?.values ?? [];
+  const regions = rules.find((r) => r.field === "origin_countries")?.values ?? [];
+  return {
+    genres: genres.filter((v): v is number => typeof v === "number"),
+    regions: regions.filter((v): v is string => typeof v === "string"),
+  };
+}
+
+/** 表单状态 → 收藏范围条件（空维度不生成条件；两者都空 = 不声明）。 */
+function buildMatchRules(genres: number[], regions: string[]): MatchRule[] {
+  const rules: MatchRule[] = [];
+  if (genres.length > 0) rules.push({ field: "genres", op: "any_of", values: genres });
+  if (regions.length > 0)
+    rules.push({ field: "origin_countries", op: "any_of", values: regions });
+  return rules;
+}
+
+/**
+ * 收藏范围摘要（库卡片小字，如「动画 · 日韩」）：genre 用 ID→名映射，
+ * 区域优先折叠成预设组名（全含即折叠），折不进组的国家码逐个显示中文名。
+ */
+function matchRulesSummary(library: MediaLibrary, options: RoutingOptions | null): string | null {
+  if (library.match_rules.length === 0 || options === null) return null;
+  const { genres, regions } = parseMatchRules(library.match_rules);
+  const genreNames = new Map(
+    (library.kind === "movie" ? options.movie_genres : options.tv_genres).map((g) => [
+      g.id,
+      g.label,
+    ]),
+  );
+  const parts: string[] = genres.map((id) => genreNames.get(id) ?? String(id));
+  let rest = [...regions];
+  for (const preset of options.region_presets) {
+    if (preset.countries.every((c) => rest.includes(c))) {
+      parts.push(preset.label);
+      rest = rest.filter((c) => !preset.countries.includes(c));
+    }
+  }
+  parts.push(...rest.map((c) => options.country_names[c] ?? c));
+  return parts.length > 0 ? parts.join(" · ") : null;
+}
+
+/**
+ * 同类型两库的收藏范围可能同时命中同一部作品、且特异性（条件条数）相同
+ * ——命中顺序只能靠创建先后，给只读提示（不阻断：加一个条件即可消解）。
+ * 「可能同时命中」= 两库共同声明的每个字段取值都有交集。
+ */
+function routingOverlapWarnings(libraries: MediaLibrary[]): string[] {
+  const declared = libraries.filter((l) => l.match_rules.length > 0);
+  const warnings: string[] = [];
+  for (let i = 0; i < declared.length; i++) {
+    for (let j = i + 1; j < declared.length; j++) {
+      const a = declared[i];
+      const b = declared[j];
+      if (a.kind !== b.kind || a.match_rules.length !== b.match_rules.length) continue;
+      const compatible = a.match_rules.every((ra) => {
+        const rb = b.match_rules.find((r) => r.field === ra.field);
+        if (!rb) return true; // 字段只在一边：不妨碍同时命中
+        return ra.values.some((v) => rb.values.includes(v));
+      });
+      if (compatible) {
+        const first = (a.id ?? 0) < (b.id ?? 0) ? a : b;
+        warnings.push(
+          `「${a.name}」与「${b.name}」的收藏范围可能同时命中同一部作品且条件数相同，` +
+            `届时优先进创建更早的「${first.name}」；给其中一个加条件可消除歧义`,
+        );
+      }
+    }
+  }
+  return warnings;
+}
 
 /**
  * 库存条目的悬浮操作三分支（库首页「最近添加」行与单库库存墙共用）：
@@ -92,6 +188,7 @@ export function LibraryView() {
   // 刚创建的库：卡片区是横滚，新库排在末位，库一多就落在可视区外——
   // 用户会以为"没建上"。这里记下 id，列表刷新后把它滚进视野并短暂高亮
   const [highlightId, setHighlightId] = useState<number | null>(null);
+  const routingWarnings = useMemo(() => routingOverlapWarnings(libraries ?? []), [libraries]);
 
   const reload = useCallback(() => {
     setFailed(false);
@@ -199,6 +296,17 @@ export function LibraryView() {
           {error}
         </div>
       )}
+
+      {/* 收藏范围重叠提示（只读不阻断）：同类型两库范围重叠且特异性相同时，
+          命中顺序只能靠创建先后——亮出来让用户自己拍板要不要加条件消解 */}
+      {routingWarnings.map((w) => (
+        <div
+          key={w}
+          className="mx-6 mt-4 rounded-xl border border-amber-400/25 bg-amber-500/10 px-4 py-3 text-[12.5px] leading-relaxed text-amber-200 max-md:mx-4"
+        >
+          {w}
+        </div>
+      ))}
 
       {libraries === null && !failed && (
         <div className="mt-16 flex items-center justify-center gap-2.5 text-[13px] text-[var(--text-muted)]">
@@ -356,6 +464,9 @@ function LibraryCard({
   onError: (message: string) => void;
 }) {
   const meta = LIBRARY_KIND_META[library.kind];
+  const routingOptions = useRoutingOptions();
+  // 收藏范围摘要（"收：动画 · 日韩"）：声明了才显示，一眼看清各库分工
+  const collectSummary = matchRulesSummary(library, routingOptions);
   // 封面海报取最近入库的 4 部（与下方「最近添加」行同一排序口径）
   const posters = [...items]
     .sort((a, b) => (b.added_at ?? "").localeCompare(a.added_at ?? ""))
@@ -441,6 +552,14 @@ function LibraryCard({
           </span>
         )}
       </div>
+      {collectSummary && (
+        <p
+          className="mt-0.5 truncate px-2 text-center text-[11px] text-[var(--text-faint)]"
+          title={`收藏范围：${collectSummary}（订阅与监听导入按它自动选库）`}
+        >
+          收：{collectSummary}
+        </p>
+      )}
 
       {/* 管理操作：悬停浮现在右上角（Link 外层，避免点菜单触发跳转） */}
       <LibraryCardMenu
@@ -733,6 +852,10 @@ export function LibraryFormDialog({
   const [roots, setRoots] = useState<string[]>([]);
   // 选择器目标："add"=追加新根；数字=更改该下标的既有根（原位替换）；null=关闭
   const [pickerTarget, setPickerTarget] = useState<"add" | number | null>(null);
+  // 收藏范围（可选声明）：类型 ID 多选 + 区域国家码多选，条件间是"且"
+  const [matchGenres, setMatchGenres] = useState<number[]>([]);
+  const [matchRegions, setMatchRegions] = useState<string[]>([]);
+  const routingOptions = useRoutingOptions();
 
   // 每次打开时按目标重置表单（编辑带入现值，新增清空）
   useEffect(() => {
@@ -741,17 +864,37 @@ export function LibraryFormDialog({
     setKind(library?.kind ?? "movie");
     setName(library?.name ?? "");
     setRoots(library?.root_paths ?? []);
+    const parsed = parseMatchRules(library?.match_rules ?? []);
+    setMatchGenres(parsed.genres);
+    setMatchRegions(parsed.regions);
     setPickerTarget(null);
   }, [state, library]);
 
   if (state === null) return null;
 
   const canSubmit = !busy && name.trim().length > 0 && roots.length > 0;
+  const effectiveKind = library?.kind ?? kind;
+  const genreOptions =
+    routingOptions === null
+      ? []
+      : effectiveKind === "movie"
+        ? routingOptions.movie_genres
+        : routingOptions.tv_genres;
 
   const submit = () => {
     setBusy(true);
     setError(null);
-    const payload: LibraryPayload = { name: name.trim(), kind, root_paths: roots };
+    // 类型 ID 按当前库类型过滤：新建时切换过库类型的话，另一类型独有的
+    // ID（如剧集的"真人秀"）不带进电影库的声明
+    const validIds = new Set(genreOptions.map((g) => g.id));
+    const genres =
+      routingOptions === null ? matchGenres : matchGenres.filter((id) => validIds.has(id));
+    const payload: LibraryPayload = {
+      name: name.trim(),
+      kind,
+      root_paths: roots,
+      match_rules: buildMatchRules(genres, matchRegions),
+    };
     void (library ? updateLibrary(library.id, payload) : createLibrary(payload))
       .then(onSaved)
       .catch((e) => setError((e as Error).message))
@@ -889,6 +1032,84 @@ export function LibraryFormDialog({
               新入库的内容落在<strong className="font-medium text-[var(--text-muted)]">主根</strong>下：主根/标题
               (年份)。其余为扩展根：扫描与监控照常覆盖、存量入账，但不写入新内容，适合跨盘存放的旧内容。
             </p>
+          </div>
+
+          {/* 收藏范围（可选）：声明"本库收什么"，订阅与监听导入按它自动选库。
+              区域按预设组一键勾选（存储是展开后的国家码）；两个维度间是"且" */}
+          <div>
+            <label className={labelClass}>
+              收藏范围
+              <span className="ml-1.5 font-normal text-[var(--text-faint)]">
+                （可选：声明后，订阅与监听导入按作品特征自动选进本库）
+              </span>
+            </label>
+            {routingOptions === null ? (
+              <p className="rounded-xl border border-white/[0.08] bg-white/[0.03] px-3 py-2.5 text-[12px] text-[var(--text-faint)]">
+                正在加载可选项…
+              </p>
+            ) : (
+              <div className="space-y-3 rounded-xl border border-white/[0.08] bg-white/[0.03] p-3">
+                <div>
+                  <p className="mb-1.5 text-[11px] text-[var(--text-faint)]">
+                    区域（勾选任一即匹配）
+                  </p>
+                  <div className="flex flex-wrap gap-1.5">
+                    {routingOptions.region_presets.map((preset) => {
+                      const active = preset.countries.every((c) => matchRegions.includes(c));
+                      return (
+                        <button
+                          key={preset.key}
+                          type="button"
+                          data-active={active}
+                          title={preset.countries
+                            .map((c) => routingOptions.country_names[c] ?? c)
+                            .join(" / ")}
+                          onClick={() =>
+                            setMatchRegions((prev) =>
+                              active
+                                ? prev.filter((c) => !preset.countries.includes(c))
+                                : [...new Set([...prev, ...preset.countries])],
+                            )
+                          }
+                          className="glass-row nav-item !w-auto px-3 py-1.5 text-xs font-medium"
+                        >
+                          {preset.label}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+                <div>
+                  <p className="mb-1.5 text-[11px] text-[var(--text-faint)]">
+                    类型（勾选任一即匹配）
+                  </p>
+                  <div className="flex flex-wrap gap-1.5">
+                    {genreOptions.map((g) => (
+                      <button
+                        key={g.id}
+                        type="button"
+                        data-active={matchGenres.includes(g.id)}
+                        onClick={() =>
+                          setMatchGenres((prev) =>
+                            prev.includes(g.id)
+                              ? prev.filter((id) => id !== g.id)
+                              : [...prev, g.id],
+                          )
+                        }
+                        className="glass-row nav-item !w-auto px-3 py-1.5 text-xs font-medium"
+                      >
+                        {g.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                <p className="text-[11px] leading-relaxed text-[var(--text-faint)]">
+                  区域与类型同时勾选时须<strong className="font-medium text-[var(--text-muted)]">同时满足</strong>
+                  （如「日韩 + 动画」= 只收日韩的动画）。全部留空 =
+                  不声明，该类型的默认库会承接所有未命中的作品；订阅弹窗里永远可以手动改库。
+                </p>
+              </div>
+            )}
           </div>
 
           <div className="flex items-center justify-end gap-3 pt-1">

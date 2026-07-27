@@ -141,21 +141,32 @@ export interface DispatchPreview {
   mode: "watch" | "inplace" | "downloader_default";
   /** movieclaw 视角的投递基底目录 */
   path: string | null;
+  /** 解析出的目标库（未选库时=收藏范围路由的结论，弹窗据此预选） */
+  library_id: number | null;
   library_name: string | null;
   downloader_name: string | null;
+  /** 收藏范围路由结论：true=命中声明库 / false=默认库兜底；未走路由为 null */
+  route_matched: boolean | null;
+  /** 路由理由（中文整句，徽标直接展示） */
+  route_reason: string | null;
   /** 按当前配置投递能否顺利入库 */
   ok: boolean;
   /** 不 ok 时的中文指引 */
   warning: string | null;
 }
 
-/** 投递路由预检：订阅弹窗选库时调用，预演下载会落到哪、能否自动入库。 */
+/**
+ * 投递路由预检：订阅弹窗选库时调用，预演下载会落到哪、能否自动入库。
+ * `libraryId` 为 null 且带 `tmdbId` 时由后端按收藏范围路由选库并返回理由。
+ */
 export function getDispatchPreview(
   kind: string,
   libraryId: number | null,
+  tmdbId?: number | null,
 ): Promise<DispatchPreview> {
   const params = new URLSearchParams({ kind });
   if (libraryId !== null) params.set("library_id", String(libraryId));
+  if (tmdbId != null) params.set("tmdb_id", String(tmdbId));
   return unwrap(
     request<ApiEnvelope<DispatchPreview>>(`/subscriptions/dispatch-preview?${params}`),
   );

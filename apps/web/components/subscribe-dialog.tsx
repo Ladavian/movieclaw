@@ -66,6 +66,9 @@ export function SubscribeDialog({
   const [busy, setBusy] = useState(false);
   // 投递路由预检：选库即预演"下载会落到哪、能否自动入库"，配置问题当场亮出
   const [dispatchPreview, setDispatchPreview] = useState<DispatchPreview | null>(null);
+  // 收藏范围路由的预选结论：打开弹窗时按作品特征算出的默认库 + 中文理由。
+  // 规则只决定默认值——用户改选其它库即显式指定，徽标随之消失
+  const [routed, setRouted] = useState<{ libraryId: number; reason: string | null } | null>(null);
 
   useEffect(() => {
     if (!target || libraryId === null) {
@@ -110,7 +113,21 @@ export function SubscribeDialog({
         setRuleSets(rules);
         setRuleSetId(rules.find((r) => r.is_default)?.id ?? rules[0]?.id ?? null);
         setLibraries(libs);
-        setLibraryId(libs.find((l) => l.is_default)?.id ?? libs[0]?.id ?? null);
+        // 默认库 = 收藏范围路由的结论（按作品的类型/区域自动选库，带中文理由）；
+        // 预检失败或没有路由结论时回落该类型默认库
+        const fallbackId = libs.find((l) => l.is_default)?.id ?? libs[0]?.id ?? null;
+        setRouted(null);
+        let pickedId = fallbackId;
+        if (result.status === "ready" && result.media) {
+          const p = await getDispatchPreview(t.kind, null, result.media.tmdb_id).catch(
+            () => null,
+          );
+          if (p?.library_id != null && libs.some((l) => l.id === p.library_id)) {
+            pickedId = p.library_id;
+            setRouted({ libraryId: p.library_id, reason: p.route_reason });
+          }
+        }
+        setLibraryId(pickedId);
         setPrepared(result);
         // 默认勾选全部已播出的正季；在播剧默认追新
         const airedSeasons = result.seasons
@@ -360,6 +377,12 @@ export function SubscribeDialog({
                       </option>
                     ))}
                   </select>
+                  {/* 收藏范围路由徽标：说明"为什么默认选了这个库"；用户改库即消失 */}
+                  {routed && routed.reason && libraryId === routed.libraryId && (
+                    <p className="mt-1.5 text-[11.5px] leading-relaxed text-[var(--accent)]/90">
+                      自动选库：{routed.reason}
+                    </p>
+                  )}
                   {/* 投递路由预检：与后端真实投递同源判定，配置问题当场亮出 */}
                   {dispatchPreview &&
                     (dispatchPreview.ok ? (

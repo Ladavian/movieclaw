@@ -128,7 +128,7 @@ export function ImportWatchSection() {
                   {rule.source_path}
                 </p>
                 <p className="mt-0.5 text-[11.5px] text-[var(--text-muted)]">
-                  {rule.strategy === "hardlink" ? "硬链接" : "复制"} → {rule.library_name}
+                  {rule.strategy === "hardlink" ? "硬链接" : "复制"} → {rule.target_label}
                 </p>
               </div>
               <button
@@ -194,7 +194,11 @@ function RuleFormDialog({
   const [error, setError] = useState<string | null>(null);
   const [sourcePath, setSourcePath] = useState("");
   const [strategy, setStrategy] = useState<"hardlink" | "copy">("hardlink");
-  const [libraryId, setLibraryId] = useState<number | null>(null);
+  // 目标二选一：指定库，或「自动路由（电影/剧集）」——识别出作品后按各库
+  // 收藏范围选库，一个混合下载目录即可服务该类型的所有库
+  const [target, setTarget] = useState<
+    { type: "library"; id: number } | { type: "auto"; kind: "movie" | "tv" } | null
+  >(null);
   const [pickerOpen, setPickerOpen] = useState(false);
 
   useEffect(() => {
@@ -202,19 +206,30 @@ function RuleFormDialog({
     setError(null);
     setSourcePath(rule?.source_path ?? "");
     setStrategy(rule?.strategy ?? "hardlink");
-    setLibraryId(rule?.library_id ?? libraries[0]?.id ?? null);
+    if (rule?.library_id != null) {
+      setTarget({ type: "library", id: rule.library_id });
+    } else if (rule?.kind) {
+      setTarget({ type: "auto", kind: rule.kind });
+    } else {
+      setTarget(libraries[0] ? { type: "library", id: libraries[0].id } : null);
+    }
     setPickerOpen(false);
   }, [state, rule, libraries]);
 
   if (state === null) return null;
 
-  const canSubmit = !busy && sourcePath.length > 0 && libraryId !== null;
+  const canSubmit = !busy && sourcePath.length > 0 && target !== null;
 
   const submit = () => {
-    if (libraryId === null) return;
+    if (target === null) return;
     setBusy(true);
     setError(null);
-    const payload = { source_path: sourcePath, strategy, library_id: libraryId };
+    const payload = {
+      source_path: sourcePath,
+      strategy,
+      library_id: target.type === "library" ? target.id : null,
+      kind: target.type === "auto" ? target.kind : null,
+    };
     void (rule ? updateImportWatchRule(rule.id, payload) : createImportWatchRule(payload))
       .then(onSaved)
       .catch((e) => setError((e as Error).message))
@@ -316,18 +331,35 @@ function RuleFormDialog({
           </div>
 
           <div>
-            <label className={labelClass}>目标媒体库（导入落其主根）</label>
+            <label className={labelClass}>导入目标</label>
             <div className="flex flex-wrap gap-2">
               {libraries.map((lib) => (
                 <button
                   key={lib.id}
                   type="button"
-                  onClick={() => setLibraryId(lib.id)}
-                  data-active={libraryId === lib.id}
+                  onClick={() => setTarget({ type: "library", id: lib.id })}
+                  data-active={target?.type === "library" && target.id === lib.id}
                   className="glass-row nav-item !w-auto px-3 py-1.5 text-xs font-medium"
                   title={lib.primary_root ?? undefined}
                 >
                   {lib.name}
+                </button>
+              ))}
+              {(
+                [
+                  ["movie", "自动路由（电影）"],
+                  ["tv", "自动路由（剧集）"],
+                ] as const
+              ).map(([k, label]) => (
+                <button
+                  key={k}
+                  type="button"
+                  onClick={() => setTarget({ type: "auto", kind: k })}
+                  data-active={target?.type === "auto" && target.kind === k}
+                  className="glass-row nav-item !w-auto px-3 py-1.5 text-xs font-medium"
+                  title="识别出作品后，按各库的收藏范围自动选库；未命中进该类型的默认库"
+                >
+                  {label}
                 </button>
               ))}
               {libraries.length === 0 && (
@@ -336,6 +368,11 @@ function RuleFormDialog({
                 </p>
               )}
             </div>
+            <p className="mt-1.5 text-[11px] leading-relaxed text-[var(--text-faint)]">
+              {target?.type === "auto"
+                ? "自动路由：识别出作品后按各媒体库的「收藏范围」分流（如动画进动漫库），未命中进该类型的默认库；订阅投递的内容始终进订阅指定的库。每个类型至多一条自动路由规则。"
+                : "指定库：这个目录里的内容固定导入所选库（落其主根）。"}
+            </p>
           </div>
 
           <div className="flex items-center justify-end gap-3 pt-1">
