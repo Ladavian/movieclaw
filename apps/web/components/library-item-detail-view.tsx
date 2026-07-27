@@ -9,6 +9,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 
 import { ArtworkPickerDialog } from "@/components/artwork-picker-dialog";
+import { CastRow } from "@/components/cast-row";
 import { PAGE_NAV_BUTTON_CLASS, PageNav } from "@/components/page-nav";
 import { HScroller } from "@/components/h-scroller";
 import {
@@ -150,7 +151,9 @@ export function LibraryItemDetailView({
 
   if (failed) {
     return (
-      <div className="flex h-full flex-col items-center justify-center gap-4 px-6 text-center">
+      // ambient-fallback：同 MediaDetailView——本页豁免全局蒙版，兜底态没有沉浸
+      // 背景可铺，文案会压在用户壁纸上，自己带一层底才读得清
+      <div className="ambient-fallback flex h-full flex-col items-center justify-center gap-4 px-6 text-center">
         <p className="text-[15px] font-semibold text-[var(--text)]">未能加载该条目</p>
         <p className="max-w-sm text-[13px] leading-6 text-[var(--text-muted)]">
           条目可能已被删除或重新识别为其他作品，请回库存页查看。
@@ -168,7 +171,7 @@ export function LibraryItemDetailView({
 
   if (!detail) {
     return (
-      <div className="flex h-full items-center justify-center gap-2.5 text-[13px] text-[var(--text-muted)]">
+      <div className="ambient-fallback flex h-full items-center justify-center gap-2.5 text-[13px] text-[var(--text-muted)]">
         <span className="size-4 animate-spin rounded-full border-2 border-white/20 border-t-white/70" />
         正在读取本地刮削信息…
       </div>
@@ -392,8 +395,19 @@ export function LibraryItemDetailView({
           <SeasonEpisodesSection libraryId={libraryId} detail={detail} />
         )}
 
-        {/* —— 演职员（NFO，含头像）—— */}
-        {meta && meta.actors.length > 0 && <CastRow actors={meta.actors} />}
+        {/* —— 演职员：与发现页条目详情共用同一个组件。头像来自 NFO 的 <thumb>，
+            NFO 没写的按姓名回填库内档案的 profile_path（见后端 _fill_actor_thumbs）；
+            TMDB 本就没有照片的人渲染姓名首字占位 —— */}
+        {meta && (
+          <CastRow
+            cast={meta.actors.map((a) => ({
+              name: a.name,
+              role: a.role,
+              avatarUrl: a.thumb_url ? cachedImageUrl(a.thumb_url) : null,
+              tmdbPersonId: a.tmdb_person_id,
+            }))}
+          />
+        )}
 
         {/* —— 文件区：电影列全部文件；剧集只列没归到集的零散文件 —— */}
         {(() => {
@@ -474,7 +488,7 @@ function ItemActionsMenu({
           align="end"
           sideOffset={6}
           collisionPadding={12}
-          className="css-glass z-50 min-w-[11rem] !rounded-xl p-1 shadow-xl backdrop-blur-xl"
+          className="menu-surface z-50 min-w-[11rem] !rounded-xl p-1"
         >
           <DropdownMenu.Item
             onSelect={onReidentify}
@@ -730,7 +744,8 @@ function SpecRows({ file }: { file: LibraryItemFile }) {
       <SpecRow label="音频">
         {file.audio_streams === null ? (
           <span className="text-[12.5px] text-[var(--text-muted)]">
-            尚未探测——安装 ffmpeg（含 ffprobe）后刷新本页即可读取
+            尚未探测——后台正在读取，稍候自动刷新；持续为空请检查文件是否可达，
+            以及（源码部署时）是否装了 ffmpeg
           </span>
         ) : file.audio_streams.length === 0 ? (
           <span className="text-[12.5px] text-[var(--text-muted)]">文件内没有音轨</span>
@@ -802,37 +817,6 @@ function SourceLink({ href, label }: { href: string; label: string }) {
     >
       {label} ↗
     </a>
-  );
-}
-
-/** 演职员横滚条：NFO 里的演员表（头像来自刮削工具写入的图床地址）。 */
-function CastRow({ actors }: { actors: { name: string; role: string | null; thumb_url: string | null }[] }) {
-  return (
-    <section>
-      <h2 className="text-on-image mb-3 text-[15px] font-semibold tracking-[-0.01em] text-[var(--text)]">
-        演职员
-      </h2>
-      <HScroller className="-mx-1 gap-3 px-1 pb-1">
-        {/* NFO 里同一个人可能重复出现（如既是编剧又是演员），姓名+角色不足以唯一，附加下标兜底 */}
-        {actors.map((actor, index) => (
-          <div key={`${actor.name}-${actor.role ?? ""}-${index}`} className="w-[104px] shrink-0">
-            <div className="aspect-[2/3] overflow-hidden rounded-xl bg-[#141824] ring-1 ring-white/[0.08]">
-              <PosterImage
-                src={actor.thumb_url ? cachedImageUrl(actor.thumb_url) : ""}
-                alt={actor.name}
-                className="size-full object-cover"
-              />
-            </div>
-            <p className="mt-1.5 truncate text-[12px] font-medium text-[var(--text)]">
-              {actor.name}
-            </p>
-            {actor.role && (
-              <p className="truncate text-[11px] text-[var(--text-faint)]">饰 {actor.role}</p>
-            )}
-          </div>
-        ))}
-      </HScroller>
-    </section>
   );
 }
 

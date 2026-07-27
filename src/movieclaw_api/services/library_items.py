@@ -22,6 +22,7 @@ import asyncio
 import logging
 import os
 import shutil
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -74,6 +75,10 @@ _SUBTITLE_EXTS = {".srt", ".ass", ".ssa", ".sub", ".sup", ".vtt"}
 # 详情页单次请求最多补探的文件数：电影条目几个版本毫秒级完成；上百集的
 # 剧集首次打开只补一批，翻几次页自然补齐——不让一次请求卡几十秒
 _DETAIL_PROBE_LIMIT = 16
+
+# 补探过程中每探完这么多个文件提交一次：整库补探是小时级的活，不能攒成
+# 一个大事务（中途中断就全白探了），也不必一个一个提交
+_PROBE_COMMIT_EVERY = 32
 
 
 def find_local_artwork(entry_dir: Path, kind: str) -> Path | None:
@@ -410,20 +415,22 @@ async def _fill_actor_thumbs(
     row = await MediaItemRepository(session).get_metadata(item.id)
     if row is None or not row.cast:
         return
-    profiles = {
-        (c.get("name") or "").strip(): c.get("profile_path")
-        for c in row.cast
-        if c.get("name") and c.get("profile_path")
+    by_name = {
+        (c.get("name") or "").strip(): c for c in row.cast if c.get("name")
     }
-    if not profiles:
+    if not by_name:
         return
     image_base = get_settings().tmdb_image_base_url.rstrip("/")
     for actor in meta.actors:
-        if actor.thumb:
+        entry = by_name.get(actor.name.strip())
+        if entry is None:
             continue
-        profile_path = profiles.get(actor.name.strip())
-        if profile_path:
-            actor.thumb = f"{image_base}/w300{profile_path}"
+        if not actor.thumb and entry.get("profile_path"):
+            actor.thumb = f"{image_base}/w300{entry['profile_path']}"
+        # 影人 id 同理按姓名回填：第三方刮削器写的 NFO 通常没有 <actor><tmdbid>，
+        # 而库内档案里有——补上这一格才点得开人物页
+        if actor.tmdb_person_id is None and entry.get("tmdb_person_id"):
+            actor.tmdb_person_id = int(entry["tmdb_person_id"])
 
 
 async def _db_meta(session: AsyncSession, item: MediaItem) -> EntryMetadata | None:
@@ -457,6 +464,7 @@ async def _db_meta(session: AsyncSession, item: MediaItem) -> EntryMetadata | No
                     if actor.get("profile_path")
                     else None
                 ),
+                tmdb_person_id=actor.get("tmdb_person_id"),
             )
             for actor in row.cast
             if actor.get("name")
@@ -508,6 +516,7 @@ async def _tmdb_fallback_meta(item: MediaItem) -> EntryMetadata | None:
             name=c["name"],
             role=(c.get("character") or "").strip() or None,
             thumb=f"{image_base}/w300{c['profile_path']}" if c.get("profile_path") else None,
+            tmdb_person_id=c.get("id"),
         )
         for c in credits.get("cast", [])[:40]
         if c.get("name")
@@ -545,20 +554,37 @@ async def backfill_streams_for_files(file_ids: list[int]) -> None:
                 .scalars()
                 .all()
             )
-            await _backfill_streams(session, rows)
+            await backfill_streams(session, rows)
     except Exception:  # noqa: BLE001 -- 后台任务兜底，失败下次打开详情页再试
         logger.exception("后台补探介质规格失败（涉及台账行 %s）", file_ids)
 
 
-async def _backfill_streams(session: AsyncSession, files: list[LibraryFile]) -> None:
-    """给没探测过音轨/字幕轨的在位台账行按需补探并回填（旧数据的救赎——
-    升级后不必整库重扫，打开详情页即得）。单次请求限量，防止百集剧首开卡死。"""
+async def backfill_streams(
+    session: AsyncSession,
+    files: list[LibraryFile],
+    *,
+    limit: int | None = _DETAIL_PROBE_LIMIT,
+    on_probed: Callable[[], bool] | None = None,
+) -> int:
+    """给没探测过音轨/字幕轨的在位台账行按需补探并回填，返回实际探了几个。
+
+    这是「ffprobe 后装」的唯一救赎路径——扫描对已识别且在位的行整体秒过，
+    不会回头重探。两个调用方：
+
+    - 详情页响应后的后台任务：``limit`` 取默认值限量，防止百集剧首开卡死；
+    - 扫描的补探阶段：``limit=None`` 不限量（那是有进度与停止按钮的后台
+      任务，慢没关系，半途而废才是问题），用 ``on_probed`` 汇报进度——
+      回调返回 False 即收尾（用户点了停止）。
+
+    探测失败的行保持 NULL、下次再试：失败常常是暂时的（挂载还没就绪）。
+    代价是永远探不出的坏文件每轮都会被重试一次，坏文件多的库要留意。
+    """
     from movieclaw_api.services.library_scan import disc_main_stream
 
     probed = 0
-    dirty = False
+    since_commit = 0
     for row in files:
-        if probed >= _DETAIL_PROBE_LIMIT:
+        if limit is not None and probed >= limit:
             break
         if row.audio_streams is not None or row.missing_since is not None:
             continue
@@ -568,21 +594,28 @@ async def _backfill_streams(session: AsyncSession, files: list[LibraryFile]) -> 
             continue
         probed += 1
         spec = await asyncio.to_thread(probe_media, target)
-        if spec is None:
-            continue  # ffprobe 缺失/失败：保持 NULL，下次再试
-        row.audio_streams = list(spec.audio_streams)
-        row.subtitle_streams = list(spec.subtitle_streams)
-        # 顺手回填缺失的视频规格（同一次探测的免费产出，不覆盖已有值）
-        row.resolution = row.resolution or spec.resolution
-        row.video_codec = row.video_codec or spec.video_codec
-        row.hdr = row.hdr or spec.hdr
-        row.bit_depth = row.bit_depth or spec.bit_depth
-        row.duration_seconds = row.duration_seconds or spec.duration_seconds
-        row.bit_rate = row.bit_rate or spec.bit_rate
-        row.updated_at = utcnow()
-        dirty = True
-    if dirty:
+        if spec is not None:
+            row.audio_streams = list(spec.audio_streams)
+            row.subtitle_streams = list(spec.subtitle_streams)
+            # 顺手回填缺失的视频规格（同一次探测的免费产出，不覆盖已有值）
+            row.resolution = row.resolution or spec.resolution
+            row.video_codec = row.video_codec or spec.video_codec
+            row.hdr = row.hdr or spec.hdr
+            row.bit_depth = row.bit_depth or spec.bit_depth
+            row.duration_seconds = row.duration_seconds or spec.duration_seconds
+            row.bit_rate = row.bit_rate or spec.bit_rate
+            row.updated_at = utcnow()
+            since_commit += 1
+        # 分批提交而不是攒到最后：整库补探可能要几个小时，中途断电/重启
+        # 时已经探完的那部分不该白探
+        if since_commit >= _PROBE_COMMIT_EVERY:
+            await session.commit()
+            since_commit = 0
+        if on_probed is not None and not on_probed():
+            break
+    if since_commit:
         await session.commit()
+    return probed
 
 
 # ---------------------------------------------------------------------------

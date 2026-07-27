@@ -8,6 +8,10 @@ from sqlmodel import select
 from movieclaw_db.models.base import utcnow
 from movieclaw_db.models.library_file import IdentitySource, LibraryFile
 
+# 哨兵：区分「调用方没提供同路径旧行」与「调用方已确认该路径没有旧行」。
+# 用 None 当默认值就没法区分这两种情况，前者必须自己去查，后者查了是白查
+_LOOKUP: LibraryFile = object()  # type: ignore[assignment]
+
 
 class LibraryFileRepository:
     """库存台账的数据访问层。
@@ -88,13 +92,22 @@ class LibraryFileRepository:
 
     # -- 写入 --------------------------------------------------------------
 
-    async def upsert_by_path(self, row: LibraryFile) -> LibraryFile:
-        """按 file_path 幂等写入：已有则整体更新（文件回归时清 missing 标记）。"""
-        existing = await self.get_by_path(row.file_path)
+    async def upsert_by_path(
+        self, row: LibraryFile, *, existing: LibraryFile | None = _LOOKUP
+    ) -> LibraryFile:
+        """按 file_path 幂等写入：已有则整体更新（文件回归时清 missing 标记）。
+
+        ``existing`` 是调用方已经持有的同路径台账行（扫描开场就把整库台账读进
+        内存了，逐文件再查一次纯属重复）。不传则自己查；显式传 None 表示调用
+        方已确认该路径没有旧行。
+        """
+        if existing is _LOOKUP:
+            existing = await self.get_by_path(row.file_path)
         if existing is None:
             self._session.add(row)
+            # 不 refresh：expire_on_commit=False，提交后属性仍在，
+            # id 由 INSERT 回填，没有库端默认值需要读回
             await self._session.commit()
-            await self._session.refresh(row)
             return row
         existing.library_id = row.library_id
         existing.media_item_id = row.media_item_id
@@ -124,7 +137,6 @@ class LibraryFileRepository:
         existing.missing_since = None  # 再次发现即在位
         existing.updated_at = utcnow()
         await self._session.commit()
-        await self._session.refresh(existing)
         return existing
 
     async def relocate(self, file_id: int, *, file_path: str, container: str | None) -> None:

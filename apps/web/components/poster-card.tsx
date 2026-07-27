@@ -179,8 +179,11 @@ function PosterCardContent({
           {/* 触摸设备的操作入口：没有 hover 就没有下方的信息层，订阅/追新/补齐
               在手机上会彻底点不到。这里在海报右下角常驻一枚圆形操作键——只放
               图标不放文案（卡片在两列网格里只有 150px 宽，塞不下胶囊按钮），
-              动作与信息层里的那颗完全一致。仅无悬停设备渲染，桌面端不受影响。 */}
-          {action !== "none" && (
+              动作与信息层里的那颗完全一致。仅无悬停设备渲染，桌面端不受影响。
+              只为「够得着操作」而设，因此仅订阅类动作才出这枚键：owned 是纯状态
+              没有可点的动作，在媒体库里更是句废话（那儿的东西本来就都已入库），
+              为它在海报角上常驻一个绿点只是噪声。桌面 hover 层里的标识保持不变。 */}
+          {action !== "none" && action !== "owned" && (
             <span className="touch-only absolute bottom-2 right-2 z-[2]">
               <PosterCardActionButton item={item} action={action} compact />
             </span>
@@ -254,15 +257,9 @@ function PosterCardActionButton({
 
   if (!subscribeMeta) {
     // 已入库标识：非交互，与库存格下方的绿点语言一致。
-    // 紧凑态下退化为一枚绿点——手机上没必要为一个纯状态占掉海报一角。
-    return compact ? (
-      <span
-        aria-label="已入库"
-        className="grid size-5 place-items-center rounded-full bg-black/55 backdrop-blur-sm"
-      >
-        <span className="size-1.5 rounded-full bg-[#4ade80]" />
-      </span>
-    ) : (
+    // 只有 hover 信息层会走到这里——纯状态没有「够不着」的问题，
+    // 触摸端不再为它单出常驻圆键（见上方 touch-only 的渲染条件）。
+    return (
       <span className="flex h-7 items-center gap-1.5 rounded-full bg-white/[0.14] px-3 text-[11px] font-semibold text-white/90 backdrop-blur-sm">
         <span className="size-1.5 rounded-full bg-[#4ade80]" />
         已入库

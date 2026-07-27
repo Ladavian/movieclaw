@@ -12,6 +12,7 @@ from movieclaw_db.repositories.credential_repo import CredentialRepository
 from movieclaw_db.repositories.library_file_repo import LibraryFileRepository
 from movieclaw_db.repositories.library_repo import LibraryRepository
 from movieclaw_db.repositories.media_repo import MediaItemRepository
+from movieclaw_db.repositories.person_repo import PersonCredit, PersonRepository
 from movieclaw_db.repositories.profile_repo import ProfileRepository
 from movieclaw_db.repositories.scheduled_task_repo import (
     ScheduledTaskRepository,
@@ -34,6 +35,8 @@ __all__ = [
     "LibraryFileRepository",
     "LibraryRepository",
     "MediaItemRepository",
+    "PersonCredit",
+    "PersonRepository",
     "ProfileRepository",
     "ScheduledTaskRepository",
     "TaskRunRepository",

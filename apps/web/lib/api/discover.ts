@@ -73,9 +73,16 @@ export interface MediaSearchItem {
   posterUrl: string;
 }
 
+interface MediaCastMemberDto {
+  name: string;
+  role: string | null;
+  avatar_url: string | null;
+  tmdb_person_id: number | null;
+}
+
 interface MediaFactsDto {
   directors: string[];
-  cast: string[];
+  cast: MediaCastMemberDto[];
   country: string;
   language: string;
   released: string;
@@ -187,10 +194,20 @@ export function toSearchItem(item: MediaSearchItemDto): MediaSearchItem {
   };
 }
 
-/** 详情页「词条信息」卡的字段（导演 / 主演 / 地区 / 语言 / 日期 / 平台）。 */
+/** 演职员条的一行：姓名 + 饰演角色 + 头像（数据源缺哪项就是空，前端按占位渲染）。 */
+export interface MediaCastMember {
+  name: string;
+  role?: string;
+  avatarUrl?: string;
+  /** TMDB 影人 ID：有值时详情页把这一格链到人物页；豆瓣来源没有此 id */
+  tmdbPersonId?: number;
+}
+
+/** 详情页「词条信息」卡的字段（导演 / 演职员 / 地区 / 语言 / 日期 / 平台）。 */
 export interface MediaDetailInfo {
   directors: string[];
-  cast: string[];
+  /** 演职员（按数据源给出的主次顺序），详情页用横滚条呈现而不是塞进词条信息 */
+  cast: MediaCastMember[];
   country: string;
   language: string;
   released: string;
@@ -256,7 +273,13 @@ function toDetail(dto: MediaDetailDto): MediaDetailData {
     item: toItem(dto.card),
     info: {
       directors: dto.facts.directors,
-      cast: dto.facts.cast,
+      cast: dto.facts.cast.map((c) => ({
+        name: c.name,
+        role: c.role ?? undefined,
+        // 头像走图片代理：豆瓣图床按 Referer 防盗链，直连会 403
+        avatarUrl: c.avatar_url ? cachedImageUrl(c.avatar_url) : undefined,
+        tmdbPersonId: c.tmdb_person_id ?? undefined,
+      })),
       country: dto.facts.country,
       language: dto.facts.language,
       released: dto.facts.released,

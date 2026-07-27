@@ -154,6 +154,20 @@ body::before {
 }
 
 /*
+ * 氛围页的加载/错误兜底底板。
+ *
+ * 「氛围页」（首页与两个影片详情页，见 app-shell 的 isHome）刻意不铺全局蒙版，
+ * 让背景大图直出。但详情页在**拿到数据之前**没有沉浸背景可铺，此时页面上只有
+ * 一句加载/错误文案，直接压在用户自己配的壁纸上——壁纸一亮，浅灰文案就没了。
+ * 这些兜底态自己带一层底，与全局蒙版同色系，读得清且不破坏氛围页的观感。
+ */
+.ambient-fallback {
+  background: rgb(5 7 12 / 0.72);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+}
+
+/*
  * 全屏背景蒙版：铺在背景大图之上、内容之下的深色模糊层，
  * z-index 介于 body::before(0) 与 .app-shell(10) 之间：压住背景、托住其上的内容与侧栏。
  * 全站统一只有这一档（除「新任务」首页大图直出外，所有页面一律铺它，
@@ -542,6 +556,35 @@ a {
     inset 0 1px 0 rgba(255, 255, 255, 0.08);
 }
 /*
+ * 带文字的浮层菜单（⋯ 下拉、库卡片管理菜单、用户菜单、会话菜单）的底。
+ *
+ * 为什么不复用上面两个类：
+ *   - .css-glass 的底只有 rgba(255,255,255,0.045)，几乎全透，观感完全交给
+ *     背后的内容——铺在页面卡片上没问题，但菜单是**浮在任意内容之上**的；
+ *   - .surface-raised 是 74% 不透明，仍会透过四分之一的背景。
+ * 菜单文字是 var(--text-muted) 这种浅灰，只要背后压着一张浅色海报（媒体库
+ * 海报墙里到处都是），底就跟着泛白，字直接糊没。浮层的可读性不该取决于
+ * 它恰好停在什么内容上面，所以这里给一个足够实的深色底：背后是什么都不
+ * 影响对比度，只留一丝透与模糊维持玻璃语言。
+ *
+ * 图标类浮层（横滚翻页钮等）不走这套——它们没有文字，保持通透更轻。
+ */
+.menu-surface {
+  position: relative;
+  border-radius: 16px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.05), rgba(255, 255, 255, 0) 46%),
+    rgb(20 23 31 / 0.97);
+  backdrop-filter: blur(22px) saturate(1.4);
+  -webkit-backdrop-filter: blur(22px) saturate(1.4);
+  box-shadow:
+    0 18px 44px rgba(0, 0, 0, 0.5),
+    0 2px 8px rgba(0, 0, 0, 0.32),
+    inset 0 1px 0 rgba(255, 255, 255, 0.08);
+}
+
+/*
  * 设置内容区的子卡片（个人信息 / 字段组 / 开关组 / 站点配置等）。
  * 现只用于设置模式，承载在近黑玻璃面板之上。质感对齐参考站 Component Studio 的元素：
  * 不是「浮起的实心灰块 + 重投影」，而是「玻璃上的一层极淡白色磨砂内嵌」——
@@ -788,6 +831,16 @@ body.cmdk-open .app-shell {
     padding-right: var(--safe-right);
     padding-bottom: var(--safe-bottom);
     padding-left: var(--safe-left);
+  }
+
+  /*
+   * 详情类页面自带 PageNav（返回 + 标题 + 页面操作），外壳的全局顶栏这时不渲染
+   * （见 lib/page-chrome.tsx），主区就不该再为它空出那 52px——否则页面顶上会
+   * 留一段莫名其妙的空白，返回键也被推离屏幕上沿。只让位安全区，PageNav 自己
+   * 吸在最顶上，窄屏于是只有一条顶栏。
+   */
+  .app-shell[data-topbar="false"] > main {
+    padding-top: var(--safe-top);
   }
 }
 

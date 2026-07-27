@@ -262,7 +262,13 @@ _MOVIE_DETAIL = {
             {"name": "莉莉·沃卓斯基", "job": "Director"},
             {"name": "某制片", "job": "Producer"},
         ],
-        "cast": [{"name": f"演员{i}"} for i in range(8)],
+        # 演职员：带头像与角色名，且刻意给一个缺 profile_path 的人（头像取不到
+        # 也必须保留——名字与角色本身就是信息）
+        "cast": [
+            {"name": f"演员{i}", "character": f"角色{i}", "profile_path": f"/p{i}.jpg"}
+            for i in range(8)
+        ]
+        + [{"name": "无头像演员", "character": "路人"}],
     },
     "images": {
         "backdrops": [
@@ -285,7 +291,14 @@ async def test_movie_detail_fields() -> None:
 
     assert detail.card.extent == "136 分钟"
     assert detail.facts.directors == ["莉莉·沃卓斯基"]
-    assert len(detail.facts.cast) == 5
+    # 演职员条：按 TMDB 给的主次顺序整段带回（上限 16），姓名/角色/头像齐全
+    assert len(detail.facts.cast) == 9
+    assert detail.facts.cast[0].name == "演员0"
+    assert detail.facts.cast[0].role == "角色0"
+    assert detail.facts.cast[0].avatar_url == f"{_IMAGE_BASE}/w185/p0.jpg"
+    # 缺 profile_path 的人保留，头像为空由前端渲染占位
+    assert detail.facts.cast[-1].name == "无头像演员"
+    assert detail.facts.cast[-1].avatar_url is None
     assert detail.facts.country == "美国"
     assert detail.facts.language == "英语"
     assert detail.facts.network is None

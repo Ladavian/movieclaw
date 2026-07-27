@@ -168,6 +168,10 @@ def write_full_nfo(entry_dir: Path, item: MediaItem, meta: MediaMetadata | None)
             if actor.get("profile_path"):
                 thumb = f"{image_base}/w300{actor['profile_path']}"
                 lines.append(f"    <thumb>{escape(thumb)}</thumb>")
+            # 影人 id（Kodi/TMM 惯例的 <actor><tmdbid>）：人物页链接的依据，
+            # 也让我们自己写出的 NFO 能原地回读出这个身份
+            if actor.get("tmdb_person_id"):
+                lines.append(f"    <tmdbid>{int(actor['tmdb_person_id'])}</tmdbid>")
             lines.append(f"    <order>{actor.get('order') or 0}</order>")
             lines.append("  </actor>")
     lines.append(f"</{root_tag}>")
@@ -216,11 +220,18 @@ def write_episode_nfo(video: Path, episode: MediaEpisode) -> None:
 
 @dataclass
 class NfoActor:
-    """NFO 里的一位演员。``thumb`` 通常是 TMM/Emby 写入的 TMDB 头像 URL。"""
+    """NFO 里的一位演员。``thumb`` 通常是 TMM/Emby 写入的 TMDB 头像 URL。
+
+    ``tmdb_person_id`` 是人物页链接的依据（姓名不是身份）。来源有三：NFO 的
+    ``<actor><tmdbid>``（Kodi/TMM 惯例，我们自己写出的完整 NFO 也照这个写）、
+    库内档案 media_metadata.cast 的同名回填、TMDB 实时兜底。取不到就是 None，
+    前端把这一格渲染成不可点。
+    """
 
     name: str
     role: str | None = None
     thumb: str | None = None
+    tmdb_person_id: int | None = None
 
 
 @dataclass
@@ -286,7 +297,16 @@ def read_entry_metadata(nfo_path: Path) -> EntryMetadata | None:
         # 只保留 http(s) 头像地址：本地相对路径没有服务通道，前端无法加载
         if thumb and not thumb.lower().startswith(("http://", "https://")):
             thumb = None
-        meta.actors.append(NfoActor(name=name, role=role, thumb=thumb))
+        # <actor><tmdbid> 是**影人** id（不是条目 id——条目身份只认根元素的直接
+        # 子节点，见 read_tmdb_id）。人物页链接靠它
+        meta.actors.append(
+            NfoActor(
+                name=name,
+                role=role,
+                thumb=thumb,
+                tmdb_person_id=_to_positive_int(actor.findtext("tmdbid")),
+            )
+        )
     return meta
 
 

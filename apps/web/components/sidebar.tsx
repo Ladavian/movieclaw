@@ -397,7 +397,7 @@ function RunRow({
         createPortal(
           <div
             ref={menuRef}
-            className="surface-raised w-36 overflow-hidden rounded-xl p-1.5"
+            className="menu-surface w-36 overflow-hidden rounded-xl p-1.5"
             style={{ position: "fixed", left: menuPos.left, top: menuPos.top, zIndex: 50 }}
           >
             <button

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import type { Route } from "next";
@@ -18,6 +18,8 @@ import { PosterImage } from "@/components/poster-image";
 import { fetchDiscoverPage } from "@/lib/api/discover";
 import { HttpError } from "@/lib/http";
 import { useMediaDetail } from "@/lib/media-detail";
+import { usePageChrome } from "@/lib/page-chrome";
+import { useIsMobile } from "@/lib/use-media-query";
 import type {
   DiscoverPageData,
   MediaItem,
@@ -98,15 +100,28 @@ export function DiscoverView({
     };
   }, [cacheKey, mediaType, reloadKey, source]);
 
-  const toolbar = (
-    <div className="sticky top-0 z-20 flex items-center justify-end px-6 py-3 max-md:px-4 max-md:py-2">
-      <SourceSwitcher
-        value={source}
-        onChange={(nextSource) => {
-          if (nextSource === source) return;
-          router.push(`/discover/${mediaType}?source=${nextSource}` as Route);
-        }}
-      />
+  const switchSource = useCallback(
+    (nextSource: MediaSource) => {
+      if (nextSource === source) return;
+      router.push(`/discover/${mediaType}?source=${nextSource}` as Route);
+    },
+    [mediaType, router, source],
+  );
+
+  // 发现页是侧栏一级入口，没有 PageNav，数据源切换若自己吸一条顶栏，窄屏上
+  // 就会摞在全局顶栏底下变成两排 header。移动端改为挂进全局顶栏那一行
+  // （字标与搜索之间本来就空着），桌面端维持原来的吸顶工具栏不变。
+  const chrome = usePageChrome();
+  const isMobile = useIsMobile();
+  const setTopBarActions = chrome?.setTopBarActions;
+  useEffect(() => {
+    if (!isMobile || !setTopBarActions) return;
+    return setTopBarActions(<SourceSwitcher value={source} onChange={switchSource} />);
+  }, [isMobile, setTopBarActions, source, switchSource]);
+
+  const toolbar = isMobile ? null : (
+    <div className="sticky top-0 z-20 flex items-center justify-end px-6 py-3">
+      <SourceSwitcher value={source} onChange={switchSource} />
     </div>
   );
 

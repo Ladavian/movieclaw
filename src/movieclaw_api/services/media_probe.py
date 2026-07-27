@@ -1,16 +1,23 @@
 """ffprobe 介质探测：读文件本体的真实规格（媒体库 L2/L3 共用）。
 
 设计要点（docs/design/library.md 风险①）：
-- 依赖系统 ffprobe（随 ffmpeg 安装，Docker 镜像内置）；缺失时**降级为跳过
-  探测**，规格列保持 NULL，不阻断入库/扫描——只在首次发现缺失时告警一次；
+- 依赖系统 ffprobe（随 ffmpeg 安装，**官方 Docker 镜像已内置**）；源码/裸机
+  部署缺失时**降级为跳过探测**，规格列保持 NULL，不阻断入库/扫描——只在
+  首次发现缺失时告警一次；
 - 探测是同步子进程调用，调用方须放线程池（asyncio.to_thread）执行；
 - 库存画质的真相来自文件本体，不来自种子名（种子名会说谎，文件不会）。
+
+补探（重要）：ffprobe 是后装的时候，**扫描不会自动回头补**——已识别且在位
+的台账行整体秒过，压根走不到探测那一步。补探由扫描的独立阶段负责
+（library_scan 的 PROBING 阶段）与详情页打开时的后台任务兜底。
 """
 
 from __future__ import annotations
 
+import functools
 import json
 import logging
+import shutil
 import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -22,6 +29,13 @@ _missing_warned = False
 
 # 单文件探测超时：本地文件读元数据通常毫秒级，超时说明文件/存储有问题
 _PROBE_TIMEOUT = 30.0
+
+
+@functools.cache
+def ffprobe_available() -> bool:
+    """系统里有没有 ffprobe。缓存结果——PATH 在进程生命周期内不会变，
+    而调用方（入库门禁、扫描的补探阶段）会逐文件问，每次都 which 太浪费。"""
+    return shutil.which("ffprobe") is not None
 
 
 @dataclass(frozen=True)

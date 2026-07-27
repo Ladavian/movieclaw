@@ -77,9 +77,13 @@ FROM node:22-bookworm-slim AS node-dist
 # ---------------------------------------------------------------------------
 FROM python:3.12-slim-bookworm
 
-# onnxruntime / tokenizers 的 manylinux wheel 依赖 libstdc++（slim 基础镜像可能不带）
+# - libstdc++6：onnxruntime / tokenizers 的 manylinux wheel 依赖（slim 基础镜像不带）
+# - ffmpeg：介质规格探测（ffprobe）的运行时依赖。库存画质的真相来自文件本体
+#   而非种子名，缺了它整个「视频/音频/字幕规格」区块都是空的。装全套 ffmpeg
+#   约 160MB（ffprobe 在 Debian 里不单独成包，且 libavdevice 硬依赖 SDL 那串），
+#   这是为「开箱即用」付的确定成本——降级路径虽然存在，但不该是默认体验
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends libstdc++6 ca-certificates \
+    && apt-get install -y --no-install-recommends libstdc++6 ca-certificates ffmpeg \
     && rm -rf /var/lib/apt/lists/*
 
 # Node 运行时：只拷贝 node 二进制（跑 Next standalone server 足够），不装 npm。

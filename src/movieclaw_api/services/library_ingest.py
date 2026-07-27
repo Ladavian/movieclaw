@@ -75,7 +75,7 @@ from movieclaw_api.services.library_resolve import verify_resolve
 from movieclaw_api.services.library_scan import _guess_evidence
 from movieclaw_api.services.media_discover import get_tmdb_client
 from movieclaw_api.services.media_library import MediaLibraryService
-from movieclaw_api.services.media_probe import probe_media
+from movieclaw_api.services.media_probe import ffprobe_available, probe_media
 from movieclaw_db.engine import get_database
 from movieclaw_db.models import (
     FileSource,
@@ -351,11 +351,6 @@ async def _process_entry(
 # ---------------------------------------------------------------------------
 
 
-def _ffprobe_available() -> bool:
-    """ffprobe 是否可用——不可用时探测门禁放行（与扫描器降级行为一致）。"""
-    return shutil.which("ffprobe") is not None
-
-
 async def _ingest_entry(
     session,
     library: Library,
@@ -383,7 +378,7 @@ async def _ingest_entry(
     kind = MediaKind(library.kind)
     main = max(snap.videos, key=lambda f: f.stat().st_size)
     spec = await asyncio.to_thread(probe_media, main)
-    if spec is None and _ffprobe_available():
+    if spec is None and ffprobe_available():
         await conclude(
             IngestStatus.FAILED,
             f"主视频「{main.name}」探测失败——可能尚未下载完成或已损坏，文件变化后自动重试",
@@ -443,7 +438,7 @@ async def _ingest_entry(
         file_spec = spec if file == main else await asyncio.to_thread(probe_media, file)
         # 门禁逐文件生效：暂停的季包可能前几集完整、后几集残缺，主文件
         # 探测通过不代表每个文件都完整
-        if file_spec is None and _ffprobe_available():
+        if file_spec is None and ffprobe_available():
             notes.append(f"「{file.name}」探测失败（可能不完整），未入库；文件变化后自动重试")
             continue
         label = (file_spec.resolution if file_spec else None) or release_attrs.media_source or "V2"

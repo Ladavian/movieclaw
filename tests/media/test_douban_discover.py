@@ -112,7 +112,17 @@ async def test_detail_maps_mobile_fields_to_shared_detail_model() -> None:
                 "pubdate": ["2019-02-05(中国大陆)"],
                 "aka": ["The Wandering Earth", "流浪地球：飞跃2020特别版"],
                 "directors": [{"name": "郭帆"}],
-                "actors": [{"name": f"演员{i}"} for i in range(1, 8)],
+                # 豆瓣的 avatar 形态不稳定：这里覆盖「字典」与「字符串」两种，
+                # 以及 character 带「饰 」前缀的情况
+                "actors": [
+                    {
+                        "name": f"演员{i}",
+                        "character": f"饰 角色{i}",
+                        "avatar": {"large": f"https://img.douban.test/a{i}.jpg"},
+                    }
+                    for i in range(1, 7)
+                ]
+                + [{"name": "演员7", "avatar": "https://img.douban.test/a7.jpg"}],
                 "url": "https://m.douban.com/movie/subject/26266893/",
             }
         }
@@ -123,7 +133,13 @@ async def test_detail_maps_mobile_fields_to_shared_detail_model() -> None:
     assert detail.card.original_title == "The Wandering Earth"
     assert detail.card.extent == "125分钟"
     assert detail.facts.directors == ["郭帆"]
-    assert len(detail.facts.cast) == 5
+    # 演职员整段带回（上限 16），角色名去掉豆瓣的「饰 」前缀，两种 avatar 形态都能取到
+    assert len(detail.facts.cast) == 7
+    assert detail.facts.cast[0].name == "演员1"
+    assert detail.facts.cast[0].role == "角色1"
+    assert detail.facts.cast[0].avatar_url == "https://img.douban.test/a1.jpg"
+    assert detail.facts.cast[-1].avatar_url == "https://img.douban.test/a7.jpg"
+    assert detail.facts.cast[-1].role is None
     assert detail.facts.aliases[0] == "The Wandering Earth"
     assert detail.facts.source_url.endswith("/26266893/")
     assert detail.backdrops == []

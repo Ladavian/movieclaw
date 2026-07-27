@@ -83,11 +83,32 @@ class MediaSearchItem(BaseModel):
     poster_url: str
 
 
+class MediaCastMember(BaseModel):
+    """演职员表的一行：姓名 + 饰演角色 + 头像。
+
+    发现页详情要按「演职员横滚条」呈现（与媒体库条目详情同一套版式），
+    只有姓名撑不起那个版式，因此比原先的 ``list[str]`` 多带角色与头像。
+    头像在数据源里常常缺失（小众条目、配音演员），前端按占位渲染，
+    不必为此过滤掉这个人——名字与角色本身就是有效信息。
+    """
+
+    name: str = Field(description="演员姓名")
+    role: str | None = Field(default=None, description="饰演角色；数据源未提供为空")
+    avatar_url: str | None = Field(default=None, description="头像地址；数据源未提供为空")
+    tmdb_person_id: int | None = Field(
+        default=None,
+        description="TMDB 影人 ID；有值时前端把这一格链到人物页。豆瓣来源没有此 id",
+    )
+
+
 class MediaFacts(BaseModel):
     """详情页「词条信息」卡的字段（豆瓣式条目档案）。"""
 
     directors: list[str] = Field(default_factory=list, description="导演（剧集为主创）")
-    cast: list[str] = Field(default_factory=list, description="主演（前 5 位）")
+    cast: list[MediaCastMember] = Field(
+        default_factory=list,
+        description="演职员（按数据源给出的主次顺序，最多 _CAST_LIMIT 位）",
+    )
     country: str = Field(default="", description="制片地区")
     language: str = Field(default="", description="语言")
     released: str = Field(default="", description="上映/首播日期（ISO 格式）")

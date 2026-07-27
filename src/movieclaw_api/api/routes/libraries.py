@@ -1,7 +1,8 @@
 from __future__ import annotations
 
+from datetime import datetime
 from pathlib import Path, PurePath
-from typing import Literal
+from typing import Literal, NamedTuple
 
 from fastapi import APIRouter, BackgroundTasks, Depends, Query
 from fastapi.responses import FileResponse
@@ -194,24 +195,39 @@ def _last_organize_view(library_id: int) -> LastOrganizeView | None:
 
 
 async def _stats_by_library(session: AsyncSession) -> dict[int, LibraryStats]:
-    """全部库的库存统计（一次查询，Python 聚合——单机规模足够）。"""
-    rows = list((await session.execute(select(LibraryFile))).scalars().all())
+    """全部库的库存统计（一次查询，Python 聚合——单机规模足够）。
+
+    只取统计要用的五列。这是媒体库首页的数据源，扫的是**全部库**的台账；
+    整行取 ORM 对象要连带反序列化每行的音轨/字幕/候选三段 JSON，几万个
+    文件就是几万次白费的解析，而这些列一个都用不上。
+    """
+    rows = (
+        await session.execute(
+            select(
+                LibraryFile.library_id,
+                LibraryFile.size_bytes,
+                LibraryFile.missing_since,
+                LibraryFile.media_item_id,
+                LibraryFile.ignored_at,
+            )
+        )
+    ).all()
     stats: dict[int, LibraryStats] = {}
     items: dict[int, set[int]] = {}
-    for row in rows:
-        s = stats.setdefault(row.library_id, LibraryStats())
+    for library_id, size_bytes, missing_since, media_item_id, ignored_at in rows:
+        s = stats.setdefault(library_id, LibraryStats())
         s.file_count += 1
-        s.total_size_bytes += row.size_bytes
-        if row.missing_since is not None:
+        s.total_size_bytes += size_bytes
+        if missing_since is not None:
             s.missing_count += 1
-        if row.media_item_id is None:
+        if media_item_id is None:
             # 用户忽略过的不算"待识别"——那是已经处理完的决定，不该再催
-            if row.ignored_at is not None:
+            if ignored_at is not None:
                 s.ignored_count += 1
             else:
                 s.unidentified_count += 1
         else:
-            items.setdefault(row.library_id, set()).add(row.media_item_id)
+            items.setdefault(library_id, set()).add(media_item_id)
     for library_id, media_ids in items.items():
         stats[library_id].item_count = len(media_ids)
     return stats
@@ -869,6 +885,18 @@ async def start_organize(
     )
 
 
+class _FileFacts(NamedTuple):
+    """海报墙聚合真正要用的台账列。字段名与 ``LibraryFile`` 保持一致，聚合
+    代码读起来与整行取时一模一样，只是不再拖着四十列（含三列 JSON）走。"""
+
+    season_number: int
+    episode_number: int
+    size_bytes: int
+    resolution: str | None
+    missing_since: datetime | None
+    created_at: datetime
+
+
 @router.get(
     "/{library_id}/items",
     response_model=ApiResponse[list[LibraryItemView]],
@@ -882,15 +910,53 @@ async def list_library_items(
 
     service = LibraryConfigService(session)
     await service.get(library_id)  # 404 检查
-    result = await session.execute(
-        select(LibraryFile, MediaItem)
-        .join(MediaItem, LibraryFile.media_item_id == MediaItem.id)  # type: ignore[arg-type]
-        .where(LibraryFile.library_id == library_id)
+    # 只取聚合真正用得上的六列，不整行取 ORM 对象：台账行有四十来列、其中
+    # 三列是 JSON（音轨/字幕/候选），整行取意味着一部三万集的库要反序列化
+    # 九万段 JSON——实测 2000 部剧的库因此要跑四秒多，而这些列一个都用不上
+    file_rows = (
+        await session.execute(
+            select(
+                LibraryFile.media_item_id,
+                LibraryFile.season_number,
+                LibraryFile.episode_number,
+                LibraryFile.size_bytes,
+                LibraryFile.resolution,
+                LibraryFile.missing_since,
+                LibraryFile.created_at,
+            ).where(
+                LibraryFile.library_id == library_id,
+                LibraryFile.media_item_id.is_not(None),  # type: ignore[union-attr]
+            )
+        )
+    ).all()
+    files_by_item: dict[int, list[_FileFacts]] = {}
+    for media_item_id, season, episode, size, resolution, missing_since, created_at in file_rows:
+        files_by_item.setdefault(media_item_id, []).append(
+            _FileFacts(season, episode, size, resolution, missing_since, created_at)
+        )
+    # 用子查询而不是把几千个 id 塞进 IN 列表：SQLite 的绑定变量数有上限，
+    # 大库会撞。条目行本身要整取——展示要用到标题/年份/状态等大部分列
+    items = (
+        (
+            await session.execute(
+                select(MediaItem).where(
+                    MediaItem.id.in_(  # type: ignore[attr-defined]
+                        select(LibraryFile.media_item_id).where(
+                            LibraryFile.library_id == library_id,
+                            LibraryFile.media_item_id.is_not(None),  # type: ignore[union-attr]
+                        )
+                    )
+                )
+            )
+        )
+        .scalars()
+        .all()
     )
-    grouped: dict[int, tuple[MediaItem, list[LibraryFile]]] = {}
-    for file, item in result.all():
-        assert item.id is not None
-        grouped.setdefault(item.id, (item, []))[1].append(file)
+    grouped: dict[int, tuple[MediaItem, list[_FileFacts]]] = {
+        item.id: (item, files_by_item[item.id])  # type: ignore[index]
+        for item in items
+        if item.id is not None
+    }
 
     # 剧集的已播单元集合：海报悬浮操作（订阅追新/补齐缺集）的判断依据。
     # 集数据在条目建档时已落库（media_episode），一次批量查询本地即得，
@@ -899,23 +965,25 @@ async def list_library_items(
     aired_by_item: dict[int, set[tuple[int, int]]] = {}
     owned_by_item: dict[int, set[tuple[int, int]]] = {}
     if tv_item_ids:
+        today = utcnow().date()
+        # 同样只取四列：分集行带着剧照路径与简介，整行取等于把整库的分集
+        # 文案都读进内存，而这里只是在数「哪些集已经播了」
         episode_rows = (
-            (
-                await session.execute(
-                    select(MediaEpisode).where(MediaEpisode.media_item_id.in_(tv_item_ids))  # type: ignore[attr-defined]
+            await session.execute(
+                select(
+                    MediaEpisode.media_item_id,
+                    MediaEpisode.season_number,
+                    MediaEpisode.episode_number,
+                ).where(
+                    MediaEpisode.media_item_id.in_(tv_item_ids),  # type: ignore[attr-defined]
+                    MediaEpisode.season_number != 0,  # 特别季不参与缺集统计
+                    MediaEpisode.air_date.is_not(None),  # type: ignore[union-attr]
+                    MediaEpisode.air_date <= today,
                 )
             )
-            .scalars()
-            .all()
-        )
-        today = utcnow().date()
-        for episode in episode_rows:
-            if episode.season_number == 0:
-                continue
-            if episode.air_date is not None and episode.air_date <= today:
-                aired_by_item.setdefault(episode.media_item_id, set()).add(
-                    (episode.season_number, episode.episode_number)
-                )
+        ).all()
+        for media_item_id, season_number, episode_number in episode_rows:
+            aired_by_item.setdefault(media_item_id, set()).add((season_number, episode_number))
         # 库存 H 按**跨库**统计：同一部剧的集可能分散在多个媒体库里，任一库在位
         # 就算拥有。必须与订阅生成工单的口径对齐——subscription._owned_units 同样
         # 不按库过滤，否则会出现「海报卡提示补齐缺集，点开订阅弹窗却说整季已在库」
@@ -1144,7 +1212,9 @@ async def get_library_item(
             genres=bundle.local_meta.genres,
             directors=bundle.local_meta.directors,
             actors=[
-                ActorView(name=a.name, role=a.role, thumb_url=a.thumb)
+                ActorView(
+                    name=a.name, role=a.role, thumb_url=a.thumb, tmdb_person_id=a.tmdb_person_id
+                )
                 for a in bundle.local_meta.actors
             ],
             nfo_name=bundle.local_meta.nfo_name,

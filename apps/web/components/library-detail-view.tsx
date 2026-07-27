@@ -556,7 +556,7 @@ function LibraryActionsMenu({
           align="end"
           sideOffset={6}
           collisionPadding={12}
-          className="css-glass z-50 min-w-[11rem] !rounded-xl p-1 shadow-xl backdrop-blur-xl"
+          className="menu-surface z-50 min-w-[11rem] !rounded-xl p-1"
         >
           {/* 扫描中切换为「停止扫描」（增量幂等：已入账的保留，剩余下次继续） */}
           <DropdownMenu.Item
@@ -1172,7 +1172,7 @@ function GroupMoreMenu({
           // 抽屉挂在 window 的监听，把整个抽屉一起关掉（菜单照常关闭——
           // stopPropagation 不影响 Radix 自己的 dismiss）
           onEscapeKeyDown={(e) => e.stopPropagation()}
-          className="css-glass z-[60] min-w-[9rem] !rounded-xl p-1 shadow-xl backdrop-blur-xl"
+          className="menu-surface z-[60] min-w-[9rem] !rounded-xl p-1"
         >
           {canExpand && (
             <DropdownMenu.Item onSelect={onToggleFiles} className={itemClass}>

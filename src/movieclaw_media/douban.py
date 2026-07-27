@@ -20,6 +20,7 @@ from movieclaw_cache import AsyncTTLCache, CacheStore, SwrCache
 from movieclaw_media.models import (
     DiscoverPage,
     MediaCard,
+    MediaCastMember,
     MediaDetail,
     MediaFacts,
     MediaKind,
@@ -29,6 +30,9 @@ from movieclaw_media.models import (
 )
 
 logger = logging.getLogger("movieclaw_media.douban")
+
+# 详情页演职员条最多取多少位（与 TMDB 侧的 service._CAST_LIMIT 同口径）
+_CAST_LIMIT = 16
 
 DEFAULT_API_BASE_URL = "https://m.douban.com/rexxar/api/v2"
 _PAGE_TTL = 6 * 60 * 60
@@ -184,6 +188,35 @@ class DoubanClient:
         await self._client.aclose()
 
 
+def _cast_members(actors: Any) -> list[MediaCastMember]:
+    """豆瓣条目的 actors → 演职员条。
+
+    豆瓣这个字段的形态不稳定：avatar 有时是字符串，有时是 {small,normal,large}
+    的字典；character 常带「饰 」前缀（如「饰 老东家」），去掉前缀交给前端统一
+    加。取不到头像的人照样保留——名字与角色本身就是信息。
+    """
+    members: list[MediaCastMember] = []
+    for person in (actors or [])[:_CAST_LIMIT]:
+        if not isinstance(person, dict):
+            continue
+        name = (person.get("name") or "").strip()
+        if not name:
+            continue
+        avatar = person.get("avatar") or person.get("cover_url")
+        if isinstance(avatar, dict):
+            avatar = avatar.get("large") or avatar.get("normal") or avatar.get("small")
+        role = (person.get("character") or "").strip()
+        role = role.removeprefix("饰 ").removeprefix("饰演 ").strip()
+        members.append(
+            MediaCastMember(
+                name=name,
+                role=role or None,
+                avatar_url=avatar if isinstance(avatar, str) and avatar else None,
+            )
+        )
+    return members
+
+
 @dataclass(frozen=True)
 class _Collection:
     collection_id: str
@@ -274,14 +307,13 @@ class DoubanDiscoverService:
             poster_url=cover,
         )
         directors = [person.get("name") for person in data.get("directors") or []]
-        cast = [person.get("name") for person in data.get("actors") or []]
         pubdates = data.get("pubdate") or []
         released = data.get("release_date") or (pubdates[0] if pubdates else "")
         return MediaDetail(
             card=card,
             facts=MediaFacts(
                 directors=[name for name in directors if name][:3],
-                cast=[name for name in cast if name][:5],
+                cast=_cast_members(data.get("actors")),
                 country=" / ".join(data.get("countries") or []),
                 language=" / ".join(data.get("languages") or []),
                 released=released,

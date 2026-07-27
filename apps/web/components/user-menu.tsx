@@ -76,11 +76,11 @@ export function UserMenu({ onOpenSettings, collapsed = false }: UserMenuProps) {
   const menu = open && (
     <div
       ref={menuRef}
-      className={`surface-raised origin-bottom overflow-hidden rounded-2xl p-1.5 ${
+      className={`menu-surface origin-bottom overflow-hidden rounded-2xl p-1.5 ${
         collapsed ? "w-60" : "absolute bottom-[calc(100%+10px)] left-0 right-0 z-30"
       }`}
       style={
-        // 全部内联：.surface-raised 自带 position:relative，须整体覆盖掉
+        // 全部内联：.menu-surface 自带 position:relative，须整体覆盖掉
         collapsed && menuPos
           ? { position: "fixed", left: menuPos.left, bottom: menuPos.bottom, zIndex: 50 }
           : undefined
