@@ -141,22 +141,46 @@ class LibraryConfigService:
         if ingest_watcher is not None:
             await ingest_watcher.refresh_watches()
 
-    async def create(self, *, name: str, kind: MediaKind, root_paths: list[str]) -> Library:
+    async def create(
+        self,
+        *,
+        name: str,
+        kind: MediaKind,
+        root_paths: list[str],
+        match_rules: list | None = None,
+    ) -> Library:
         """新增一个库。该类型尚无默认库时自动成为默认。"""
+        from movieclaw_api.services.library_routing import validate_match_rules
+
         roots = self._validate(name=name, root_paths=root_paths)
+        rules = validate_match_rules(match_rules)
         await self._assert_roots_clear_of_import_watch(roots)
         await self._assert_name_available(name)
-        row = await self._repo.create(name=name.strip(), kind=kind.value, root_paths=roots)
+        row = await self._repo.create(
+            name=name.strip(), kind=kind.value, root_paths=roots, match_rules=rules
+        )
         await self._refresh_watcher()
         return row
 
-    async def update(self, library_id: int, *, name: str, root_paths: list[str]) -> Library:
-        """更新名称与根路径。kind 创建后不可改（订阅按类型挂库）。"""
+    async def update(
+        self,
+        library_id: int,
+        *,
+        name: str,
+        root_paths: list[str],
+        match_rules: list | None = None,
+    ) -> Library:
+        """更新名称/根路径/收藏范围。kind 创建后不可改（订阅按类型挂库）。"""
         await self.get(library_id)
+        from movieclaw_api.services.library_routing import validate_match_rules
+
         roots = self._validate(name=name, root_paths=root_paths)
+        rules = validate_match_rules(match_rules)
         await self._assert_roots_clear_of_import_watch(roots)
         await self._assert_name_available(name, exclude_id=library_id)
-        updated = await self._repo.update(library_id, name=name.strip(), root_paths=roots)
+        updated = await self._repo.update(
+            library_id, name=name.strip(), root_paths=roots, match_rules=rules
+        )
         assert updated is not None  # get() 已确认存在
         await self._refresh_watcher()
         return updated

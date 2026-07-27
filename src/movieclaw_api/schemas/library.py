@@ -19,6 +19,13 @@ class LibraryPayload(BaseModel):
     root_paths: list[str] = Field(
         description="根路径列表（绝对路径），第一个为主根——新入库落在这里"
     )
+    match_rules: list[dict] = Field(
+        default_factory=list,
+        description=(
+            "收藏范围条件（条件间 AND、条件内任一匹配）；"
+            "genres 存 TMDB 类型 ID，origin_countries 存国家码；空=未声明"
+        ),
+    )
 
 
 class LibraryStats(BaseModel):
@@ -121,6 +128,7 @@ class LibraryView(BaseModel):
     root_paths: list[str]
     primary_root: str | None = Field(description="主根路径（root_paths 第一项）")
     is_default: bool
+    match_rules: list[dict] = Field(default_factory=list, description="收藏范围条件")
     stats: LibraryStats = Field(default_factory=LibraryStats)
     scanning: bool = Field(default=False, description="是否正在扫描")
     scan_progress: ScanProgressView | None = Field(default=None, description="扫描实时进度")
@@ -165,6 +173,7 @@ class LibraryView(BaseModel):
             root_paths=list(row.root_paths),
             primary_root=row.primary_root,
             is_default=row.is_default,
+            match_rules=list(row.match_rules),
             stats=stats or LibraryStats(),
             scanning=scanning,
             scan_progress=scan_progress,

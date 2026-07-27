@@ -468,6 +468,7 @@ async def apply_display_profile(
     meta.overview = profile.overview
     meta.tagline = profile.tagline
     meta.genres = list(profile.genres)
+    meta.genre_ids = list(profile.genre_ids)
     meta.runtime_minutes = profile.runtime_minutes
     meta.release_date = profile.release_date
     meta.content_rating = profile.content_rating
@@ -565,6 +566,7 @@ def build_display_rows(
         overview=profile.overview,
         tagline=profile.tagline,
         genres=list(profile.genres),
+        genre_ids=list(profile.genre_ids),
         runtime_minutes=profile.runtime_minutes,
         release_date=profile.release_date,
         content_rating=profile.content_rating,

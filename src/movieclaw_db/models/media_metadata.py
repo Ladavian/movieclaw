@@ -58,6 +58,15 @@ class MediaMetadata(TimestampMixin, table=True):
         sa_column=Column(JSON, nullable=False),
         description="类型（如 [\"剧情\", \"科幻\"]）",
     )
+    # 类型的 TMDB genre ID（与 genres 同一次刮削写入）。genres 存的是刮削
+    # 语言的本地化名，媒体库路由的收藏范围匹配必须用语言无关的 ID
+    # （docs/design/library-routing.md 1.1）；老档案行为空，路由回落 TMDB
+    # 轻量详情，元数据刷新重刮后自愈
+    genre_ids: list = Field(
+        default_factory=list,
+        sa_column=Column(JSON, nullable=False),
+        description="类型的 TMDB genre ID（语言无关，路由匹配用）",
+    )
     runtime_minutes: int | None = Field(
         default=None, description="片长（电影）/单集常规时长（剧集）"
     )

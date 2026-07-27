@@ -22,7 +22,10 @@ class Library(TimestampMixin, table=True):
       "把外部内容搬进库"是独立模块「监听导入」（import_watch）的职责；
     - 每 kind 至多一个默认库（``is_default``），订阅/手动下载不选库时用它。
       不变量由 Repository 维护：同 kind 第一个库自动成为默认；删除默认库时
-      默认让给同 kind 剩下最早创建的一个。
+      默认让给同 kind 剩下最早创建的一个；
+    - ``match_rules`` 是库的**收藏范围声明**（docs/design/library-routing.md）：
+      条件列表，路由（library_routing.route）据此在同 kind 的库里自动选目标。
+      空列表 = 未声明——不参与自动命中，只作为显式指定或默认库兜底的目标。
     """
 
     __tablename__ = "library"
@@ -40,6 +43,16 @@ class Library(TimestampMixin, table=True):
     )
     # 每 kind 至多一个默认库
     is_default: bool = Field(default=False, description="是否为该类型的默认库")
+    # 收藏范围声明：条件列表，条件间 AND、条件内 any_of（交集即满足）。
+    # 每条形如 {"field": "genres", "op": "any_of", "values": [16]}——
+    # genres 存 TMDB genre **ID**（genre 名随刮削语言变化，存名字会在用户
+    # 切换 tmdb_language 后静默失效）；origin_countries 存 ISO 3166-1 国家码。
+    # 通用条件结构是有意为之：后续加字段（导演/公司/系列）零迁移零引擎改动
+    match_rules: list = Field(
+        default_factory=list,
+        sa_column=Column(JSON, nullable=False),
+        description="收藏范围条件列表；空=未声明（只作兜底目标）",
+    )
     # 刮削成果镜像写入媒体目录（poster.jpg/fanart.jpg/分集 thumb + 完整 NFO，
     # Kodi/Emby 规范，只增不覆盖不删除——docs/design/metadata.md 6.2）。
     # 默认开：无破坏性且反哺播放器生态；不想污染目录的用户按库关闭

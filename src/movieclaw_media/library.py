@@ -112,6 +112,9 @@ class MediaProfile(BaseModel):
     overview: str | None = None
     tagline: str | None = None
     genres: list[str] = Field(default_factory=list)
+    # genre 的 TMDB ID（与 genres 同源同序）：genres 是刮削语言的本地化名，
+    # 媒体库路由的匹配必须用语言无关的 ID（docs/design/library-routing.md）
+    genre_ids: list[int] = Field(default_factory=list)
     runtime_minutes: int | None = None
     release_date: date | None = None
     content_rating: str | None = None
@@ -125,6 +128,23 @@ class MediaProfile(BaseModel):
     # 人物页的数据来源。与上面两个字段同源但独立呈现：那两个是展示用的
     # 姓名/演员表（进 media_metadata），这个是带 TMDB person id 的关系集合
     people: list[PersonCredit] = Field(default_factory=list)
+
+
+def extract_genre_ids(data: dict) -> list[int]:
+    """TMDB 详情 → genre ID 列表。
+
+    刮削（fetch_media_profile）与路由的轻量详情兜底（library_routing）
+    共用本函数——两处口径必须一致，各写各的迟早漂移。
+    """
+    return [g["id"] for g in data.get("genres", []) if g.get("id") is not None]
+
+
+def extract_origin_countries(data: dict) -> list[str]:
+    """TMDB 详情 → 制片国家/地区码：剧集用 origin_country，电影回落
+    production_countries（口径与 extract_genre_ids 同理，两处消费共用）。"""
+    return [c for c in data.get("origin_country", []) if c] or [
+        c.get("iso_3166_1") for c in data.get("production_countries", []) if c.get("iso_3166_1")
+    ]
 
 
 async def fetch_media_profile(
@@ -192,16 +212,12 @@ async def fetch_media_profile(
         overview=overview,
         tagline=tagline,
         genres=[g["name"] for g in data.get("genres", []) if g.get("name")],
+        genre_ids=extract_genre_ids(data),
         runtime_minutes=_parse_runtime(kind, data),
         release_date=_parse_date(release_date),
         content_rating=_parse_certification(kind, data),
         original_language=data.get("original_language") or None,
-        origin_countries=[c for c in data.get("origin_country", []) if c]
-        or [
-            c.get("iso_3166_1")
-            for c in data.get("production_countries", [])
-            if c.get("iso_3166_1")
-        ],
+        origin_countries=extract_origin_countries(data),
         studios=_parse_studios(kind, data),
         vote_average=round(float(data["vote_average"]), 1) if data.get("vote_average") else None,
         vote_count=data.get("vote_count") or None,
