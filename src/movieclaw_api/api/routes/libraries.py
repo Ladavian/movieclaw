@@ -90,7 +90,6 @@ from movieclaw_api.services.media_library import MediaLibraryService
 from movieclaw_db.engine import get_session
 from movieclaw_db.models import (
     LibraryFile,
-    MediaEpisode,
     MediaItem,
     MediaMetadata,
     MediaSeason,
@@ -98,6 +97,7 @@ from movieclaw_db.models import (
 )
 from movieclaw_db.models.library_file import IdentitySource
 from movieclaw_db.repositories.library_file_repo import LibraryFileRepository
+from movieclaw_db.repositories.media_repo import MediaItemRepository
 from movieclaw_media.models import MediaKind
 
 router = APIRouter(prefix="/libraries", tags=["libraries"])
@@ -992,46 +992,10 @@ async def list_library_items(
     # 集数据在条目建档时已落库（media_episode），一次批量查询本地即得，
     # 不打 TMDB。特别季不参与缺集统计——订阅默认也不追特别季，口径一致。
     tv_item_ids = [i for i, (item, _) in grouped.items() if item.kind == "tv"]
-    aired_by_item: dict[int, set[tuple[int, int]]] = {}
-    owned_by_item: dict[int, set[tuple[int, int]]] = {}
-    if tv_item_ids:
-        today = utcnow().date()
-        # 同样只取四列：分集行带着剧照路径与简介，整行取等于把整库的分集
-        # 文案都读进内存，而这里只是在数「哪些集已经播了」
-        episode_rows = (
-            await session.execute(
-                select(
-                    MediaEpisode.media_item_id,
-                    MediaEpisode.season_number,
-                    MediaEpisode.episode_number,
-                ).where(
-                    MediaEpisode.media_item_id.in_(tv_item_ids),  # type: ignore[attr-defined]
-                    MediaEpisode.season_number != 0,  # 特别季不参与缺集统计
-                    MediaEpisode.air_date.is_not(None),  # type: ignore[union-attr]
-                    MediaEpisode.air_date <= today,
-                )
-            )
-        ).all()
-        for media_item_id, season_number, episode_number in episode_rows:
-            aired_by_item.setdefault(media_item_id, set()).add((season_number, episode_number))
-        # 库存 H 按**跨库**统计：同一部剧的集可能分散在多个媒体库里，任一库在位
-        # 就算拥有。必须与订阅生成工单的口径对齐——subscription._owned_units 同样
-        # 不按库过滤，否则会出现「海报卡提示补齐缺集，点开订阅弹窗却说整季已在库」
-        # 的自相矛盾，且订阅建出来一个工单都不会生成。
-        owned_rows = await session.execute(
-            select(
-                LibraryFile.media_item_id,
-                LibraryFile.season_number,
-                LibraryFile.episode_number,
-            )
-            .where(
-                LibraryFile.media_item_id.in_(tv_item_ids),  # type: ignore[attr-defined]
-                LibraryFile.missing_since.is_(None),  # type: ignore[union-attr]
-            )
-            .distinct()
-        )
-        for media_item_id, season_number, episode_number in owned_rows.all():
-            owned_by_item.setdefault(media_item_id, set()).add((season_number, episode_number))
+    # 已播/在位口径走仓储层唯一实现（与订阅预检、工单生成同源）：
+    # 缺集 = 已播（特别季除外）− 跨库在位，「补齐缺集」建订阅后恰好只为这些集生成工单
+    aired_by_item = await MediaItemRepository(session).aired_units_many(tv_item_ids)
+    owned_by_item = await LibraryFileRepository(session).owned_units_many(tv_item_ids)
 
     from movieclaw_api.services.media_scrape import asset_version
 

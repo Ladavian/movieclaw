@@ -1,0 +1,119 @@
+"""「已播 / 在位」口径的仓储层唯一实现测试。
+
+订阅预检与海报墙缺集统计如今共用 aired_units_many / owned_units_many，
+本文件锚定这两个方法自身的口径：已播=air_date≤今天、特别季开关、
+在位=跨库且 missing 不算、批量与单条结果一致。
+"""
+from __future__ import annotations
+
+from datetime import timedelta
+
+import pytest_asyncio
+
+from movieclaw_api.core.config import get_settings
+from movieclaw_db.engine import dispose_db, get_database, init_db
+from movieclaw_db.migrations import run_migrations
+from movieclaw_db.models import LibraryFile, MediaItem
+from movieclaw_db.models.base import utcnow
+from movieclaw_db.models.media_metadata import MediaEpisode
+from movieclaw_db.repositories.library_file_repo import LibraryFileRepository
+from movieclaw_db.repositories.library_repo import LibraryRepository
+from movieclaw_db.repositories.media_repo import MediaItemRepository
+
+
+@pytest_asyncio.fixture
+async def db(tmp_path, monkeypatch):
+    monkeypatch.setenv("DATABASE_URL", f"sqlite+aiosqlite:///{tmp_path / 'caliber.db'}")
+    get_settings.cache_clear()
+    init_db(get_settings().database_url, echo=False)
+    await run_migrations()
+    yield get_database()
+    await dispose_db()
+    get_settings.cache_clear()
+
+
+async def test_aired_and_owned_calibers(db) -> None:
+    today = utcnow().date()
+    async with db.session() as session:
+        lib1 = await LibraryRepository(session).create(
+            name="库一", kind="tv", root_paths=["/a"], match_rules=[]
+        )
+        lib2 = await LibraryRepository(session).create(
+            name="库二", kind="tv", root_paths=["/b"], match_rules=[]
+        )
+        item = MediaItem(kind="tv", tmdb_id=1, title="剧", original_title="Show", aliases=[])
+        session.add(item)
+        await session.commit()
+        await session.refresh(item)
+        session.add_all(
+            [
+                # 已播两集 + 未播一集 + 特别季一集（已播）
+                MediaEpisode(
+                    media_item_id=item.id, season_number=1, episode_number=1, air_date=today
+                ),
+                MediaEpisode(
+                    media_item_id=item.id,
+                    season_number=1,
+                    episode_number=2,
+                    air_date=today - timedelta(days=1),
+                ),
+                MediaEpisode(
+                    media_item_id=item.id,
+                    season_number=1,
+                    episode_number=3,
+                    air_date=today + timedelta(days=7),
+                ),
+                MediaEpisode(
+                    media_item_id=item.id, season_number=0, episode_number=1, air_date=today
+                ),
+                # 在位一集（库 1）+ 另一库在位一集（跨库）+ missing 一集
+                LibraryFile(
+                    source="scanned",
+                    library_id=lib1.id,
+                    file_path="/a/S01E01.mkv",
+                    size_bytes=1,
+                    media_item_id=item.id,
+                    season_number=1,
+                    episode_number=1,
+                ),
+                LibraryFile(
+                    source="scanned",
+                    library_id=lib2.id,
+                    file_path="/b/S01E02.mkv",
+                    size_bytes=1,
+                    media_item_id=item.id,
+                    season_number=1,
+                    episode_number=2,
+                ),
+                LibraryFile(
+                    source="scanned",
+                    library_id=lib1.id,
+                    file_path="/a/S01E04.mkv",
+                    size_bytes=1,
+                    media_item_id=item.id,
+                    season_number=1,
+                    episode_number=4,
+                    missing_since=utcnow(),
+                ),
+            ]
+        )
+        await session.commit()
+
+        media_repo = MediaItemRepository(session)
+        file_repo = LibraryFileRepository(session)
+
+        # 已播：默认排除特别季；include_specials=True 时带上
+        aired = await media_repo.aired_units_many([item.id])
+        assert aired[item.id] == {(1, 1), (1, 2)}
+        aired_all = await media_repo.aired_units_many([item.id], include_specials=True)
+        assert aired_all[item.id] == {(1, 1), (1, 2), (0, 1)}
+
+        # 在位：跨库合并、missing 不算；批量与单条一致
+        owned_single = await file_repo.owned_units(item.id)
+        owned_many = await file_repo.owned_units_many([item.id])
+        assert owned_single == {(1, 1), (1, 2)}
+        assert owned_many[item.id] == owned_single
+
+        # 空入参不炸
+        assert await media_repo.aired_units_many([]) == {}
+        assert await file_repo.owned_units_many([]) == {}

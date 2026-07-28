@@ -90,6 +90,35 @@ class LibraryFileRepository:
         )
         return {(row[0], row[1]) for row in result.all()}
 
+    async def owned_units_many(
+        self, media_item_ids: list[int]
+    ) -> dict[int, set[tuple[int, int]]]:
+        """批量版 owned_units（海报墙等列表页一次查完避免 N+1）。
+
+        口径与 owned_units 完全一致：**跨库**统计（同一部剧的集可能分散在
+        多个媒体库，任一库在位就算拥有）、missing 的文件不算。列表页的
+        缺集提示与订阅生成工单必须同口径，否则会出现「海报卡提示补齐缺集，
+        点开订阅弹窗却说整季已在库」的自相矛盾。
+        """
+        if not media_item_ids:
+            return {}
+        result = await self._session.execute(
+            select(
+                LibraryFile.media_item_id,
+                LibraryFile.season_number,
+                LibraryFile.episode_number,
+            )
+            .where(
+                LibraryFile.media_item_id.in_(media_item_ids),  # type: ignore[attr-defined]
+                LibraryFile.missing_since.is_(None),  # type: ignore[union-attr]
+            )
+            .distinct()
+        )
+        owned: dict[int, set[tuple[int, int]]] = {}
+        for media_item_id, season_number, episode_number in result.all():
+            owned.setdefault(media_item_id, set()).add((season_number, episode_number))
+        return owned
+
     # -- 写入 --------------------------------------------------------------
 
     async def upsert_by_path(

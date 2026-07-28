@@ -35,6 +35,38 @@ class MediaItemRepository:
         )
         return list(result.scalars().all())
 
+    async def aired_units_many(
+        self, media_item_ids: list[int], *, include_specials: bool = False
+    ) -> dict[int, set[tuple[int, int]]]:
+        """批量返回各条目**已播出**的 (季, 集) 单元集合（口径的唯一实现）。
+
+        已播 = air_date 非空且不晚于今天。订阅预检的"已播 x 集"与海报墙的
+        缺集统计（已播 − 在位 = 缺）都必须经本方法取数，不允许各自手写查询。
+        ``include_specials=False`` 时排除特别季（season 0）——缺集统计与
+        订阅默认口径一致；预检的季选择器要显示特别季，传 True。
+
+        只取三列，不整行取 ORM 对象：分集行带着剧照路径与简介，整行取等于
+        把整库的分集文案都读进内存，而这里只是在数「哪些集已经播了」。
+        """
+        if not media_item_ids:
+            return {}
+        statement = select(
+            MediaEpisode.media_item_id,
+            MediaEpisode.season_number,
+            MediaEpisode.episode_number,
+        ).where(
+            MediaEpisode.media_item_id.in_(media_item_ids),  # type: ignore[attr-defined]
+            MediaEpisode.air_date.is_not(None),  # type: ignore[union-attr]
+            MediaEpisode.air_date <= utcnow().date(),
+        )
+        if not include_specials:
+            statement = statement.where(MediaEpisode.season_number != 0)
+        result = await self._session.execute(statement)
+        aired: dict[int, set[tuple[int, int]]] = {}
+        for media_item_id, season_number, episode_number in result.all():
+            aired.setdefault(media_item_id, set()).add((season_number, episode_number))
+        return aired
+
     async def list_episodes(
         self, media_item_id: int, season_number: int | None = None
     ) -> list[MediaEpisode]:
