@@ -24,10 +24,14 @@ import os
 import shutil
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from datetime import datetime
 from pathlib import Path
+from typing import NamedTuple
 
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlmodel import select
 
+from movieclaw_api.schemas.library import LibraryItemView, derive_air_status
 from movieclaw_api.services.library_import import entry_dir_of
 from movieclaw_api.services.library_nfo import (
     EntryMetadata,
@@ -120,6 +124,141 @@ def _external_subtitles(video: Path) -> list[str]:
 # ---------------------------------------------------------------------------
 # 详情装配
 # ---------------------------------------------------------------------------
+
+
+# ---------------------------------------------------------------------------
+# 海报墙聚合（单库条目列表）
+# ---------------------------------------------------------------------------
+
+
+class _FileFacts(NamedTuple):
+    """海报墙聚合用到的六个台账字段（顺序与查询列一致）。
+
+    代码读起来与整行取时一模一样，只是不再拖着四十列（含三列 JSON）走。"""
+
+    season_number: int
+    episode_number: int
+    size_bytes: int
+    resolution: str | None
+    missing_since: datetime | None
+    created_at: datetime
+
+
+async def build_library_wall(session: AsyncSession, library_id: int) -> list[LibraryItemView]:
+    """库内媒体条目的库存聚合（单库海报墙数据源）。
+
+    调用方需自行完成库存在性检查（404）。
+    """
+    from movieclaw_api.core.config import get_settings
+    from movieclaw_db.models import MediaMetadata
+    from movieclaw_db.repositories.library_file_repo import LibraryFileRepository
+    from movieclaw_db.repositories.media_repo import MediaItemRepository
+
+    # 只取聚合真正用得上的六列，不整行取 ORM 对象：台账行有四十来列、其中
+    # 三列是 JSON（音轨/字幕/候选），整行取意味着一部三万集的库要反序列化
+    # 九万段 JSON——实测 2000 部剧的库因此要跑四秒多，而这些列一个都用不上
+    file_rows = (
+        await session.execute(
+            select(
+                LibraryFile.media_item_id,
+                LibraryFile.season_number,
+                LibraryFile.episode_number,
+                LibraryFile.size_bytes,
+                LibraryFile.resolution,
+                LibraryFile.missing_since,
+                LibraryFile.created_at,
+            ).where(
+                LibraryFile.library_id == library_id,
+                LibraryFile.media_item_id.is_not(None),  # type: ignore[union-attr]
+            )
+        )
+    ).all()
+    files_by_item: dict[int, list[_FileFacts]] = {}
+    for media_item_id, season, episode, size, resolution, missing_since, created_at in file_rows:
+        files_by_item.setdefault(media_item_id, []).append(
+            _FileFacts(season, episode, size, resolution, missing_since, created_at)
+        )
+    # 用子查询而不是把几千个 id 塞进 IN 列表：SQLite 的绑定变量数有上限，
+    # 大库会撞。条目行本身要整取——展示要用到标题/年份/状态等大部分列
+    items = (
+        (
+            await session.execute(
+                select(MediaItem).where(
+                    MediaItem.id.in_(  # type: ignore[attr-defined]
+                        select(LibraryFile.media_item_id).where(
+                            LibraryFile.library_id == library_id,
+                            LibraryFile.media_item_id.is_not(None),  # type: ignore[union-attr]
+                        )
+                    )
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    grouped: dict[int, tuple[MediaItem, list[_FileFacts]]] = {
+        item.id: (item, files_by_item[item.id])  # type: ignore[index]
+        for item in items
+        if item.id is not None
+    }
+
+    # 剧集的已播单元集合：海报悬浮操作（订阅追新/补齐缺集）的判断依据。
+    # 集数据在条目建档时已落库（media_episode），批量查询本地即得，不打 TMDB。
+    # 已播/在位口径走仓储层唯一实现（与订阅预检、工单生成同源）：
+    # 缺集 = 已播（特别季除外）− 跨库在位，「补齐缺集」建订阅后恰好只为这些集生成工单
+    tv_item_ids = [i for i, (item, _) in grouped.items() if item.kind == "tv"]
+    aired_by_item = await MediaItemRepository(session).aired_units_many(tv_item_ids)
+    owned_by_item = await LibraryFileRepository(session).owned_units_many(tv_item_ids)
+
+    base = get_settings().tmdb_image_base_url.rstrip("/")
+    # 海报优先本地刮削资产（断网可用），没有资产的回落 TMDB 图床
+    poster_assets: dict[int, str] = {
+        item_id: poster_file
+        for item_id, poster_file in (
+            await session.execute(
+                select(MediaMetadata.media_item_id, MediaMetadata.poster_file).where(
+                    MediaMetadata.media_item_id.in_(grouped.keys()),  # type: ignore[attr-defined]
+                    MediaMetadata.poster_file.is_not(None),  # type: ignore[union-attr]
+                )
+            )
+        ).all()
+    }
+    views = []
+    for item, files in grouped.values():
+        units = {(f.season_number, f.episode_number) for f in files}
+        if item.kind == "tv":
+            missing_episodes = len(
+                aired_by_item.get(item.id, set()) - owned_by_item.get(item.id, set())  # type: ignore[arg-type]
+            )
+        else:
+            missing_episodes = 0
+        if item.id in poster_assets:
+            # ?v=<mtime>：换图原地覆盖同一路径，不带版本海报墙会一直显示旧图
+            rel = poster_assets[item.id]
+            poster_url = f"/images/assets/{rel}?v={asset_version(rel)}"
+        else:
+            poster_url = f"{base}/w500{item.poster_path}" if item.poster_path else None
+        views.append(
+            LibraryItemView(
+                media_item_id=item.id,  # type: ignore[arg-type]
+                kind=MediaKind(item.kind),
+                tmdb_id=item.tmdb_id,
+                title=item.title,
+                year=item.year,
+                poster_url=poster_url,
+                file_count=len(files),
+                total_size_bytes=sum(f.size_bytes for f in files),
+                seasons=sorted({s for s, _ in units if item.kind == "tv"}),
+                episode_count=len(units) if item.kind == "tv" else 0,
+                resolutions=sorted({f.resolution for f in files if f.resolution}, reverse=True),
+                missing_count=sum(1 for f in files if f.missing_since is not None),
+                air_status=derive_air_status(item.status) if item.kind == "tv" else None,
+                missing_episode_count=missing_episodes,
+                added_at=max(f.created_at for f in files),
+            )
+        )
+    views.sort(key=lambda v: v.title)
+    return views
 
 
 @dataclass

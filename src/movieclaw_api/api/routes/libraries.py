@@ -1,14 +1,14 @@
 from __future__ import annotations
 
-from datetime import datetime
 from pathlib import Path, PurePath
-from typing import Literal, NamedTuple
+from typing import Literal
 
 from fastapi import APIRouter, BackgroundTasks, Depends, Query
 from fastapi.responses import FileResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
 
+from movieclaw_api.core.config import get_settings
 from movieclaw_api.exceptions import BadRequestException, ConflictException, NotFoundException
 from movieclaw_api.schemas.library import (
     ActorView,
@@ -53,14 +53,15 @@ from movieclaw_api.schemas.library import (
     UnidentifiedClearPayload,
     UnidentifiedFileView,
     UnidentifiedGroupView,
-    derive_air_status,
 )
 from movieclaw_api.schemas.response import ApiResponse, ok
+from movieclaw_api.services import library_claim, media_scrape
 from movieclaw_api.services.library_config import LibraryConfigService
 from movieclaw_api.services.library_import import entry_dir_of
 from movieclaw_api.services.library_items import (
     backfill_streams_for_files,
     build_item_detail,
+    build_library_wall,
     build_season_episodes,
     delete_item_files,
     find_episode_thumb,
@@ -75,7 +76,6 @@ from movieclaw_api.services.library_organize import (
 )
 from movieclaw_api.services.library_scan import (
     PHASE_LABELS,
-    RESOLVER_VERSION,
     ScanPhase,
     busy_phase,
     is_scanning,
@@ -87,17 +87,18 @@ from movieclaw_api.services.library_scan import (
 )
 from movieclaw_api.services.media_discover import get_tmdb_client
 from movieclaw_api.services.media_library import MediaLibraryService
+from movieclaw_api.services.media_server_notify import notify_media_server_refresh
+from movieclaw_api.services.subscription import SubscriptionService
 from movieclaw_db.engine import get_session
 from movieclaw_db.models import (
     LibraryFile,
     MediaItem,
-    MediaMetadata,
     MediaSeason,
-    utcnow,
+    Subscription,
 )
-from movieclaw_db.models.library_file import IdentitySource
+from movieclaw_db.repositories import MediaItemRepository
 from movieclaw_db.repositories.library_file_repo import LibraryFileRepository
-from movieclaw_db.repositories.media_repo import MediaItemRepository
+from movieclaw_media.genres import COUNTRY_NAMES, MOVIE_GENRES, REGION_PRESETS, TV_GENRES
 from movieclaw_media.models import MediaKind
 
 router = APIRouter(prefix="/libraries", tags=["libraries"])
@@ -149,13 +150,14 @@ def _metadata_refresh_view(library_id: int) -> MetadataRefreshView | None:
     随库列表一并返回，媒体库首页的卡片因此不必额外请求就能显示刷新进度
     （此前只有单库页拿得到，首页卡片对刷新一无所知）。
     """
-    from movieclaw_api.services.media_scrape import is_library_refreshing, library_refresh_state
 
-    state = library_refresh_state(library_id)
+    state = media_scrape.library_refresh_state(library_id)
     if state is None:
-        return MetadataRefreshView(refreshing=True) if is_library_refreshing(library_id) else None
+        if media_scrape.is_library_refreshing(library_id):
+            return MetadataRefreshView(refreshing=True)
+        return None
     return MetadataRefreshView(
-        refreshing=is_library_refreshing(library_id),
+        refreshing=media_scrape.is_library_refreshing(library_id),
         processed=state.processed,
         total=state.total,
         failed=state.failed,
@@ -271,7 +273,6 @@ async def list_libraries(
 async def routing_options() -> ApiResponse[dict]:
     """genre ID↔中文名与区域预设的唯一真相源在后端（movieclaw_media.genres），
     前端不自带常量表——两处各维护一份迟早漂移。"""
-    from movieclaw_media.genres import COUNTRY_NAMES, MOVIE_GENRES, REGION_PRESETS, TV_GENRES
 
     return ok(
         {
@@ -387,7 +388,6 @@ async def list_identity_review(
     在这里摆出两个身份让用户拍板。与待识别清单同理，按条目目录聚合——
     同目录同分歧的几十集聚成一条，一次拍板整组生效。
     """
-    from movieclaw_api.core.config import get_settings
 
     base = get_settings().tmdb_image_base_url.rstrip("/")
     repo = LibraryFileRepository(session)
@@ -464,36 +464,17 @@ async def resolve_identity_review(
     payload: ReviewResolvePayload,
     session: AsyncSession = Depends(get_session),
 ) -> ApiResponse[dict]:
-    """对复核清单里的文件拍板。两种拍板都把身份来源转为 manual：
-    用户已经看过并做了决定，后续识别器升级不再对它们提建议。"""
-    rows = [row for fid in payload.file_ids if (row := await session.get(LibraryFile, fid))]
-    pending = [row for row in rows if row.review_suggestion]
-    if not pending:
-        raise NotFoundException("这些文件没有待拍板的复核建议（可能已被处理）")
-    accepted_items: set[int] = set()
-    title: str | None = None
-    for row in pending:
-        suggestion = row.review_suggestion or {}
-        if payload.accept and suggestion.get("media_item_id"):
-            row.media_item_id = suggestion["media_item_id"]
-            title = suggestion.get("title") or title
-            accepted_items.add(suggestion["media_item_id"])
-        row.identity_source = IdentitySource.MANUAL
-        row.resolved_version = RESOLVER_VERSION
-        row.review_suggestion = None
-        row.updated_at = utcnow()
-    await session.commit()
-    # 库存对账：改挂让新条目的单元"在库"成立，关闭对应的订阅工单
-    from movieclaw_api.services.wanted_fulfillment import close_fulfilled_wanted
+    """对复核清单里的文件拍板（实现见 services/library_claim.resolve_review）。"""
 
-    for item_id in accepted_items:
-        await close_fulfilled_wanted(session, item_id)
-    message = (
-        f"{len(pending)} 个文件已改挂为《{title}》"
-        if payload.accept and title
-        else f"{len(pending)} 个文件维持现有身份，不再提醒"
+    resolved, title = await library_claim.resolve_review(
+        session, payload.file_ids, accept=payload.accept
     )
-    return ok({"resolved": len(pending)}, message=message)
+    message = (
+        f"{resolved} 个文件已改挂为《{title}》"
+        if payload.accept and title
+        else f"{resolved} 个文件维持现有身份，不再提醒"
+    )
+    return ok({"resolved": resolved}, message=message)
 
 
 @router.get(
@@ -616,7 +597,6 @@ async def delete_library(
     background_tasks: BackgroundTasks,
     session: AsyncSession = Depends(get_session),
 ) -> ApiResponse[dict]:
-    from movieclaw_api.services.media_scrape import cleanup_orphan_items
 
     service = LibraryConfigService(session)
     row = await service.get(library_id)
@@ -640,7 +620,7 @@ async def delete_library(
     ]
     await service.delete(library_id)
     # 孤儿清理放后台：删几百个资产目录是纯磁盘活，不该拖住删库这一次请求
-    background_tasks.add_task(cleanup_orphan_items, affected)
+    background_tasks.add_task(media_scrape.cleanup_orphan_items, affected)
     return ok({}, message="已删除（磁盘上的媒体文件未受影响）")
 
 
@@ -713,13 +693,12 @@ async def start_metadata_refresh(
 ) -> ApiResponse[dict]:
     """遍历库内全部已识别条目逐个重刮 TMDB（文本全量覆盖、图片缺失补下）。
     只写元数据表，与扫描/整理互不冲突；升级后给存量条目回填档案就靠它。"""
-    from movieclaw_api.services.media_scrape import is_library_refreshing, refresh_library_metadata
 
     service = LibraryConfigService(session)
     library = await service.get(library_id)
-    if is_library_refreshing(library_id):
+    if media_scrape.is_library_refreshing(library_id):
         raise ConflictException(f"「{library.name}」正在刷新元数据，请等待完成")
-    background_tasks.add_task(refresh_library_metadata, library_id)
+    background_tasks.add_task(media_scrape.refresh_library_metadata, library_id)
     return ok(
         {"started": True},
         message=f"已开始刷新「{library.name}」的元数据，完成后详情自动更新",
@@ -735,11 +714,10 @@ async def stop_metadata_refresh(
     library_id: int,
     session: AsyncSession = Depends(get_session),
 ) -> ApiResponse[dict]:
-    from movieclaw_api.services.media_scrape import request_stop_library_refresh
 
     service = LibraryConfigService(session)
     library = await service.get(library_id)
-    if not request_stop_library_refresh(library_id):
+    if not media_scrape.request_stop_library_refresh(library_id):
         raise ConflictException(f"「{library.name}」当前没有进行中的元数据刷新")
     return ok({}, message=f"正在停止「{library.name}」的元数据刷新（当前条目刷完即停下）")
 
@@ -770,13 +748,12 @@ async def refresh_item_metadata(
     background_tasks: BackgroundTasks,
     session: AsyncSession = Depends(get_session),
 ) -> ApiResponse[dict]:
-    from movieclaw_api.services.media_scrape import is_scraping, scrape_media_item
 
     await LibraryConfigService(session).get(library_id)  # 404 检查
     item, _rows = await _item_rows(session, library_id, media_item_id)  # 404 检查
-    if is_scraping(media_item_id):
+    if media_scrape.is_scraping(media_item_id):
         raise ConflictException(f"《{item.title}》正在刮削中，请稍候")
-    background_tasks.add_task(scrape_media_item, media_item_id, force=True)
+    background_tasks.add_task(media_scrape.scrape_media_item, media_item_id, force=True)
     return ok(
         {"started": True},
         message=f"正在重新刮削《{item.title}》的元数据，稍后刷新页面查看",
@@ -795,13 +772,11 @@ async def list_artwork_candidates_route(
 ) -> ApiResponse[ArtworkCandidatesView]:
     """TMDB 全量候选图，按与自动选图一致的规则排序（背景无文字优先、
     海报中文优先），首张即当前自动策略会选的那张。"""
-    from movieclaw_api.services.media_scrape import list_artwork_candidates
-    from movieclaw_db.repositories import MediaItemRepository
 
     await LibraryConfigService(session).get(library_id)  # 404 检查
     await _item_rows(session, library_id, media_item_id)  # 404 检查
-    posters, backdrops, current_poster, current_backdrop = await list_artwork_candidates(
-        media_item_id
+    posters, backdrops, current_poster, current_backdrop = (
+        await media_scrape.list_artwork_candidates(media_item_id)
     )
     meta = await MediaItemRepository(session).get_metadata(media_item_id)
     return ok(
@@ -829,11 +804,10 @@ async def select_artwork_route(
 ) -> ApiResponse[dict]:
     """手动选图即加锁：自动策略与 force 刷新都不会再动这张图。
     ``file_path=null`` 解锁恢复自动选图。同步执行（单张图，秒级）。"""
-    from movieclaw_api.services.media_scrape import select_artwork
 
     await LibraryConfigService(session).get(library_id)  # 404 检查
     await _item_rows(session, library_id, media_item_id)  # 404 检查
-    await select_artwork(media_item_id, kind=payload.kind, file_path=payload.file_path)
+    await media_scrape.select_artwork(media_item_id, kind=payload.kind, file_path=payload.file_path)
     label = "海报" if payload.kind == "poster" else "背景图"
     message = (
         f"已恢复{label}的自动选图（下次刷新元数据时重新挑选）"
@@ -915,18 +889,6 @@ async def start_organize(
     )
 
 
-class _FileFacts(NamedTuple):
-    """海报墙聚合真正要用的台账列。字段名与 ``LibraryFile`` 保持一致，聚合
-    代码读起来与整行取时一模一样，只是不再拖着四十列（含三列 JSON）走。"""
-
-    season_number: int
-    episode_number: int
-    size_bytes: int
-    resolution: str | None
-    missing_since: datetime | None
-    created_at: datetime
-
-
 @router.get(
     "/{library_id}/items",
     response_model=ApiResponse[list[LibraryItemView]],
@@ -936,120 +898,9 @@ async def list_library_items(
     library_id: int,
     session: AsyncSession = Depends(get_session),
 ) -> ApiResponse[list[LibraryItemView]]:
-    from movieclaw_api.core.config import get_settings
 
-    service = LibraryConfigService(session)
-    await service.get(library_id)  # 404 检查
-    # 只取聚合真正用得上的六列，不整行取 ORM 对象：台账行有四十来列、其中
-    # 三列是 JSON（音轨/字幕/候选），整行取意味着一部三万集的库要反序列化
-    # 九万段 JSON——实测 2000 部剧的库因此要跑四秒多，而这些列一个都用不上
-    file_rows = (
-        await session.execute(
-            select(
-                LibraryFile.media_item_id,
-                LibraryFile.season_number,
-                LibraryFile.episode_number,
-                LibraryFile.size_bytes,
-                LibraryFile.resolution,
-                LibraryFile.missing_since,
-                LibraryFile.created_at,
-            ).where(
-                LibraryFile.library_id == library_id,
-                LibraryFile.media_item_id.is_not(None),  # type: ignore[union-attr]
-            )
-        )
-    ).all()
-    files_by_item: dict[int, list[_FileFacts]] = {}
-    for media_item_id, season, episode, size, resolution, missing_since, created_at in file_rows:
-        files_by_item.setdefault(media_item_id, []).append(
-            _FileFacts(season, episode, size, resolution, missing_since, created_at)
-        )
-    # 用子查询而不是把几千个 id 塞进 IN 列表：SQLite 的绑定变量数有上限，
-    # 大库会撞。条目行本身要整取——展示要用到标题/年份/状态等大部分列
-    items = (
-        (
-            await session.execute(
-                select(MediaItem).where(
-                    MediaItem.id.in_(  # type: ignore[attr-defined]
-                        select(LibraryFile.media_item_id).where(
-                            LibraryFile.library_id == library_id,
-                            LibraryFile.media_item_id.is_not(None),  # type: ignore[union-attr]
-                        )
-                    )
-                )
-            )
-        )
-        .scalars()
-        .all()
-    )
-    grouped: dict[int, tuple[MediaItem, list[_FileFacts]]] = {
-        item.id: (item, files_by_item[item.id])  # type: ignore[index]
-        for item in items
-        if item.id is not None
-    }
-
-    # 剧集的已播单元集合：海报悬浮操作（订阅追新/补齐缺集）的判断依据。
-    # 集数据在条目建档时已落库（media_episode），一次批量查询本地即得，
-    # 不打 TMDB。特别季不参与缺集统计——订阅默认也不追特别季，口径一致。
-    tv_item_ids = [i for i, (item, _) in grouped.items() if item.kind == "tv"]
-    # 已播/在位口径走仓储层唯一实现（与订阅预检、工单生成同源）：
-    # 缺集 = 已播（特别季除外）− 跨库在位，「补齐缺集」建订阅后恰好只为这些集生成工单
-    aired_by_item = await MediaItemRepository(session).aired_units_many(tv_item_ids)
-    owned_by_item = await LibraryFileRepository(session).owned_units_many(tv_item_ids)
-
-    from movieclaw_api.services.media_scrape import asset_version
-
-    base = get_settings().tmdb_image_base_url.rstrip("/")
-    # 海报优先本地刮削资产（断网可用），没有资产的回落 TMDB 图床
-    poster_assets: dict[int, str] = {
-        item_id: poster_file
-        for item_id, poster_file in (
-            await session.execute(
-                select(MediaMetadata.media_item_id, MediaMetadata.poster_file).where(
-                    MediaMetadata.media_item_id.in_(grouped.keys()),  # type: ignore[attr-defined]
-                    MediaMetadata.poster_file.is_not(None),  # type: ignore[union-attr]
-                )
-            )
-        ).all()
-    }
-    views = []
-    for item, files in grouped.values():
-        units = {(f.season_number, f.episode_number) for f in files}
-        if item.kind == "tv":
-            # 缺集口径与订阅创建的 E−H 一致：已播 − 跨库在位（missing 的文件不算拥有），
-            # 因此「补齐缺集」建订阅后恰好只为这些集生成工单
-            missing_episodes = len(
-                aired_by_item.get(item.id, set()) - owned_by_item.get(item.id, set())  # type: ignore[arg-type]
-            )
-        else:
-            missing_episodes = 0
-        if item.id in poster_assets:
-            # ?v=<mtime>：换图原地覆盖同一路径，不带版本海报墙会一直显示旧图
-            rel = poster_assets[item.id]
-            poster_url = f"/images/assets/{rel}?v={asset_version(rel)}"
-        else:
-            poster_url = f"{base}/w500{item.poster_path}" if item.poster_path else None
-        views.append(
-            LibraryItemView(
-                media_item_id=item.id,  # type: ignore[arg-type]
-                kind=MediaKind(item.kind),
-                tmdb_id=item.tmdb_id,
-                title=item.title,
-                year=item.year,
-                poster_url=poster_url,
-                file_count=len(files),
-                total_size_bytes=sum(f.size_bytes for f in files),
-                seasons=sorted({s for s, _ in units if item.kind == "tv"}),
-                episode_count=len(units) if item.kind == "tv" else 0,
-                resolutions=sorted({f.resolution for f in files if f.resolution}, reverse=True),
-                missing_count=sum(1 for f in files if f.missing_since is not None),
-                air_status=derive_air_status(item.status) if item.kind == "tv" else None,
-                missing_episode_count=missing_episodes,
-                added_at=max(f.created_at for f in files),
-            )
-        )
-    views.sort(key=lambda v: v.title)
-    return ok(views)
+    await LibraryConfigService(session).get(library_id)  # 404 检查
+    return ok(await build_library_wall(session, library_id))
 
 
 # ---------------------------------------------------------------------------
@@ -1161,7 +1012,6 @@ async def get_library_item(
     简介/评分/演职员本地 NFO 优先、TMDB 兜底（经持久缓存）。旧台账没探测
     过音轨的**响应后**后台补探（ffprobe 在网络挂载上是秒级/文件，不能拖首屏），
     前端对"尚未探测"的文件稍后静默补拉。"""
-    from movieclaw_api.core.config import get_settings
 
     service = LibraryConfigService(session)
     library = await service.get(library_id)
@@ -1170,8 +1020,6 @@ async def get_library_item(
     if bundle.pending_probe_ids:
         background_tasks.add_task(backfill_streams_for_files, bundle.pending_probe_ids)
 
-    from movieclaw_api.services.media_scrape import asset_version, is_scraping, scraping_phase
-    from movieclaw_db.repositories import MediaItemRepository
 
     base = get_settings().tmdb_image_base_url.rstrip("/")
     art_base = f"/libraries/{library_id}/items/{media_item_id}/artwork"
@@ -1183,7 +1031,7 @@ async def get_library_item(
         poster_url = f"{art_base}?kind=poster&v={bundle.local_poster_version}"
     elif meta_row is not None and meta_row.poster_file:
         poster_url = (
-            f"/images/assets/{meta_row.poster_file}?v={asset_version(meta_row.poster_file)}"
+            f"/images/assets/{meta_row.poster_file}?v={media_scrape.asset_version(meta_row.poster_file)}"
         )
     else:
         poster_url = f"{base}/w500{item.poster_path}" if item.poster_path else None
@@ -1191,7 +1039,7 @@ async def get_library_item(
         backdrop_url = f"{art_base}?kind=fanart&v={bundle.local_fanart_version}"
     elif meta_row is not None and meta_row.backdrop_file:
         backdrop_url = (
-            f"/images/assets/{meta_row.backdrop_file}?v={asset_version(meta_row.backdrop_file)}"
+            f"/images/assets/{meta_row.backdrop_file}?v={media_scrape.asset_version(meta_row.backdrop_file)}"
         )
     else:
         # w1280 而非 original：作为全站沉浸背景铺视口足够清晰，体积小一个
@@ -1252,8 +1100,8 @@ async def get_library_item(
             seasons=seasons,
             # 刮削状态服务端说了算：前端据此在任意时刻（含刚打开页面）
             # 知道这部片还在刮、正在做什么，不依赖发起刷新的那个标签页还开着
-            scraping=is_scraping(media_item_id),
-            scraping_phase=scraping_phase(media_item_id),
+            scraping=media_scrape.is_scraping(media_item_id),
+            scraping_phase=media_scrape.scraping_phase(media_item_id),
         )
     )
 
@@ -1363,13 +1211,11 @@ async def delete_library_item(
     result = await delete_item_files(session, library, media_item_id, rows, all_rows)
 
     # 通知下游媒体服务器刷新库（未配置时空转；失败只告警不阻断）
-    from movieclaw_api.services.media_server_notify import notify_media_server_refresh
 
     background_tasks.add_task(notify_media_server_refresh)
     # 条目在所有库都没文件了、也没订阅 → 连同图片资产一并清掉，不留孤儿
-    from movieclaw_api.services.media_scrape import cleanup_orphan_items
 
-    background_tasks.add_task(cleanup_orphan_items, [media_item_id])
+    background_tasks.add_task(media_scrape.cleanup_orphan_items, [media_item_id])
 
     view = ItemDeleteResultView(
         removed_paths=result.removed_paths,
@@ -1450,23 +1296,24 @@ async def list_missing(
     library_id: int,
     session: AsyncSession = Depends(get_session),
 ) -> ApiResponse[list[MissingItemView]]:
-    from movieclaw_api.core.config import get_settings
-    from movieclaw_db.models import Subscription
 
     service = LibraryConfigService(session)
     await service.get(library_id)  # 404 检查
-    result = await session.execute(
-        select(LibraryFile, MediaItem)
-        .join(MediaItem, LibraryFile.media_item_id == MediaItem.id)  # type: ignore[arg-type]
-        .where(
-            LibraryFile.library_id == library_id,
-            LibraryFile.missing_since.is_not(None),  # type: ignore[union-attr]
-        )
-    )
+    rows = await LibraryFileRepository(session).list_missing(library_id)
+    rows = [r for r in rows if r.media_item_id is not None]  # 未识别的缺失行不进清单
+    items_by_id: dict[int, MediaItem] = {}
+    if rows:
+        found = (
+            await session.execute(
+                select(MediaItem).where(MediaItem.id.in_({r.media_item_id for r in rows}))  # type: ignore[attr-defined]
+            )
+        ).scalars()
+        items_by_id = {i.id: i for i in found if i.id is not None}
     grouped: dict[int, tuple[MediaItem, list[LibraryFile]]] = {}
-    for file, item in result.all():
-        assert item.id is not None
-        grouped.setdefault(item.id, (item, []))[1].append(file)
+    for file in rows:
+        item = items_by_id.get(file.media_item_id or -1)
+        if item is not None:
+            grouped.setdefault(item.id, (item, []))[1].append(file)  # type: ignore[arg-type]
     if not grouped:
         return ok([])
 
@@ -1514,18 +1361,10 @@ async def clear_missing(
 ) -> ApiResponse[dict]:
     service = LibraryConfigService(session)
     await service.get(payload.library_id)  # 404 检查
-    conditions = [
-        LibraryFile.library_id == payload.library_id,
-        LibraryFile.missing_since.is_not(None),  # type: ignore[union-attr]
-    ]
-    if payload.media_item_id is not None:
-        conditions.append(LibraryFile.media_item_id == payload.media_item_id)
-    rows = list((await session.execute(select(LibraryFile).where(*conditions))).scalars().all())
-    for row in rows:
-        await session.delete(row)
-    # 本项目约定：get_session 不自动提交，事务由业务层显式收口
-    await session.commit()
-    return ok({"cleared": len(rows)}, message=f"已清理 {len(rows)} 条缺失记录（磁盘未动）")
+    cleared = await LibraryFileRepository(session).delete_missing(
+        payload.library_id, media_item_id=payload.media_item_id
+    )
+    return ok({"cleared": cleared}, message=f"已清理 {cleared} 条缺失记录（磁盘未动）")
 
 
 @router.post(
@@ -1539,22 +1378,9 @@ async def clear_unidentified(
 ) -> ApiResponse[dict]:
     service = LibraryConfigService(session)
     await service.get(payload.library_id)  # 404 检查
-    rows = list(
-        (
-            await session.execute(
-                select(LibraryFile).where(
-                    LibraryFile.library_id == payload.library_id,
-                    LibraryFile.media_item_id.is_(None),  # type: ignore[union-attr]
-                    LibraryFile.ignored_at.is_(None),  # type: ignore[union-attr]
-                )
-            )
-        )
-        .scalars()
-        .all()
-    )
-    cleared = await LibraryFileRepository(session).mark_ignored(
-        [row.id for row in rows if row.id is not None]
-    )
+    repo = LibraryFileRepository(session)
+    rows = await repo.list_unidentified(library_id=payload.library_id)
+    cleared = await repo.mark_ignored([row.id for row in rows if row.id is not None])
     return ok(
         {"cleared": cleared},
         message=f"已忽略 {cleared} 个待识别文件（磁盘未动；可在「已忽略」里恢复）",
@@ -1570,25 +1396,14 @@ async def redownload_missing(
     payload: RedownloadPayload,
     session: AsyncSession = Depends(get_session),
 ) -> ApiResponse[dict]:
-    from movieclaw_api.services.subscription import SubscriptionService
 
     service = LibraryConfigService(session)
     await service.get(payload.library_id)  # 404 检查
     item = await session.get(MediaItem, payload.media_item_id)
     if item is None:
         raise NotFoundException("媒体条目不存在")
-    rows = list(
-        (
-            await session.execute(
-                select(LibraryFile).where(
-                    LibraryFile.library_id == payload.library_id,
-                    LibraryFile.media_item_id == payload.media_item_id,
-                    LibraryFile.missing_since.is_not(None),  # type: ignore[union-attr]
-                )
-            )
-        )
-        .scalars()
-        .all()
+    rows = await LibraryFileRepository(session).list_missing(
+        payload.library_id, media_item_id=payload.media_item_id
     )
     if not rows:
         raise BadRequestException("该条目没有缺失文件")
@@ -1614,32 +1429,15 @@ async def claim_file(
     background_tasks: BackgroundTasks,
     session: AsyncSession = Depends(get_session),
 ) -> ApiResponse[dict]:
-    repo = LibraryFileRepository(session)
-    row = await session.get(LibraryFile, file_id)
-    if row is None:
-        raise NotFoundException(f"台账记录不存在：id={file_id}")
-    library = await LibraryConfigService(session).get(row.library_id)
-    kind = MediaKind(library.kind)
-    if kind is MediaKind.MOVIE and (payload.season_number or payload.episode_number):
-        raise BadRequestException("电影文件不需要季集号")
-    media_service = MediaLibraryService(session, get_tmdb_client())
-    item = await media_service.ensure_media_item(kind, payload.tmdb_id)
-    assert item.id is not None
-    await repo.claim_identity(
-        file_id,
-        media_item_id=item.id,
-        season_number=payload.season_number,
-        episode_number=payload.episode_number,
-        resolved_version=RESOLVER_VERSION,
+
+    item, _ = await library_claim.claim_files(
+        session,
+        [file_id],
+        tmdb_id=payload.tmdb_id,
+        explicit_unit=(payload.season_number, payload.episode_number),
     )
-    # 库存对账：认领让单元"在库"成立，关闭对应的订阅工单
-    from movieclaw_api.services.wanted_fulfillment import close_fulfilled_wanted
-
-    await close_fulfilled_wanted(session, item.id)
     # 一次入库刮削的资产补齐（图片 + 媒体目录镜像），后台执行
-    from movieclaw_api.services.media_scrape import ensure_assets
-
-    background_tasks.add_task(ensure_assets, item.id)
+    background_tasks.add_task(media_scrape.ensure_assets, item.id)
     return ok({}, message=f"已认领为《{item.title}》")
 
 
@@ -1653,46 +1451,17 @@ async def claim_files_batch(
     background_tasks: BackgroundTasks,
     session: AsyncSession = Depends(get_session),
 ) -> ApiResponse[dict]:
-    """一次认领一整组（通常是一部剧的几十集）。
+    """一次认领一整组（通常是一部剧的几十集），与单个认领共用
+    services/library_claim.claim_files（季集号沿用文件名解析结果）。"""
 
-    季集号不由前端指定：每个文件沿用扫描时从文件名解析出的季集号——
-    这正是"一次纠正全生效"能成立的前提（片名认不出不代表季集号也认不出）。
-    电影统一用 (0,0) 哨兵。
-    """
-    repo = LibraryFileRepository(session)
-    rows = [row for fid in payload.file_ids if (row := await session.get(LibraryFile, fid))]
-    if not rows:
-        raise NotFoundException("这些台账记录都不存在（可能已被认领或忽略）")
-    library_ids = {row.library_id for row in rows}
-    if len(library_ids) > 1:
-        raise BadRequestException("一次只能认领同一个媒体库内的文件")
-    library = await LibraryConfigService(session).get(rows[0].library_id)
-    kind = MediaKind(library.kind)
-    item = await MediaLibraryService(session, get_tmdb_client()).ensure_media_item(
-        kind, payload.tmdb_id
+    item, claimed = await library_claim.claim_files(
+        session, payload.file_ids, tmdb_id=payload.tmdb_id
     )
-    assert item.id is not None
-    for row in rows:
-        assert row.id is not None
-        movie = kind is MediaKind.MOVIE
-        await repo.claim_identity(
-            row.id,
-            media_item_id=item.id,
-            season_number=0 if movie else row.season_number,
-            episode_number=0 if movie else row.episode_number,
-            resolved_version=RESOLVER_VERSION,
-        )
-    # 库存对账：认领让单元"在库"成立，关闭对应的订阅工单
-    from movieclaw_api.services.wanted_fulfillment import close_fulfilled_wanted
-
-    await close_fulfilled_wanted(session, item.id)
     # 一次入库刮削的资产补齐（图片 + 媒体目录镜像），后台执行
-    from movieclaw_api.services.media_scrape import ensure_assets
-
-    background_tasks.add_task(ensure_assets, item.id)
+    background_tasks.add_task(media_scrape.ensure_assets, item.id)
     return ok(
-        {"claimed": len(rows)},
-        message=f"{len(rows)} 个文件已认领为《{item.title}》",
+        {"claimed": claimed},
+        message=f"{claimed} 个文件已认领为《{item.title}》",
     )
 
 

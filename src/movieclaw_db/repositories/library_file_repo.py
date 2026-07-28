@@ -65,6 +65,30 @@ class LibraryFileRepository:
         result = await self._session.execute(stmt.order_by(LibraryFile.file_path))
         return list(result.scalars().all())
 
+    async def list_missing(
+        self, library_id: int, *, media_item_id: int | None = None
+    ) -> list[LibraryFile]:
+        """缺失清单：文件已不在磁盘（missing_since 非空）的台账行。"""
+        stmt = select(LibraryFile).where(
+            LibraryFile.library_id == library_id,
+            LibraryFile.missing_since.is_not(None),  # type: ignore[union-attr]
+        )
+        if media_item_id is not None:
+            stmt = stmt.where(LibraryFile.media_item_id == media_item_id)
+        result = await self._session.execute(stmt)
+        return list(result.scalars().all())
+
+    async def delete_missing(
+        self, library_id: int, *, media_item_id: int | None = None
+    ) -> int:
+        """删除缺失记录（只删台账，绝不动磁盘），返回删除条数。"""
+        rows = await self.list_missing(library_id, media_item_id=media_item_id)
+        for row in rows:
+            await self._session.delete(row)
+        if rows:
+            await self._session.commit()
+        return len(rows)
+
     async def find_by_size(self, library_id: int, size_bytes: int) -> list[LibraryFile]:
         """同库同尺寸的台账行——改名归并的候选池（尺寸是改名/移动的不变量）。"""
         result = await self._session.execute(
