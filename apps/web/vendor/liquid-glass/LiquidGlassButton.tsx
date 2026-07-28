@@ -19,6 +19,20 @@ const GLASS_PAD = 32;
 const scaledSpring = (value: number, timeScale = ANIMATION_TIME_SCALE) => value / (timeScale * timeScale);
 const scaledRate = (value: number, timeScale = ANIMATION_TIME_SCALE) => Math.pow(value, 1 / timeScale);
 
+/**
+ * 本项目新增：把一次性重活丢到浏览器空闲时段执行，返回可取消的句柄。
+ * 带 timeout 兜底——页面一直忙（或标签页被节流）时也会在 2 秒内强制执行，
+ * 不至于永远排不上；环境没有 requestIdleCallback 时退化成短延时宏任务。
+ */
+function scheduleIdle(task: () => void, timeout = 2000): { cancel: () => void } {
+  if (typeof requestIdleCallback === "function") {
+    const id = requestIdleCallback(task, { timeout });
+    return { cancel: () => cancelIdleCallback(id) };
+  }
+  const id = window.setTimeout(task, 200);
+  return { cancel: () => window.clearTimeout(id) };
+}
+
 export interface LiquidGlassButtonProps {
   checked?: boolean;
   defaultChecked?: boolean;
@@ -103,6 +117,10 @@ export function LiquidGlassButton({
     bevel: 0,
     ...settings
   }), [settings, variant]);
+  // 本项目改动（见下方 useEffect 的延后初始化）：renderer 可能在挂载之后才创建，
+  // 那时 ensureRenderer 的闭包已经过期，必须从 ref 取最新配置，否则用到旧值。
+  const settingsRef = useRef(mergedSettings);
+  settingsRef.current = mergedSettings;
 
   const commit = (next: boolean) => {
     checkedRef.current = next;
@@ -114,7 +132,7 @@ export function LiquidGlassButton({
   const ensureRenderer = () => {
     if (rendererRef.current || !canvasRef.current) return;
     try {
-      rendererRef.current = new LiquidGlassRenderer(canvasRef.current, backgroundImage, mergedSettings);
+      rendererRef.current = new LiquidGlassRenderer(canvasRef.current, backgroundImage, settingsRef.current);
       rendererRef.current.setBackgroundSampling(false);
       const { width, height } = resizeRef.current;
       if (width && height) rendererRef.current.resize(width + GLASS_PAD * 2, height + GLASS_PAD * 2);
@@ -305,7 +323,17 @@ export function LiquidGlassButton({
 
   useEffect(() => {
     if (!canvasRef.current || !switchRef.current) return;
-    ensureRenderer();
+    // —— 本项目改动：把 WebGL 初始化从「挂载时同步」改成「空闲时」——
+    // 每个开关都要独占一个 WebGL 上下文（建 context + 编译链接着色器 + 传纹理），
+    // 实测单个约 35ms。设置页里一屏能有十来个开关（如搜索分类列表），同步初始化
+    // 会把主线程堵住三百毫秒，切换标签页时明显卡顿。
+    // 静止态下玻璃层的不透明度本就是 0（见 transitionState：未按下时只显示 CSS 静态层），
+    // 所以延后创建没有任何视觉损失；按下 / 键盘激活的分支里也各自兜底调了 ensureRenderer，
+    // 即便空闲回调还没跑到，交互当下也一定有 renderer。
+    const idle = scheduleIdle(() => {
+      ensureRenderer();
+      syncRendererGeometry(pointerRef.current.stretch, false, pointerRef.current.morph);
+    });
     const root = switchRef.current;
     const observer = new ResizeObserver(([entry]) => {
       resizeRef.current = {
@@ -320,6 +348,7 @@ export function LiquidGlassButton({
     });
     observer.observe(root);
     return () => {
+      idle.cancel();
       observer.disconnect();
       cancelAnimationFrame(frameRef.current);
       rendererRef.current?.dispose();

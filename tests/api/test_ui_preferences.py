@@ -38,8 +38,8 @@ def client(tmp_path, monkeypatch):
 
 # 各页面的默认样式（与 UiPreferencesSetting 各分组默认值一致）
 DEFAULT_PREFS = {
-    "sidebar": {"transparency": 0.0, "brightness": 0.0, "depth": 32.0},
-    "scrim": {"blur": 3.0, "dark": 0.45},
+    "sidebar": {"transparency": 0.49, "brightness": -0.36, "depth": 28.0},
+    "scrim": {"blur": 13.0, "dark": 0.69},
 }
 
 

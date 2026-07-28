@@ -6,6 +6,7 @@ import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 
 import { MoreIcon, PlusIcon, ServerIcon } from "@/components/icons";
 import { ExtensionCard } from "@/components/extension-settings";
+import { SearchSection } from "@/components/search-settings";
 import { useBackdrop } from "@/lib/backdrop";
 import type { ConfiguredSite, SiteAuthType, SiteStatus } from "@/lib/api/extension";
 import {
@@ -52,13 +53,25 @@ const FIELD_META: Record<string, { label: string; kind: "text" | "password" | "t
 /** 需要轮询验证进度的中间态 */
 const IN_PROGRESS: SiteStatus[] = ["pending", "verifying"];
 
+/** 本分区的两档内容（见 SiteConfigSection 顶部的胶囊标签） */
+const TABS = [
+  { id: "sites", label: "站点接入" },
+  { id: "search", label: "搜索分类" },
+] as const;
+
+type SiteTab = (typeof TABS)[number]["id"];
+
 /** 目录中缺失该站点时的兜底展示（例如站点已从系统下架但仍有历史配置） */
 function fallbackItem(siteId: string): CatalogItem {
   return { site_id: siteId, display_name: siteId, base_url: "", supported_auth_types: [] };
 }
 
 /**
- * 「资源站点」设置分区。
+ * 「资源站点」设置分区，两档胶囊标签：
+ *   - 站点接入：已配置站点列表 + 添加入口 + 浏览器插件卡（Cookie 同步工具，
+ *     与站点授权表单同屏才有意义，不单独成档）；
+ *   - 搜索分类：搜索面板分类栏的配置（见 search-settings.tsx）——分类筛的正是
+ *     这里接入的站点，故同页，但使用节奏不同（接入一次性、分类常调），分档。
  *
  * 交互取舍：站点目录可能很多，全部平铺不现实。因此主列表**只展示用户已配置的站点**，
  * 通过「添加站点」入口从目录（GET /sites/catalog）里按需挑选未配置的站点再填表。
@@ -70,6 +83,7 @@ function fallbackItem(siteId: string): CatalogItem {
  * 配置/更新后后端异步验证，前端对中间态（pending/verifying）轮询刷新，直到 active / failed。
  */
 export function SiteConfigSection() {
+  const [tab, setTab] = useState<SiteTab>("sites");
   const [catalog, setCatalog] = useState<CatalogItem[]>([]);
   const [configured, setConfigured] = useState<ConfiguredSite[]>([]);
   // 各站点的种子缓存统计（定时同步任务维护），key 为 site_id；从未同步过的站点没有条目
@@ -149,94 +163,122 @@ export function SiteConfigSection() {
 
   return (
     <div className="space-y-5">
-      {error && (
-        <div className="rounded-xl border border-[#ff6b6b]/30 bg-[#ff6b6b]/10 px-4 py-3 text-sm text-[#ff6b6b]">
-          {error}
-        </div>
-      )}
-
-      <div className="flex items-center justify-between gap-4">
-        <p className="text-xs text-[var(--text-muted)]">
-          {loading
-            ? "加载中…"
-            : `已接入 ${configured.length} 个站点 · 本地累计缓存 ${totalCached.toLocaleString("zh-CN")} 条种子，保存后系统会自动验证有效性。`}
-        </p>
-        <div className="flex shrink-0 items-center gap-2.5">
+      {/* 胶囊标签切换：与「外观」分区（背景图 / 界面质感）同一交互语言。
+          只分两档——插件是站点 Cookie 的填写工具，必须与站点表单同屏，
+          所以跟着「站点接入」；搜索分类的使用节奏不同（接入是一次性、
+          分类是常调），单独一档，也免得两块内容挤成一条长滚动。 */}
+      <div className="flex gap-1.5">
+        {TABS.map((t) => (
           <button
+            key={t.id}
             type="button"
-            onClick={() => void load()}
-            disabled={loading}
-            className="btn-glass px-3.5 py-1.5 text-xs font-medium"
+            aria-pressed={t.id === tab}
+            onClick={() => setTab(t.id)}
+            className={`rounded-full px-3.5 py-1.5 text-[12.5px] font-medium transition-colors ${
+              t.id === tab
+                ? "bg-white/[0.14] text-white"
+                : "text-[var(--text-muted)] hover:bg-white/[0.07] hover:text-[var(--text)]"
+            }`}
           >
-            刷新
+            {t.label}
           </button>
-          {/* 主操作：亮银胶囊，与次级玻璃按钮拉开主次 */}
-          <button
-            type="button"
-            onClick={() => setAdding((v) => !v)}
-            disabled={loading}
-            className="btn-accent flex items-center gap-1 rounded-full py-1.5 pl-2.5 pr-3.5 text-xs font-semibold disabled:opacity-60"
-          >
-            <PlusIcon className="size-4" />
-            添加站点
-          </button>
-        </div>
+        ))}
       </div>
 
-      {/* 「添加站点」面板：从目录里挑选未配置的站点 */}
-      {adding && (
-        <AddSitePanel
-          available={availableItems}
-          onCreated={(site) => {
-            upsertConfigured(site);
-            setAdding(false);
-          }}
-          onCancel={() => setAdding(false)}
-          onError={setError}
-        />
-      )}
+      {tab === "search" ? (
+        <SearchSection />
+      ) : (
+        <>
+          {error && (
+            <div className="rounded-xl border border-[#ff6b6b]/30 bg-[#ff6b6b]/10 px-4 py-3 text-sm text-[#ff6b6b]">
+              {error}
+            </div>
+          )}
 
-      {/* 已配置站点列表 */}
-      <div className="space-y-2.5">
-        {loading ? (
-          <>
-            <div className="h-[72px] animate-pulse rounded-xl bg-white/[0.04]" />
-            <div className="h-[72px] animate-pulse rounded-xl bg-white/[0.04]" />
-          </>
-        ) : configured.length === 0 ? (
-          <div className="css-glass flex flex-col items-center gap-3 !rounded-2xl px-6 py-12 text-center">
-            <span className="icon-chip size-12 !rounded-2xl">
-              <ServerIcon className="size-6" />
-            </span>
-            <div>
-              <p className="text-sm font-medium text-[var(--text)]">还没有配置任何站点</p>
-              <p className="mt-1 text-xs text-[var(--text-muted)]">
-                点击右上角「添加站点」开始接入。
-              </p>
+          <div className="flex items-center justify-between gap-4">
+            <p className="text-xs text-[var(--text-muted)]">
+              {loading
+                ? "加载中…"
+                : `已接入 ${configured.length} 个站点 · 本地累计缓存 ${totalCached.toLocaleString("zh-CN")} 条种子，保存后系统会自动验证有效性。`}
+            </p>
+            <div className="flex shrink-0 items-center gap-2.5">
+              <button
+                type="button"
+                onClick={() => void load()}
+                disabled={loading}
+                className="btn-glass px-3.5 py-1.5 text-xs font-medium"
+              >
+                刷新
+              </button>
+              {/* 主操作：亮银胶囊，与次级玻璃按钮拉开主次 */}
+              <button
+                type="button"
+                onClick={() => setAdding((v) => !v)}
+                disabled={loading}
+                className="btn-accent flex items-center gap-1 rounded-full py-1.5 pl-2.5 pr-3.5 text-xs font-semibold disabled:opacity-60"
+              >
+                <PlusIcon className="size-4" />
+                添加站点
+              </button>
             </div>
           </div>
-        ) : (
-          configured.map((site) => (
-            <SiteCard
-              key={site.site_id}
-              item={catalogMap.get(site.site_id) ?? fallbackItem(site.site_id)}
-              site={site}
-              stats={syncStats[site.site_id]}
-              expanded={editing === site.site_id}
-              onToggleForm={(open) => setEditing(open ? site.site_id : null)}
-              onChanged={upsertConfigured}
-              onDeleted={(siteId) => {
-                setConfigured((prev) => prev.filter((s) => s.site_id !== siteId));
-                setEditing((cur) => (cur === siteId ? null : cur));
+
+          {/* 「添加站点」面板：从目录里挑选未配置的站点 */}
+          {adding && (
+            <AddSitePanel
+              available={availableItems}
+              onCreated={(site) => {
+                upsertConfigured(site);
+                setAdding(false);
               }}
+              onCancel={() => setAdding(false)}
               onError={setError}
             />
-          ))
-        )}
-      </div>
+          )}
 
-      {/* 浏览器插件：站点 Cookie 同步的配套工具，安装引导与同步令牌都在这张卡片组里 */}
-      <ExtensionCard />
+          {/* 已配置站点列表 */}
+          <div className="space-y-2.5">
+            {loading ? (
+              <>
+                <div className="h-[72px] animate-pulse rounded-xl bg-white/[0.04]" />
+                <div className="h-[72px] animate-pulse rounded-xl bg-white/[0.04]" />
+              </>
+            ) : configured.length === 0 ? (
+              <div className="css-glass flex flex-col items-center gap-3 !rounded-2xl px-6 py-12 text-center">
+                <span className="icon-chip size-12 !rounded-2xl">
+                  <ServerIcon className="size-6" />
+                </span>
+                <div>
+                  <p className="text-sm font-medium text-[var(--text)]">还没有配置任何站点</p>
+                  <p className="mt-1 text-xs text-[var(--text-muted)]">
+                    点击右上角「添加站点」开始接入。
+                  </p>
+                </div>
+              </div>
+            ) : (
+              configured.map((site) => (
+                <SiteCard
+                  key={site.site_id}
+                  item={catalogMap.get(site.site_id) ?? fallbackItem(site.site_id)}
+                  site={site}
+                  stats={syncStats[site.site_id]}
+                  expanded={editing === site.site_id}
+                  onToggleForm={(open) => setEditing(open ? site.site_id : null)}
+                  onChanged={upsertConfigured}
+                  onDeleted={(siteId) => {
+                    setConfigured((prev) => prev.filter((s) => s.site_id !== siteId));
+                    setEditing((cur) => (cur === siteId ? null : cur));
+                  }}
+                  onError={setError}
+                />
+              ))
+            )}
+          </div>
+
+          {/* 浏览器插件：站点 Cookie 同步的配套工具，安装引导与同步令牌都在这张卡片组里 */}
+          <ExtensionCard />
+        </>
+      )}
     </div>
   );
 }

@@ -116,7 +116,77 @@ _ROUTES = {
         "alternative_titles": {"titles": []},
         "translations": {"translations": []},
     },
+    # E.T. 原盘 badcase：NER 只抽出「外星人」，完整片名靠 Title (Year)
+    # 惯例作备选查询词才追得回来
+    "/3/movie/601": {
+        "id": 601,
+        "title": "E.T.外星人",
+        "original_title": "E.T. the Extra-Terrestrial",
+        "release_date": "1982-06-11",
+        "runtime": 115,
+        "status": "Released",
+        "external_ids": {},
+        "alternative_titles": {"titles": []},
+        "translations": {"translations": []},
+    },
+    # 神奇4侠 badcase：残留 NFO 指向的 3 分钟同年短片《4》——单字符标题
+    # 让包含判定失效、年份恰好相同，只有时长轴能识破
+    "/3/movie/888": {
+        "id": 888,
+        "title": "4",
+        "original_title": "4",
+        "release_date": "2025-02-26",
+        "runtime": 3,
+        "status": "Released",
+        "external_ids": {},
+        "alternative_titles": {"titles": []},
+        "translations": {"translations": []},
+    },
+    "/3/movie/617126": {
+        "id": 617126,
+        "title": "神奇4侠：初露锋芒",
+        "original_title": "The Fantastic Four: First Steps",
+        "release_date": "2025-07-23",
+        "runtime": 115,
+        "status": "Released",
+        "external_ids": {},
+        "alternative_titles": {"titles": []},
+        "translations": {"translations": []},
+    },
 }
+
+# 电影搜索的假结果（按查询词包含关系挑选；默认空结果）
+_MOVIE_SEARCH = [
+    {
+        # 只有带上完整片名（备选查询词）才召回；「外星人」主词召回它但
+        # 过不了标题门槛——正是 E.T. badcase 的真实形态
+        "needle": "外星人",
+        "result": {
+            "id": 601,
+            "title": "E.T.外星人",
+            "original_title": "E.T. the Extra-Terrestrial",
+            "release_date": "1982-06-11",
+        },
+    },
+    {
+        "needle": "神奇4侠",
+        "result": {
+            "id": 617126,
+            "title": "神奇4侠：初露锋芒",
+            "original_title": "The Fantastic Four: First Steps",
+            "release_date": "2025-07-23",
+        },
+    },
+    {
+        "needle": "某电影",
+        "result": {
+            "id": 300,
+            "title": "某电影",
+            "original_title": "Some Movie",
+            "release_date": "2020-05-01",
+        },
+    },
+]
 
 
 def _fake_tmdb() -> TmdbClient:
@@ -138,7 +208,9 @@ def _fake_tmdb() -> TmdbClient:
             )
             return httpx.Response(200, json={"results": results})
         if path == "/3/search/movie":
-            return httpx.Response(200, json={"results": []})
+            query = request.url.params.get("query", "")
+            results = [m["result"] for m in _MOVIE_SEARCH if m["needle"] in query]
+            return httpx.Response(200, json={"results": results})
         payload = _ROUTES.get(path)
         return httpx.Response(200 if payload else 404, json=payload or {})
 
@@ -1234,6 +1306,271 @@ async def test_ignored_file_stays_ignored_across_rescans(db, tmp_path, monkeypat
         row = (await session.execute(select(LibraryFile))).scalars().one()
         assert row.ignored_at is not None and row.media_item_id is None
         assert (await list_unidentified(library.id, session)).data == []
+
+
+# ---------------------------------------------------------------------------
+# 原盘目录与钉死身份矛盾校验的 badcase 回归（RESOLVER_VERSION 4）
+# ---------------------------------------------------------------------------
+
+
+def _make_disc_dir(parent: Path, name: str) -> Path:
+    """造一个最小蓝光原盘结构：{name}/BDMV/STREAM/00000.m2ts。"""
+    disc = parent / name
+    stream = disc / "BDMV" / "STREAM"
+    stream.mkdir(parents=True)
+    (stream / "00000.m2ts").write_bytes(b"bd")
+    return disc
+
+
+async def test_disc_dir_with_dotted_title_identifies(db, tmp_path) -> None:
+    """badcase 回归：原盘目录「E.T.外星人 (1982)」曾被 Path.stem 截成
+    「E.T」，片名与年份证据全丢、直接进待识别（unparsable）。修复后：
+    目录名原样参与解析；NER 只抽出「外星人」过不了标题门槛时，
+    Title (Year) 惯例名作备选查询词追回完整片名。"""
+    root = tmp_path / "media" / "movies"
+    _make_disc_dir(root / "欧美", "E.T.外星人 (1982)")
+    async with db.session() as session:
+        library = await LibraryRepository(session).create(
+            name="电影库", kind="movie", root_paths=[str(root)]
+        )
+
+    summary = await scan_library(library.id)
+    assert summary.identified == 1 and summary.unidentified == 0
+
+    async with db.session() as session:
+        row = (await session.execute(select(LibraryFile))).scalars().one()
+        assert row.container == "bluray"
+        assert (row.season_number, row.episode_number) == (0, 0)
+        item = await session.get(MediaItem, row.media_item_id)
+        assert item is not None and item.tmdb_id == 601
+        assert row.identity_source == IdentitySource.RESOLVED
+
+
+async def test_disc_dir_reads_nfo_inside_disc(db, tmp_path) -> None:
+    """原盘的条目 NFO 惯例位置在**盘内**（movie.nfo 与 BDMV 平级）；
+    旧代码对目录做 with_suffix 拼出「E.T.nfo」这类无意义路径且从父目录
+    起找，盘内 NFO 会被漏掉。"""
+    root = tmp_path / "media" / "movies"
+    disc = _make_disc_dir(root, "某电影 (2020)")
+    (disc / "movie.nfo").write_text(
+        "<movie><title>某电影</title><tmdbid>300</tmdbid></movie>", encoding="utf-8"
+    )
+    async with db.session() as session:
+        library = await LibraryRepository(session).create(
+            name="电影库", kind="movie", root_paths=[str(root)]
+        )
+
+    summary = await scan_library(library.id)
+    assert summary.identified == 1
+
+    async with db.session() as session:
+        row = (await session.execute(select(LibraryFile))).scalars().one()
+        item = await session.get(MediaItem, row.media_item_id)
+        assert item is not None and item.tmdb_id == 300
+        assert row.identity_source == IdentitySource.NFO
+
+
+def _spec(duration_seconds: int):
+    from movieclaw_api.services.media_probe import MediaSpec
+
+    return MediaSpec(
+        resolution="2160p",
+        video_codec="hevc",
+        hdr=None,
+        bit_depth=10,
+        duration_seconds=duration_seconds,
+        bit_rate=None,
+    )
+
+
+async def test_pinned_id_overturned_by_runtime_conflict(db, tmp_path, monkeypatch) -> None:
+    """badcase 回归：残留 NFO 把 115 分钟的《神奇4侠：初露锋芒》(2025)
+    指向同年的 3 分钟短片《4》——年份轴失明（恰好同年）、标题包含判定
+    被单字符标题击穿（"4"⊂"神奇4侠"）。时长轴（3 倍且差 30 分钟以上）
+    识破声明后，降级名称解析追回正主。"""
+    monkeypatch.setattr(scan_mod, "probe_media", lambda p: _spec(6875))
+    root = tmp_path / "media" / "movies"
+    entry = root / "神奇4侠：初露锋芒 (2025)"
+    entry.mkdir(parents=True)
+    (entry / "神奇4侠：初露锋芒 (2025) - 2160p H.265 Atmos CHDWEB.mkv").write_bytes(b"ff")
+    (entry / "movie.nfo").write_text(
+        "<movie><title>4</title><year>2025</year><tmdbid>888</tmdbid></movie>",
+        encoding="utf-8",
+    )
+    async with db.session() as session:
+        library = await LibraryRepository(session).create(
+            name="电影库", kind="movie", root_paths=[str(root)]
+        )
+
+    summary = await scan_library(library.id)
+    assert summary.identified == 1
+
+    async with db.session() as session:
+        row = (await session.execute(select(LibraryFile))).scalars().one()
+        item = await session.get(MediaItem, row.media_item_id)
+        assert item is not None and item.tmdb_id == 617126  # 名称解析的结论胜出
+        assert row.identity_source == IdentitySource.RESOLVED
+
+
+async def test_pinned_id_survives_runtime_agreement(db, tmp_path, monkeypatch) -> None:
+    """不误伤：NFO 指向的条目片长与实测吻合（意译名目录标题必然不符），
+    照样采信声明——时长轴只识破"悬殊"，不苛求精确。"""
+    monkeypatch.setattr(scan_mod, "probe_media", lambda p: _spec(115 * 60 + 200))
+    root = tmp_path / "media" / "movies"
+    entry = root / "Yi Yi De Mu Lu (1982)"
+    entry.mkdir(parents=True)
+    (entry / "yydml.mkv").write_bytes(b"m")
+    (entry / "movie.nfo").write_text("<movie><tmdbid>601</tmdbid></movie>", encoding="utf-8")
+    async with db.session() as session:
+        library = await LibraryRepository(session).create(
+            name="电影库", kind="movie", root_paths=[str(root)]
+        )
+
+    summary = await scan_library(library.id)
+    assert summary.identified == 1
+
+    async with db.session() as session:
+        row = (await session.execute(select(LibraryFile))).scalars().one()
+        item = await session.get(MediaItem, row.media_item_id)
+        assert item is not None and item.tmdb_id == 601
+        assert row.identity_source == IdentitySource.NFO
+
+
+def test_pinned_mismatch_short_title_containment() -> None:
+    """包含判定的短边下限：单字符标题（《4》）不认包含，两字符（《24》
+    ⊂「24小时」）照常认——那是真实的中英片名对应关系。"""
+    from movieclaw_api.services.library.resolve import LocalEvidence
+
+    short = MediaItem(kind="movie", tmdb_id=888, title="4", original_title="4", year=2020)
+    # 单字符包含不作数：年份矛盾时该推翻就推翻
+    assert (
+        scan_mod._pinned_mismatch(short, LocalEvidence(title="神奇4侠：初露锋芒", year=2025))
+        is not None
+    )
+    series = MediaItem(kind="tv", tmdb_id=1, title="24", original_title="24", year=2001)
+    # 两字符包含关系仍然有效：哪怕年份对不上也不推翻（别名常缺年份对齐）
+    assert scan_mod._pinned_mismatch(series, LocalEvidence(title="24小时", year=2010)) is None
+
+
+async def test_claim_rewrites_poisoned_nfo(db, tmp_path) -> None:
+    """认领反哺盘面：认领结论与目录里 NFO 声明的 tmdbid 矛盾时，NFO 被
+    原地改写为认领身份——否则下次全量重扫会把毒 NFO 原样读回（识别链
+    NFO 优先是自我固化的），Emby/Jellyfin 也继续错挂。"""
+    from movieclaw_api.services.library.claim import claim_files
+    from movieclaw_api.services.library.nfo import read_tmdb_id
+
+    root = tmp_path / "media" / "movies"
+    entry = root / "神奇4侠：初露锋芒 (2025)"
+    entry.mkdir(parents=True)
+    video = entry / "神奇4侠：初露锋芒 (2025) - 2160p.mkv"
+    video.write_bytes(b"ff")
+    poisoned = "<movie><title>4</title><year>2025</year><tmdbid>888</tmdbid></movie>"
+    (entry / "movie.nfo").write_text(poisoned, encoding="utf-8")
+    same_name = video.with_suffix(".nfo")
+    same_name.write_text(poisoned, encoding="utf-8")
+    async with db.session() as session:
+        library = await LibraryRepository(session).create(
+            name="电影库", kind="movie", root_paths=[str(root)]
+        )
+
+    await scan_library(library.id)  # 无实测时长，毒 NFO 此时仍会被采信
+    async with db.session() as session:
+        row = (await session.execute(select(LibraryFile))).scalars().one()
+        item, claimed = await claim_files(session, [row.id], tmdb_id=617126)
+        assert claimed == 1 and item.tmdb_id == 617126
+
+    # 两份毒 NFO（同名 + 目录级）都被改写为认领身份
+    assert read_tmdb_id(entry / "movie.nfo") == 617126
+    assert read_tmdb_id(same_name) == 617126
+
+    # 重扫不再中毒：身份保持认领结论
+    await scan_library(library.id)
+    async with db.session() as session:
+        row = (await session.execute(select(LibraryFile))).scalars().one()
+        item = await session.get(MediaItem, row.media_item_id)
+        assert item is not None and item.tmdb_id == 617126
+
+
+def test_guess_evidence_prefers_curated_name_over_ner(tmp_path) -> None:
+    """500 库实测：整理过的「Title (Year)」目录名是高置信来源，NER 面向
+    脏乱种子名训练、对干净长片名反而截断（截断词同年撞上别的条目就是
+    静默错挂）。两者不同形时惯例名当主查询词、NER 结果降为备选。"""
+    root = tmp_path / "tv"
+    file = root / "知否知否应是绿肥红瘦 (2018)" / "Season 01" / "E01.mkv"
+    evidence = scan_mod.guess_evidence(MediaKind.TV, root, file)
+    assert evidence is not None
+    assert evidence.title == "知否知否应是绿肥红瘦" and evidence.year == 2018
+    # NER 的抽取结果降级为备选查询词（具体形态随模型版本浮动，不钉死）
+    if evidence.alt_title is not None:
+        assert evidence.alt_title != evidence.title
+
+
+def test_guess_evidence_strips_bracket_tags_before_convention(tmp_path) -> None:
+    """「1917 (2019) [tmdbid=530915]」这类名字：纯数字片名 NER 全灭，
+    尾部标记组又挡住惯例正则——剥掉方括号组、允许年份后带尾巴之后，
+    惯例名照常抽出（标记本身另有 _path_tmdb_id 消费，互不干扰）。"""
+    root = tmp_path / "movies"
+    file = root / "1917 (2019) [tmdbid=530915]" / "1917 (2019) [tmdbid=530915].mkv"
+    evidence = scan_mod.guess_evidence(MediaKind.MOVIE, root, file)
+    assert evidence is not None
+    assert evidence.title == "1917" and evidence.year == 2019
+
+    tail = root / "饥饿站台 (2019) [tmdbid=619264] - 1080p Remux FLAC.mkv"
+    evidence = scan_mod.guess_evidence(MediaKind.MOVIE, root, tail)
+    assert evidence is not None
+    assert evidence.title == "饥饿站台" and evidence.year == 2019
+
+
+def test_unit_for_trailing_index_episode(tmp_path) -> None:
+    """裸尾号命名（「走向共和01」）：常规 SxxExx 全灭时以结尾数字为集号，
+    否则整目录几十集坍缩成同一个 E0 单元（NAS 实测 70 个特别篇合并成一格）。
+    技术尾巴（x264、4 位年份）不得误吃。"""
+    from movieclaw_api.services.library.layout import trailing_index_episode
+
+    specials = tmp_path / "走向共和 (2003)" / "Specials"
+    assert scan_mod._unit_for(MediaKind.TV, specials / "走向共和01.mp4") == (0, 1)
+    assert scan_mod._unit_for(MediaKind.TV, specials / "走向共和59.mp4") == (0, 59)
+    # 常规标记优先，兜底不抢跑
+    assert scan_mod._unit_for(MediaKind.TV, specials / "某剧 S02E03.mkv")[1] == 3
+    # 技术尾巴与年份不误吃
+    assert trailing_index_episode("Movie.x264") is None
+    assert trailing_index_episode("纪录片 2003") is None
+    assert trailing_index_episode("00") is None
+    assert trailing_index_episode("01") == 1
+
+
+def test_path_tmdb_ids_collects_conflicts(tmp_path) -> None:
+    """路径各级标记全收集（就近在前、去重）：超过一个即声明自相矛盾。"""
+    root = tmp_path / "movies"
+    file = root / "某电影 (2020) [tmdbid=888]" / "某电影 (2020) [tmdbid=300] - 2160p.mkv"
+    assert scan_mod._path_tmdb_ids(root, file) == [300, 888]
+    same = root / "某电影 (2020) [tmdbid=300]" / "某电影 (2020) [tmdbid=300].mkv"
+    assert scan_mod._path_tmdb_ids(root, same) == [300]
+
+
+async def test_conflicting_path_tags_fall_back_to_resolution(db, tmp_path) -> None:
+    """badcase 回归：目录标着正主、文件名标着另一个 id（实测 Coda 正片
+    目录 + 同名短片文件名标记），"就近优先"会静默选中错的。互相矛盾的
+    声明全部不采信，交给名称解析用证据裁决。"""
+    root = tmp_path / "media" / "movies"
+    entry = root / "某电影 (2020) [tmdbid=888]"
+    entry.mkdir(parents=True)
+    (entry / "某电影 (2020) [tmdbid=300] - 2160p.mkv").write_bytes(b"mm")
+    async with db.session() as session:
+        library = await LibraryRepository(session).create(
+            name="电影库", kind="movie", root_paths=[str(root)]
+        )
+
+    summary = await scan_library(library.id)
+    assert summary.identified == 1
+
+    async with db.session() as session:
+        row = (await session.execute(select(LibraryFile))).scalars().one()
+        item = await session.get(MediaItem, row.media_item_id)
+        # 名称解析的证据裁决胜出：既不是就近的 300 也不是 888 说了算，
+        # 而是搜索 + 年份佐证收敛出的条目（此处恰为 300——但来源是解析）
+        assert item is not None and item.tmdb_id == 300
+        assert row.identity_source == IdentitySource.RESOLVED
 
 
 async def test_restore_ignored_returns_to_unidentified(db, tmp_path) -> None:

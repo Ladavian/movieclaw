@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
@@ -102,8 +102,11 @@ export function LibraryDetailView({ libraryId }: { libraryId: number }) {
   // 工单抽屉：从哪个胶囊点进来就落在哪个 tab；null = 关闭
   const [issueTab, setIssueTab] = useState<IssueTab | null>(null);
 
+  // 轮询乱序守卫：扫描期间后端响应时间抖动大，上一轮的慢响应可能晚于
+  // 下一轮到达，不作废就会用旧快照覆盖新状态（进度回跳、胶囊闪烁）
+  const reloadSeq = useRef(0);
   const reload = useCallback(() => {
-    setFailed(false);
+    const seq = ++reloadSeq.current;
     Promise.all([
       listLibraries(),
       listLibraryItems(libraryId).catch(() => []),
@@ -114,6 +117,8 @@ export function LibraryDetailView({ libraryId }: { libraryId: number }) {
       listSubscriptions().catch(() => []),
     ])
       .then(([libs, libraryItems, unknown, reviewGroups, ignoredGroups, missingItems, subs]) => {
+        if (seq !== reloadSeq.current) return;
+        setFailed(false);
         setLibraries(libs);
         setItems(libraryItems);
         setUnidentified(unknown);
@@ -121,8 +126,17 @@ export function LibraryDetailView({ libraryId }: { libraryId: number }) {
         setIgnored(ignoredGroups);
         setMissing(missingItems);
         setSubscriptions(subs);
+        // 整库刷新可能是别处（首页卡片/其他设备）发起的：库列表响应里带着
+        // 状态，据此补种进度面板——否则只有挂载时那一次探测，之后发起的
+        // 刷新这个页面永远看不见。已有进行中的状态时不覆盖（专用轮询更新鲜）
+        const remote = libs.find((l) => l.id === libraryId)?.metadata_refresh;
+        if (remote?.refreshing) setMetaRefresh((prev) => (prev?.refreshing ? prev : remote));
       })
-      .catch(() => setFailed(true));
+      // 瞬时失败（网络抖动/后端忙）不清已有数据：failed 只决定顶部提示条，
+      // 页面继续用上一份快照展示，下一轮轮询成功即自动恢复
+      .catch(() => {
+        if (seq === reloadSeq.current) setFailed(true);
+      });
   }, [libraryId]);
 
   useEffect(() => {
@@ -148,7 +162,10 @@ export function LibraryDetailView({ libraryId }: { libraryId: number }) {
           setMetaRefresh(p);
           if (!p.refreshing) reload();
         })
-        .catch(() => setMetaRefresh(null));
+        // 瞬时失败保留旧状态、下一轮继续：这里一旦清空，refreshingMeta 变
+        // false 会把本轮询连根停掉，后台还在跑的刷新从此在界面上失踪
+        // （曾是线上实况）。刷新真结束时成功响应会带 refreshing=false 收尾
+        .catch(() => {});
     }, 2000);
     return () => clearInterval(timer);
   }, [refreshingMeta, libraryId, reload]);
@@ -160,14 +177,28 @@ export function LibraryDetailView({ libraryId }: { libraryId: number }) {
   const busy = Boolean(library?.scanning || library?.organizing);
   // 写入中暂缓入账的文件数（watchdog 已发现、等拷贝/下载落定后自动补扫入库）
   const importing = busy ? 0 : (library?.last_scan?.deferred ?? 0);
+  // busy 刚结束后保持快轮询一小段再降速：监控去抖触发的连环扫描之间隔着
+  // 几秒空档，一采样到空档就降去 30 秒档的话，下一轮扫描的开始要很久
+  // 才被发现，状态看起来就是"时隐时现"
+  const [recentlyBusy, setRecentlyBusy] = useState(false);
+  useEffect(() => {
+    if (busy) {
+      setRecentlyBusy(true);
+      return;
+    }
+    if (!recentlyBusy) return;
+    const timer = setTimeout(() => setRecentlyBusy(false), 12_000);
+    return () => clearTimeout(timer);
+  }, [busy, recentlyBusy]);
   useEffect(() => {
     // 忙时快轮询；有文件入库中 / 元数据刷新中中速跟进（刷新会边跑边换海报，
     // 让墙上的图逐步更新）；空闲低频兜底——后台自发的扫描（实时监控/定时
     // 对账）页面开着不动也能感知到
-    const interval = busy ? 3000 : importing > 0 || refreshingMeta ? 10_000 : 30_000;
+    const interval =
+      busy || recentlyBusy ? 3000 : importing > 0 || refreshingMeta ? 10_000 : 30_000;
     const timer = setInterval(reload, interval);
     return () => clearInterval(timer);
-  }, [busy, importing, refreshingMeta, reload]);
+  }, [busy, recentlyBusy, importing, refreshingMeta, reload]);
 
   // 待识别的文件总数（清单按条目目录分组，一组可能是一部剧的几十集）
   const unidentifiedFiles = unidentified.reduce((n, g) => n + g.file_count, 0);
@@ -178,6 +209,19 @@ export function LibraryDetailView({ libraryId }: { libraryId: number }) {
     () => new Map((metaRefresh?.active ?? []).map((a) => [a.media_item_id, a.phase])),
     [metaRefresh],
   );
+
+  // 扫描的补探阶段：把「还有文件没读出规格」的条目排到墙前面并点亮——
+  // 头部胶囊只有一个总数（22/25），用户看不出具体是哪几部还在处理。
+  // 仅在补探阶段生效：平时按标题排，阶段结束墙自动落回原序
+  const probing = Boolean(
+    library?.scanning && library.scan_progress?.phase === "probing",
+  );
+  const displayItems = useMemo(() => {
+    if (!probing) return items;
+    return [...items].sort(
+      (a, b) => Number(b.probe_pending_count > 0) - Number(a.probe_pending_count > 0),
+    );
+  }, [items, probing]);
 
   // 追踪中：目标是本库、且尚未在库存中出现的订阅
   const pending = useMemo(() => {
@@ -191,7 +235,10 @@ export function LibraryDetailView({ libraryId }: { libraryId: number }) {
     );
   }, [libraries, library, subscriptions, items]);
 
-  if (failed) {
+  // 只有一次都没加载成功过才整页报错；已有数据在手时，瞬时失败只在页内
+  // 挂提示条（stale-while-error）——为一次网络抖动把整面海报墙换成错误屏，
+  // 用户看到的就是"页面闪没了"
+  if (failed && libraries === null) {
     return (
       <CenteredNote>
         <p className="text-[13.5px] text-[var(--text-muted)]">媒体库加载失败</p>
@@ -411,6 +458,11 @@ export function LibraryDetailView({ libraryId }: { libraryId: number }) {
             }}
           />
         )}
+        {failed && (
+          <p className="mt-3 rounded-lg border border-amber-400/25 bg-amber-500/10 px-3.5 py-2 text-[12.5px] text-amber-200">
+            与后端通信失败，正在自动重试；下方显示的是最近一次成功加载的数据
+          </p>
+        )}
         {notice && (
           <p className="mt-3 rounded-lg border border-red-400/25 bg-red-500/10 px-3.5 py-2 text-[12.5px] text-red-200">
             {notice}
@@ -441,12 +493,15 @@ export function LibraryDetailView({ libraryId }: { libraryId: number }) {
         </p>
       ) : (
         <div className="mt-6 grid gap-x-4 gap-y-7 px-6 [grid-template-columns:repeat(auto-fill,minmax(148px,1fr))] max-md:mt-4 max-md:gap-x-3 max-md:gap-y-5 max-md:px-4 max-md:[grid-template-columns:repeat(auto-fill,minmax(140px,1fr))]">
-          {items.map((item) => (
+          {displayItems.map((item) => (
             <InventoryCell
               key={item.media_item_id}
               item={item}
               libraryId={libraryId}
-              refreshPhase={refreshPhaseById.get(item.media_item_id)}
+              workingLabel={
+                refreshPhaseById.get(item.media_item_id) ??
+                (probing && item.probe_pending_count > 0 ? "正在读取规格" : undefined)
+              }
             />
           ))}
         </div>
@@ -659,12 +714,12 @@ function MetadataRefreshPanel({
 function InventoryCell({
   item,
   libraryId,
-  refreshPhase,
+  workingLabel,
 }: {
   item: LibraryItem;
   libraryId: number;
-  /** 整库刷新正在处理这一格时的阶段文案；不在处理为 undefined */
-  refreshPhase?: string;
+  /** 这一格正被后台处理（整库刷新的阶段 / 扫描补探）时的文案；不在处理为 undefined */
+  workingLabel?: string;
 }) {
   const visual: PosterVisualItem = {
     id: String(item.tmdb_id),
@@ -694,8 +749,8 @@ function InventoryCell({
   else if (item.missing_count > 0) parts.push(`${item.missing_count} 个文件缺失`);
   return (
     <div>
-      {/* 刷新中的那一格自己点亮：面板列的是片名，海报墙上也要能一眼看到
-          "正在刷这部"，否则用户得在两处之间对片名 */}
+      {/* 后台正在处理的那一格自己点亮：进度面板/胶囊列的是总数或片名，
+          海报墙上也要能一眼看到"正在弄这部"，否则用户得在两处之间对片名 */}
       <div className="relative">
         <div className={dead ? "opacity-50 grayscale" : undefined}>
           <PosterCardVisual
@@ -704,12 +759,12 @@ function InventoryCell({
             action={libraryCardAction(item)}
           />
         </div>
-        {refreshPhase && (
+        {workingLabel && (
           <>
             <span className="pointer-events-none absolute inset-0 rounded-xl ring-2 ring-[#7dd3fc] ring-offset-0" />
             <span className="pointer-events-none absolute inset-x-0 bottom-0 flex items-center gap-1.5 rounded-b-xl bg-[rgba(7,12,20,0.82)] px-2 py-1.5 text-[10.5px] font-medium text-[#7dd3fc] backdrop-blur-sm">
               <span className="size-2.5 shrink-0 animate-spin rounded-full border-[1.5px] border-[#7dd3fc]/30 border-t-[#7dd3fc]" />
-              <span className="truncate">{refreshPhase}</span>
+              <span className="truncate">{workingLabel}</span>
             </span>
           </>
         )}

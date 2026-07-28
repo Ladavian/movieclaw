@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 from pathlib import Path
 
 logger = logging.getLogger("movieclaw_api.library_watch")
@@ -27,6 +28,38 @@ logger = logging.getLogger("movieclaw_api.library_watch")
 # 去抖参数：首个事件后等安静 3 秒；持续有事件时最长 30 秒必触发一次
 _QUIET_SECONDS = 3.0
 _MAX_WAIT_SECONDS = 30.0
+
+
+def _is_relevant_event(event) -> bool:  # noqa: ANN001
+    """该文件事件是否值得触发扫描（观察者线程调用，只做纯判定）。
+
+    两层过滤，都是防「系统自己产生的事件又触发扫描」的自激：
+
+    1. 只读事件（打开 / 未写关闭）忽略：Linux inotify 连"读文件"都会
+       上报，而扫描的补探阶段正是用 ffprobe **读**库里的文件。不滤掉就是
+       「扫描 → 读文件事件 → 再扫描」的循环——探测失败的行每轮保持
+       NULL 重试，循环永不收敛（实测线上每 ~10 秒一轮无限扫描，
+       扫描进行中的状态在前端时隐时现）；
+    2. 非视频文件的变动忽略：刮削/整库刷新写进库目录的 NFO 和图片、
+       下载器的 .!qB 半成品、字幕等附属文件，都不是扫描的盘点对象，
+       触发扫描只会让「正在扫描」在刷新/下载期间反复闪现。下载完成时
+       改名缀上视频扩展名，那一刻自然收到 moved/created 事件。
+
+    目录事件只留移动/删除——整个条目目录被挪走/删掉时收不到目录内
+    逐文件的事件；目录的新建/修改则必有后续的文件事件跟进，不必抢跑。
+    """
+    from watchdog.events import EVENT_TYPE_CLOSED_NO_WRITE, EVENT_TYPE_OPENED
+
+    from movieclaw_api.services.library.layout import VIDEO_EXTS
+
+    if event.event_type in (EVENT_TYPE_OPENED, EVENT_TYPE_CLOSED_NO_WRITE):
+        return False
+    if event.is_directory:
+        return event.event_type in ("moved", "deleted")
+    # moved 事件的语义看终点：改名成视频（下载完成）要触发，视频被改走
+    # （旧路径消失）同样要触发——起点终点任一是视频扩展名即算数
+    paths = (getattr(event, "dest_path", "") or "", event.src_path or "")
+    return any(Path(os.fsdecode(p)).suffix.lower() in VIDEO_EXTS for p in paths if p)
 
 
 class LibraryWatcher:
@@ -38,6 +71,8 @@ class LibraryWatcher:
         self._loop: asyncio.AbstractEventLoop | None = None
         self._consumer: asyncio.Task | None = None
         self._available = True
+        # 串行化重建：连续两次库编辑各自触发 refresh，并发重建会互踩 _observer
+        self._refresh_lock = asyncio.Lock()
 
     # -- 生命周期 ----------------------------------------------------------
 
@@ -50,7 +85,10 @@ class LibraryWatcher:
         if self._consumer is not None:
             self._consumer.cancel()
             self._consumer = None
-        self._stop_observer()
+        # 与后台重建互斥：重建正在工作线程里装配新观察者时直接停旧引用，
+        # 会漏掉刚装好的那个（关停竞态）；拿到锁再停则必停到最终的观察者
+        async with self._refresh_lock:
+            self._stop_observer()
 
     def _stop_observer(self) -> None:
         if self._observer is not None:
@@ -59,12 +97,16 @@ class LibraryWatcher:
             self._observer = None
 
     async def refresh_watches(self) -> None:
-        """按当前库配置重建监听（库增删改根路径后调用）。"""
+        """按当前库配置重建监听（库增删改根路径后调用）。
+
+        重建的磁盘部分（停旧观察者 join、recursive 监听逐目录建 watch、
+        网络挂载上的 is_dir）都是阻塞调用，放线程池执行——inotify 对大库
+        的递归建 watch 可达数秒到数十秒，在事件循环里跑会冻住所有请求。
+        """
         if not self._available:
             return
         try:
-            from watchdog.events import FileSystemEventHandler
-            from watchdog.observers import Observer
+            import watchdog  # noqa: F401 -- 仅探测可用性，实际使用在 _rebuild_observer
         except ImportError:
             self._available = False
             logger.warning("未安装 watchdog，媒体库实时监控不可用——仅靠定期对账发现新文件")
@@ -75,6 +117,23 @@ class LibraryWatcher:
         from movieclaw_db.engine import get_database
         from movieclaw_db.models import Library
 
+        db = get_database()
+        async with db.session() as session:
+            libraries = list((await session.execute(select(Library))).scalars().all())
+        roots = [
+            (library.id, root)
+            for library in libraries
+            if library.id is not None
+            for root in library.root_paths
+        ]
+        async with self._refresh_lock:
+            await asyncio.to_thread(self._rebuild_observer, roots)
+
+    def _rebuild_observer(self, roots: list[tuple[int, str]]) -> None:
+        """（工作线程）停掉旧观察者并按根路径清单重建。"""
+        from watchdog.events import FileSystemEventHandler
+        from watchdog.observers import Observer
+
         watcher = self
 
         class _Handler(FileSystemEventHandler):
@@ -84,28 +143,21 @@ class LibraryWatcher:
                 self._library_id = library_id
 
             def on_any_event(self, event) -> None:  # noqa: ANN001
-                if event.is_directory and event.event_type not in ("moved", "deleted"):
-                    return
-                watcher._enqueue_threadsafe(self._library_id)
-
-        db = get_database()
-        async with db.session() as session:
-            libraries = list((await session.execute(select(Library))).scalars().all())
+                if _is_relevant_event(event):
+                    watcher._enqueue_threadsafe(self._library_id)
 
         self._stop_observer()
         observer = Observer()
         watched = 0
-        for library in libraries:
-            assert library.id is not None
-            for root in library.root_paths:
-                path = Path(root)
-                if not path.is_dir():
-                    continue  # 根路径未就绪：不告警刷屏，对账任务会持续兜底
-                try:
-                    observer.schedule(_Handler(library.id), str(path), recursive=True)
-                    watched += 1
-                except OSError as exc:
-                    logger.warning("监听根路径失败（%s）：%s", root, exc)
+        for library_id, root in roots:
+            path = Path(root)
+            if not path.is_dir():
+                continue  # 根路径未就绪：不告警刷屏，对账任务会持续兜底
+            try:
+                observer.schedule(_Handler(library_id), str(path), recursive=True)
+                watched += 1
+            except OSError as exc:
+                logger.warning("监听根路径失败（%s）：%s", root, exc)
         if watched:
             observer.daemon = True
             observer.start()

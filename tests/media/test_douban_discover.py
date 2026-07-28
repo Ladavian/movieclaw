@@ -42,6 +42,12 @@ class StubDoubanClient:
             raise value
         return value
 
+    async def celebrities(self, douban_id: str) -> dict[str, Any]:
+        value = self.responses.get(f"celebrities:{douban_id}", {})
+        if isinstance(value, Exception):
+            raise value
+        return value
+
     async def aclose(self) -> None:
         pass
 
@@ -112,19 +118,24 @@ async def test_detail_maps_mobile_fields_to_shared_detail_model() -> None:
                 "pubdate": ["2019-02-05(中国大陆)"],
                 "aka": ["The Wandering Earth", "流浪地球：飞跃2020特别版"],
                 "directors": [{"name": "郭帆"}],
-                # 豆瓣的 avatar 形态不稳定：这里覆盖「字典」与「字符串」两种，
-                # 以及 character 带「饰 」前缀的情况
+                # 详情接口的 actors 只有姓名（真实形态），头像与角色来自演职员表接口
+                "actors": [{"name": f"演员{i}"} for i in range(1, 8)],
+                "url": "https://m.douban.com/movie/subject/26266893/",
+            },
+            # 豆瓣的 avatar 形态不稳定：这里覆盖「字典」与「字符串」两种，
+            # 以及 character 带「饰 」前缀的情况
+            "celebrities:26266893": {
                 "actors": [
                     {
                         "name": f"演员{i}",
-                        "character": f"饰 角色{i}",
+                        # 首位再覆盖「中文角色名 + 拉丁原文」的形态，原文应被裁掉
+                        "character": f"饰 角色{i}" + (" Role One" if i == 1 else ""),
                         "avatar": {"large": f"https://img.douban.test/a{i}.jpg"},
                     }
                     for i in range(1, 7)
                 ]
                 + [{"name": "演员7", "avatar": "https://img.douban.test/a7.jpg"}],
-                "url": "https://m.douban.com/movie/subject/26266893/",
-            }
+            },
         }
     )
     detail = await DoubanDiscoverService(client).media_detail("26266893")  # type: ignore[arg-type]
@@ -144,6 +155,28 @@ async def test_detail_maps_mobile_fields_to_shared_detail_model() -> None:
     assert detail.facts.source_url.endswith("/26266893/")
     assert detail.backdrops == []
     assert detail.related == []
+
+
+async def test_detail_falls_back_to_plain_actor_names_when_celebrities_unavailable() -> None:
+    """演职员表接口挂掉只降级为「有名字没头像」，详情页其余部分照常渲染。"""
+    client = StubDoubanClient(
+        {
+            "detail:26266893": {
+                "id": "26266893",
+                "type": "movie",
+                "title": "流浪地球",
+                "year": "2019",
+                "rating": {"value": 7.9},
+                "cover_url": "https://img3.doubanio.com/a.jpg",
+                "actors": [{"name": "吴京"}, {"name": "屈楚萧"}],
+            },
+            "celebrities:26266893": DoubanError("访问豆瓣演职员表失败，请稍后重试"),
+        }
+    )
+    detail = await DoubanDiscoverService(client).media_detail("26266893")  # type: ignore[arg-type]
+
+    assert [person.name for person in detail.facts.cast] == ["吴京", "屈楚萧"]
+    assert detail.facts.cast[0].avatar_url is None
 
 
 async def test_collection_filters_wrong_media_type() -> None:

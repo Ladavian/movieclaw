@@ -42,6 +42,7 @@
     ".next-preview-dense/types/**/*.ts",
     ".next-preview-dirpick/types/**/*.ts",
     ".next-preview-itemdetail/types/**/*.ts",
+    ".next-preview-libform/types/**/*.ts",
     ".next-preview-libhome/types/**/*.ts",
     ".next-preview-library/types/**/*.ts",
     ".next-preview-libscroll/types/**/*.ts",
@@ -50,6 +51,8 @@
     ".next-preview-network/types/**/*.ts",
     ".next-preview-pathmap/types/**/*.ts",
     ".next-preview-phase/types/**/*.ts",
+    ".next-preview-probing/types/**/*.ts",
+    ".next-preview-pwa/types/**/*.ts",
     ".next-preview-review/types/**/*.ts",
     ".next-preview-setmenu/types/**/*.ts",
     ".next-preview-sort/types/**/*.ts",
@@ -60,7 +63,8 @@
     ".next-subinspector/types/**/*.ts",
     ".next-wishbtn/types/**/*.ts",
     ".next/types/**/*.ts",
-    "next-env.d.ts"
+    "next-env.d.ts",
+    ".next-tapguard/types/**/*.ts"
   ],
   "exclude": [
     "node_modules"

@@ -430,6 +430,31 @@ async def test_item_detail_assembles_local_scrape(db, tmp_path, monkeypatch) -> 
         assert embedded2[0].codec == "subrip" and embedded2[0].language == "chi"
 
 
+async def test_wall_reports_probe_pending_count(db, tmp_path, monkeypatch) -> None:
+    """海报墙的待补探计数：扫描后没探出规格的条目 >0，补探回填后归零。
+    扫描补探阶段前端据此把「还在处理」的条目排到墙前面并点亮。"""
+    root, _entry, _video = _make_movie_entry(tmp_path)
+    async with db.session() as session:
+        library = await LibraryRepository(session).create(
+            name="电影库", kind="movie", root_paths=[str(root)]
+        )
+    summary = await scan_library(library.id)
+    assert summary.identified == 1
+
+    # 扫描时 ffprobe 对假字节探测失败 → audio_streams=NULL → 计入待补探
+    async with db.session() as session:
+        wall = await items_mod.build_library_wall(session, library.id)
+        assert [v.probe_pending_count for v in wall] == [1]
+
+    # 补探回填成功后归零
+    monkeypatch.setattr(items_mod, "probe_media", lambda _path: _FAKE_SPEC)
+    async with db.session() as session:
+        rows = list((await session.execute(select(LibraryFile))).scalars().all())
+        await items_mod.backfill_streams(session, rows)
+        wall = await items_mod.build_library_wall(session, library.id)
+        assert [v.probe_pending_count for v in wall] == [0]
+
+
 async def test_item_detail_selfsufficient_after_scan(db, tmp_path) -> None:
     """一次入库刮削（docs/design/metadata.md）：扫描挂锚即展示档案落库、
     最小身份 NFO 原地升级为完整版。详情页读路径 NFO > DB——删掉 NFO 后

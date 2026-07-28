@@ -71,6 +71,7 @@ from movieclaw_api.services.library.layout import (
     VIDEO_EXTS,
     entry_base_name,
     season_from_dir,
+    trailing_index_episode,
 )
 from movieclaw_api.services.library.resolve import verify_resolve
 from movieclaw_api.services.library.scan import guess_evidence
@@ -596,7 +597,8 @@ def _unit(file: Path, entry: Path) -> tuple[int | None, int]:
     显式 S00（特别篇）会被文件名解析正常带出，不走兜底。
     """
     attrs = enrich(file.stem)
-    episode = attrs.episodes[0] if attrs.episodes else 0
+    # 常规集号全灭时退回裸尾号兜底（「走向共和01」，与扫描器 _unit_for 同则）
+    episode = attrs.episodes[0] if attrs.episodes else (trailing_index_episode(file.stem) or 0)
     season: int | None = attrs.seasons[0] if attrs.seasons else season_from_dir(file.parent)
     if season is None:
         entry_attrs = enrich(entry.name if entry.is_dir() else entry.stem)
@@ -741,6 +743,8 @@ class IngestWatcher:
         self._watched: set[str] = set()
         # 静默到点自检任务：每个源目录至多挂一个
         self._rechecks: dict[str, asyncio.Task] = {}
+        # 串行化重建：并发的规则编辑各自触发 refresh，并发重建会互踩 _observer
+        self._refresh_lock = asyncio.Lock()
 
     def watched_keys(self) -> frozenset[str]:
         """实际在监听的源目录集合——兜底巡检只扫不在此列的目录。"""
@@ -765,7 +769,10 @@ class IngestWatcher:
         self._consumer = None
         self._catchup = None
         self._rechecks.clear()
-        self._stop_observer()
+        # 与后台重建互斥：重建正在工作线程里装配新观察者时直接停旧引用，
+        # 会漏掉刚装好的那个（关停竞态）；拿到锁再停则必停到最终的观察者
+        async with self._refresh_lock:
+            self._stop_observer()
 
     def _stop_observer(self) -> None:
         if self._observer is not None:
@@ -774,18 +781,34 @@ class IngestWatcher:
             self._observer = None
 
     async def refresh_watches(self) -> None:
-        """按当前监听导入规则重建监听（规则增删改后调用）。"""
+        """按当前监听导入规则重建监听（规则增删改后调用）。
+
+        重建的磁盘部分（停旧观察者 join、recursive 建 watch、网络挂载上的
+        is_dir）都是阻塞调用，放线程池执行，不冻住事件循环（同 library_watch）。
+        """
         if not self._available:
             return
         try:
-            from watchdog.events import FileSystemEventHandler
-            from watchdog.observers import Observer
+            import watchdog  # noqa: F401 -- 仅探测可用性，实际使用在 _rebuild_observer
         except ImportError:
             self._available = False
             logger.warning("未安装 watchdog，监听导入不实时——完成的下载靠每小时兜底巡检发现")
             return
 
         rules = await _load_rules()
+        source_paths = [rule.source_path for rule, _library in rules]
+        async with self._refresh_lock:
+            newly_watched = await asyncio.to_thread(self._rebuild_observer, source_paths)
+        # 初次纳入监听的目录补扫一次：监听建立之前完成的下载（停机期间/
+        # 目录刚就绪/刚加进配置）不会再产生事件，只有这一次主动扫能接住；
+        # 之后全靠事件驱动，不再主动扫它。队列操作回到事件循环线程再做
+        for key in sorted(newly_watched):
+            self._queue.put_nowait(key)
+
+    def _rebuild_observer(self, source_paths: list[str]) -> set[str]:
+        """（工作线程）停掉旧观察者并按源目录清单重建；返回新纳入监听的目录。"""
+        from watchdog.events import FileSystemEventHandler
+        from watchdog.observers import Observer
 
         watcher = self
 
@@ -801,17 +824,14 @@ class IngestWatcher:
         self._stop_observer()
         observer = Observer()
         watched: set[str] = set()
-        for rule, _library in rules:
-            if not Path(rule.source_path).is_dir():
+        for source_path in source_paths:
+            if not Path(source_path).is_dir():
                 continue  # 目录未就绪：兜底巡检持续兜着，不告警刷屏
             try:
-                observer.schedule(_Handler(rule.source_path), rule.source_path, recursive=True)
-                watched.add(rule.source_path)
+                observer.schedule(_Handler(source_path), source_path, recursive=True)
+                watched.add(source_path)
             except OSError as exc:
-                logger.warning("监听源目录失败（%s）：%s", rule.source_path, exc)
-        # 初次纳入监听的目录补扫一次：监听建立之前完成的下载（停机期间/
-        # 目录刚就绪/刚加进配置）不会再产生事件，只有这一次主动扫能接住；
-        # 之后全靠事件驱动，不再主动扫它
+                logger.warning("监听源目录失败（%s）：%s", source_path, exc)
         newly_watched = watched - self._watched
         self._watched = watched
         if watched:
@@ -819,8 +839,7 @@ class IngestWatcher:
             observer.start()
             self._observer = observer
             logger.info("监听导入已启动：监听 %d 个源目录", len(watched))
-        for key in sorted(newly_watched):
-            self._queue.put_nowait(key)
+        return newly_watched
 
     # -- 事件通道 ----------------------------------------------------------
 

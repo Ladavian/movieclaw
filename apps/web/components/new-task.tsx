@@ -50,7 +50,7 @@ export function NewTask() {
           />
           {locked && <LlmSetupNotice />}
           {error && (
-            <p className="mt-3 rounded-xl border border-[#ff6b6b]/30 bg-[#ff6b6b]/10 px-3.5 py-2.5 text-[13px] leading-5 text-[#ff6b6b]">
+            <p className="notice-surface mt-3 rounded-xl border border-[#ff6b6b]/35 px-3.5 py-2.5 text-[13px] leading-5 text-[#ff6b6b]">
               创建会话失败：{error}
             </p>
           )}

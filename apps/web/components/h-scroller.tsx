@@ -55,7 +55,9 @@ export function HScroller({
         ref={scrollerRef}
         onScroll={updateEdges}
         // 注意不能加 scroll-snap：snap 的回吸会和 scrollBy 的平滑动画互相抵消，导致箭头点击无效
-        className={`scroll-none flex overflow-x-auto ${className}`}
+        // overscroll-x-contain：横滑到行的尽头后不把剩余动量传给外层纵向滚动区，
+        // 否则手机上「滑到头」会顺势带动整页跳一下，手感失控也更容易误触
+        className={`scroll-none flex overflow-x-auto overscroll-x-contain ${className}`}
       >
         {children}
       </div>

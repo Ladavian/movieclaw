@@ -67,6 +67,25 @@ IN_PROGRESS_MARKERS = (
 _SEASON_DIR = re.compile(r"^(?:season[ ._-]*(\d{1,3})|s(\d{1,3}))$", re.IGNORECASE)
 _SPECIALS_DIR = re.compile(r"^(?:specials?|特别篇|特典)$", re.IGNORECASE)
 
+# 裸尾号集数：「走向共和01」「大宅门22」——无 SxxExx/「第N集」标记、纯靠
+# 结尾数字排集的命名（央视老剧资源极常见）。紧邻的前一个字符不能是字母
+# 或数字：挡住 x264/DDP5.1 这类技术尾巴；1~3 位挡住 4 位年份（Movie 2003
+# 的 "003" 也因前一位是数字而不中）
+_TRAILING_INDEX = re.compile(r"(?<![0-9A-Za-z])(\d{1,3})\s*$")
+
+
+def trailing_index_episode(stem: str) -> int | None:
+    """裸尾号命名声明的集号；解析不出（或为 0）返回 None。
+
+    只该在常规集号解析（SxxExx/第N集）全灭后作兜底——常规标记的语义
+    强得多，兜底规则抢跑会把「S01E03.特辑2」这类名字带偏。
+    """
+    match = _TRAILING_INDEX.search(stem.strip())
+    if match is None:
+        return None
+    value = int(match.group(1))
+    return value if value >= 1 else None
+
 
 def season_from_dir(directory: Path) -> int | None:
     """目录名声明的季号（特别篇为 0）；不是季目录返回 None。"""

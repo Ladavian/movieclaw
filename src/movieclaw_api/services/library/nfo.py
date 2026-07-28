@@ -56,6 +56,24 @@ def _kind_conflicting_nfo(entry_dir: Path, kind: MediaKind, item: MediaItem) -> 
     return other
 
 
+def _identity_lines(root_tag: str, item: MediaItem) -> list[str]:
+    """最小身份 NFO 的全部行（write_entry_nfo 与认领纠错的改写共用）。"""
+    lines = [
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>',
+        f"<{root_tag}>",
+        f"  <title>{escape(item.title)}</title>",
+        f"  <originaltitle>{escape(item.original_title)}</originaltitle>",
+    ]
+    if item.year is not None:
+        lines.append(f"  <year>{item.year}</year>")
+    lines.append(f"  <tmdbid>{item.tmdb_id}</tmdbid>")
+    lines.append(f'  <uniqueid type="tmdb" default="true">{item.tmdb_id}</uniqueid>')
+    if item.imdb_id:
+        lines.append(f'  <uniqueid type="imdb">{escape(item.imdb_id)}</uniqueid>')
+    lines.append(f"</{root_tag}>")
+    return lines
+
+
 def write_entry_nfo(entry_dir: Path, item: MediaItem) -> None:
     """在条目目录写出最小身份 NFO（电影 movie.nfo / 剧集 tvshow.nfo）。
 
@@ -72,26 +90,33 @@ def write_entry_nfo(entry_dir: Path, item: MediaItem) -> None:
     if _kind_conflicting_nfo(entry_dir, kind, item) is not None:
         return
 
-    lines = [
-        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>',
-        f"<{root_tag}>",
-        f"  <title>{escape(item.title)}</title>",
-        f"  <originaltitle>{escape(item.original_title)}</originaltitle>",
-    ]
-    if item.year is not None:
-        lines.append(f"  <year>{item.year}</year>")
-    lines.append(f"  <tmdbid>{item.tmdb_id}</tmdbid>")
-    lines.append(f'  <uniqueid type="tmdb" default="true">{item.tmdb_id}</uniqueid>')
-    if item.imdb_id:
-        lines.append(f'  <uniqueid type="imdb">{escape(item.imdb_id)}</uniqueid>')
-    lines.append(f"</{root_tag}>")
-
     try:
-        nfo_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        nfo_path.write_text("\n".join(_identity_lines(root_tag, item)) + "\n", encoding="utf-8")
     except OSError as exc:
         logger.warning("NFO 写出失败（不影响入库）：%s（%s）", nfo_path, exc)
         return
     logger.info("已写出 NFO：%s（tmdbid=%s）", nfo_path, item.tmdb_id)
+
+
+def rewrite_identity_nfo(nfo_path: Path, item: MediaItem) -> bool:
+    """把一份身份错误的条目 NFO **原地改写**为正确的最小身份 NFO。
+
+    仅供人工认领链路调用（覆盖策略与 write_entry_nfo 相反，绝不能混用）：
+    用户拍板的身份是最高权威，此刻这份声明着另一个 tmdbid 的 NFO 已被
+    证实指错了条目——不改写，下次全量重扫会把错误身份原样读回（识别链
+    的 NFO 优先是自我固化的），Emby/Jellyfin 也会继续错挂。旧内容不保留：
+    简介/演员本就属于错误条目；刮削任务随后会把这份最小档升级为正确
+    条目的完整版（write_full_nfo 对"tmdbid 一致的最小档"放行覆盖）。
+    """
+    kind = MediaKind(item.kind)
+    root_tag = "movie" if kind is MediaKind.MOVIE else "tvshow"
+    try:
+        nfo_path.write_text("\n".join(_identity_lines(root_tag, item)) + "\n", encoding="utf-8")
+    except OSError as exc:
+        logger.warning("认领纠错 NFO 改写失败：%s（%s）", nfo_path, exc)
+        return False
+    logger.info("认领纠错：%s 已改写为《%s》（tmdbid=%s）", nfo_path, item.title, item.tmdb_id)
+    return True
 
 
 def write_full_nfo(entry_dir: Path, item: MediaItem, meta: MediaMetadata | None) -> None:

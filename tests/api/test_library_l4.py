@@ -303,3 +303,42 @@ async def test_watcher_triggers_incremental_scan(db, tmp_path, monkeypatch) -> N
         assert rows[0].file_path.endswith("Avatar.2009.1080p.mkv")
     finally:
         await watcher.stop()
+
+
+def test_watcher_ignores_read_only_events() -> None:
+    """只读事件绝不能触发扫描——否则扫描补探（ffprobe 读文件）产生的
+    opened/closed_no_write 事件会喂回监控，形成「扫描 → 再扫描」的自激循环。"""
+    events = pytest.importorskip("watchdog.events")
+
+    path = "/lib/movie.mkv"
+    # 读文件产生的事件：忽略
+    assert not watch_mod._is_relevant_event(events.FileOpenedEvent(path))
+    assert not watch_mod._is_relevant_event(events.FileClosedNoWriteEvent(path))
+    # 视频文件内容真变化的事件：照常触发
+    assert watch_mod._is_relevant_event(events.FileCreatedEvent(path))
+    assert watch_mod._is_relevant_event(events.FileModifiedEvent(path))
+    assert watch_mod._is_relevant_event(events.FileDeletedEvent(path))
+    assert watch_mod._is_relevant_event(events.FileMovedEvent(path, "/lib/renamed.mkv"))
+    # 目录：仅移动/删除有意义（新建/修改由目录内的文件事件另行上报）
+    assert not watch_mod._is_relevant_event(events.DirModifiedEvent("/lib/dir"))
+    assert watch_mod._is_relevant_event(events.DirDeletedEvent("/lib/dir"))
+    assert watch_mod._is_relevant_event(events.DirMovedEvent("/lib/dir", "/lib/dir2"))
+
+
+def test_watcher_ignores_non_video_file_events() -> None:
+    """非视频文件的写事件不触发扫描——刮削/整库刷新写 NFO 和图片、下载器
+    写 .!qB 半成品都发生在库目录里，不滤掉的话「正在扫描」会在刷新与
+    下载期间反复闪现（也是一种系统自触发）。"""
+    events = pytest.importorskip("watchdog.events")
+
+    # 刮削产物与下载器半成品：忽略
+    assert not watch_mod._is_relevant_event(events.FileCreatedEvent("/lib/movie.nfo"))
+    assert not watch_mod._is_relevant_event(events.FileModifiedEvent("/lib/poster.jpg"))
+    assert not watch_mod._is_relevant_event(events.FileModifiedEvent("/lib/movie.mkv.!qB"))
+    assert not watch_mod._is_relevant_event(events.FileCreatedEvent("/lib/sub.chs.srt"))
+    # 下载完成改名成视频（终点是视频扩展名）：触发
+    assert watch_mod._is_relevant_event(
+        events.FileMovedEvent("/lib/movie.mkv.!qB", "/lib/movie.mkv")
+    )
+    # 视频被改走（起点是视频扩展名）：同样触发
+    assert watch_mod._is_relevant_event(events.FileMovedEvent("/lib/movie.mkv", "/lib/movie.bak"))

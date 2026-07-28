@@ -1,6 +1,7 @@
 import type { Metadata, Viewport } from "next";
 import { Inter } from "next/font/google";
 
+import { appleStartupImages } from "@/lib/apple-splash";
 import { publicEnv } from "@/lib/env";
 
 // 先引入液态玻璃组件自带的样式，再引入本项目的全局深色主题（后者可覆盖前者）。
@@ -26,6 +27,34 @@ export const metadata: Metadata = {
     template: `%s · ${publicEnv.appName}`,
   },
   description: "Movieclaw 控制台 —— 液态玻璃风格的影视追踪工作台。",
+  /**
+   * iOS「添加到主屏幕」的 App 化配置（PWA 清单见 app/manifest.ts）：
+   * - capable: 以独立 App 形态运行，去掉 Safari 地址栏与底部工具条；
+   * - black-translucent: 状态栏完全透明、页面画到状态栏底下，配合
+   *   viewport-fit=cover 与 --safe-top 让顶栏与系统状态栏无缝沉浸；
+   * - title: 主屏图标下的名字（不写则取网页 title，可能带后缀）。
+   */
+  appleWebApp: {
+    capable: true,
+    statusBarStyle: "black-translucent",
+    title: publicEnv.appName,
+    // 启动屏：iOS 不用 manifest 合成，必须逐设备给静态图（见 lib/apple-splash.ts）
+    startupImage: appleStartupImages,
+  },
+  // iOS 会把「长得像电话号码」的数字自动变成蓝色 tel 链接，
+  // 媒体条目页满屏都是年份/时长/容量数字，关掉自动识别
+  formatDetection: {
+    telephone: false,
+  },
+  // iOS 不读 manifest 里的 icons，主屏图标只认 apple-touch-icon
+  icons: {
+    apple: "/apple-touch-icon.png",
+  },
+  // Next 的 appleWebApp.capable 只输出新标准 mobile-web-app-capable；
+  // 旧版 iOS（< 16.4，不读 manifest 的 display）只认 apple- 前缀，手动补上。
+  other: {
+    "apple-mobile-web-app-capable": "yes",
+  },
 };
 
 /**

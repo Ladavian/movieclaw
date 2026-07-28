@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import type { Route } from "next";
 import Link from "next/link";
@@ -80,6 +80,21 @@ function buildMatchRules(genres: number[], regions: string[]): MatchRule[] {
   return rules;
 }
 
+/** 把区域国家码折叠成展示名：整组命中的折叠成预设组名（如「日韩」），
+ *  折不进组的逐个显示中文名。库卡片摘要与表单弹窗底栏共用。 */
+function regionLabels(regions: string[], options: RoutingOptions): string[] {
+  const parts: string[] = [];
+  let rest = [...regions];
+  for (const preset of options.region_presets) {
+    if (preset.countries.every((c) => rest.includes(c))) {
+      parts.push(preset.label);
+      rest = rest.filter((c) => !preset.countries.includes(c));
+    }
+  }
+  parts.push(...rest.map((c) => options.country_names[c] ?? c));
+  return parts;
+}
+
 /**
  * 收藏范围摘要（库卡片小字，如「动画 · 日韩」）：genre 用 ID→名映射，
  * 区域优先折叠成预设组名（全含即折叠），折不进组的国家码逐个显示中文名。
@@ -94,14 +109,7 @@ function matchRulesSummary(library: MediaLibrary, options: RoutingOptions | null
     ]),
   );
   const parts: string[] = genres.map((id) => genreNames.get(id) ?? String(id));
-  let rest = [...regions];
-  for (const preset of options.region_presets) {
-    if (preset.countries.every((c) => rest.includes(c))) {
-      parts.push(preset.label);
-      rest = rest.filter((c) => !preset.countries.includes(c));
-    }
-  }
-  parts.push(...rest.map((c) => options.country_names[c] ?? c));
+  parts.push(...regionLabels(regions, options));
   return parts.length > 0 ? parts.join(" · ") : null;
 }
 
@@ -190,10 +198,15 @@ export function LibraryView() {
   const [highlightId, setHighlightId] = useState<number | null>(null);
   const routingWarnings = useMemo(() => routingOverlapWarnings(libraries ?? []), [libraries]);
 
+  // 轮询乱序守卫：扫描期间后端响应时间抖动大，上一轮的慢响应可能晚于
+  // 下一轮到达，不作废就会用旧快照覆盖新状态（进度回跳、卡片状态闪烁）
+  const reloadSeq = useRef(0);
   const reload = useCallback(() => {
-    setFailed(false);
+    const seq = ++reloadSeq.current;
     listLibraries()
       .then(async (libs) => {
+        if (seq !== reloadSeq.current) return;
+        setFailed(false);
         setLibraries(libs);
         // 封面拼图需要各库的条目海报；库的数量级很小，并发拉取即可
         const entries = await Promise.all(
@@ -201,9 +214,14 @@ export function LibraryView() {
             async (lib) => [lib.id, await listLibraryItems(lib.id).catch(() => [])] as const,
           ),
         );
+        if (seq !== reloadSeq.current) return;
         setItemsByLibrary(new Map(entries));
       })
-      .catch(() => setFailed(true));
+      // 瞬时失败不清已有数据：failed 只决定提示条，卡片继续用上一份快照，
+      // 下一轮轮询成功即自动恢复（整页错误屏只留给一次都没加载成功的情况）
+      .catch(() => {
+        if (seq === reloadSeq.current) setFailed(true);
+      });
   }, []);
 
   useEffect(() => {
@@ -222,11 +240,25 @@ export function LibraryView() {
   const importingAny = (libraries ?? []).some(
     (l) => !l.scanning && !l.organizing && (l.last_scan?.deferred ?? 0) > 0,
   );
+  // busy 刚结束后保持快轮询一小段再降速：监控去抖触发的连环扫描之间隔着
+  // 几秒空档，一采样到空档就降去 30 秒档的话，下一轮扫描的开始要很久
+  // 才被发现，卡片状态看起来就是"时隐时现"
+  const [recentlyBusy, setRecentlyBusy] = useState(false);
   useEffect(() => {
-    const interval = busyAny ? 3000 : refreshingAny ? 5000 : importingAny ? 10_000 : 30_000;
+    if (busyAny) {
+      setRecentlyBusy(true);
+      return;
+    }
+    if (!recentlyBusy) return;
+    const timer = setTimeout(() => setRecentlyBusy(false), 12_000);
+    return () => clearTimeout(timer);
+  }, [busyAny, recentlyBusy]);
+  useEffect(() => {
+    const interval =
+      busyAny || recentlyBusy ? 3000 : refreshingAny ? 5000 : importingAny ? 10_000 : 30_000;
     const timer = setInterval(reload, interval);
     return () => clearInterval(timer);
-  }, [busyAny, refreshingAny, importingAny, reload]);
+  }, [busyAny, recentlyBusy, refreshingAny, importingAny, reload]);
 
   // 新建的库进入列表后滚进视野（依赖 libraries：创建到列表刷新之间隔着
   // 一次请求，元素这时才存在），高亮 2.5 秒后自行褪去
@@ -315,7 +347,9 @@ export function LibraryView() {
         </div>
       )}
 
-      {failed && (
+      {/* 只有一次都没加载成功过才整页报错；已有数据在手时，瞬时失败只挂
+          提示条（stale-while-error），卡片照常展示上一份快照 */}
+      {failed && libraries === null && (
         <div className="mt-16 flex flex-col items-center gap-3 text-center">
           <p className="text-[13.5px] text-[var(--text-muted)]">媒体库加载失败</p>
           <button
@@ -328,7 +362,13 @@ export function LibraryView() {
         </div>
       )}
 
-      {libraries !== null && !failed && libraries.length === 0 && (
+      {failed && libraries !== null && (
+        <div className="mx-6 mt-4 rounded-xl border border-amber-400/25 bg-amber-500/10 px-4 py-3 text-[12.5px] text-amber-200 max-md:mx-4">
+          与后端通信失败，正在自动重试；下方显示的是最近一次成功加载的数据
+        </div>
+      )}
+
+      {libraries !== null && libraries.length === 0 && (
         <div className="mt-20 flex flex-col items-center gap-4 px-6 text-center">
           <p className="text-[15px] font-semibold text-[var(--text)]">还没有媒体库</p>
           <p className="max-w-[440px] text-[13px] leading-relaxed text-[var(--text-muted)]">
@@ -349,7 +389,7 @@ export function LibraryView() {
 
       {/* 库卡片横排：库多了不换行堆高，改为一行横滚（与下方「最近添加」
           同一交互），首屏始终保住「库 → 最近添加」的信息层次 */}
-      {libraries !== null && !failed && (
+      {libraries !== null && (
         <HScroller className="mt-6 gap-5 px-6 pb-1 pt-1 max-md:mt-4 max-md:gap-3.5 max-md:px-4">
           {libraries.map((library) => (
             <div
@@ -416,7 +456,7 @@ export function LibraryView() {
 
 /**
  * 库存条目 → 发现页海报卡的数据形态。点击走 /media/{type}/{tmdb_id} 详情
- * （与单库页库存格同一目标）；徽章位放最高清晰度，副行放规模/大小。
+ * （与单库页库存格同一目标）；副行放规模/大小。海报保持干净，不打清晰度徽章。
  */
 function libraryItemToMediaItem(item: LibraryItem): MediaItem {
   let extent = "";
@@ -438,7 +478,7 @@ function libraryItemToMediaItem(item: LibraryItem): MediaItem {
     rating: 0,
     genres: [],
     extent,
-    badges: item.resolutions.slice(0, 1),
+    badges: [],
     overview: "",
     // 海报可能是本地刮削资产的相对路径（/images/assets/...），也可能是
     // TMDB 图床绝对地址——统一经 imageUrl 解析（补 API base / 走缓存代理）
@@ -855,6 +895,8 @@ export function LibraryFormDialog({
   // 收藏范围（可选声明）：类型 ID 多选 + 区域国家码多选，条件间是"且"
   const [matchGenres, setMatchGenres] = useState<number[]>([]);
   const [matchRegions, setMatchRegions] = useState<string[]>([]);
+  // 表单分两个页签：必填的基本信息 / 可选的收藏范围，避免单页长滚动拥挤
+  const [tab, setTab] = useState<"basic" | "scope">("basic");
   const routingOptions = useRoutingOptions();
 
   // 每次打开时按目标重置表单（编辑带入现值，新增清空）
@@ -868,6 +910,7 @@ export function LibraryFormDialog({
     setMatchGenres(parsed.genres);
     setMatchRegions(parsed.regions);
     setPickerTarget(null);
+    setTab("basic");
   }, [state, library]);
 
   if (state === null) return null;
@@ -906,10 +949,39 @@ export function LibraryFormDialog({
     "text-[var(--text)] outline-none focus:border-[var(--accent)]/60";
   const labelClass = "mb-1.5 block text-xs font-medium text-[var(--text-muted)]";
 
+  // 收藏范围的当前声明摘要（底栏常显）：切到基本信息页签也能看到已设了什么。
+  // 区域折叠复用卡片摘要的 regionLabels（整组折叠 + 零散国家码兜底），
+  // 两处口径一致；genre 只算当前库类型下有效的（另一类型独有的提交时会被过滤）
+  const activeRegionLabels = routingOptions === null ? [] : regionLabels(matchRegions, routingOptions);
+  const activeGenreLabels = genreOptions.filter((g) => matchGenres.includes(g.id)).map((g) => g.label);
+  const scopeParts = [activeRegionLabels.join(" / "), activeGenreLabels.join(" / ")].filter(Boolean);
+  // 可选项未加载完时按原始选择兜底，避免编辑刚打开的一瞬小圆点闪灭
+  const scopeDeclared =
+    routingOptions === null
+      ? matchRegions.length > 0 || matchGenres.length > 0
+      : scopeParts.length > 0;
+  const scopeSummary =
+    scopeParts.length > 0
+      ? `只收：${scopeParts.join(" + ")}`
+      : scopeDeclared
+        ? "已声明收藏范围"
+        : "收藏范围未声明";
+  // 保存按钮置灰时说明缺什么，不让用户对着灰按钮猜
+  const missingFields = [name.trim() ? null : "名称", roots.length > 0 ? null : "根路径"].filter(
+    (v): v is string => v !== null,
+  );
+
   return (
     <>
-      <Modal open onClose={onClose} label={library ? `编辑「${library.name}」` : "添加媒体库"}>
-        <div className="scroll-thin max-h-[76dvh] space-y-4 overflow-y-auto p-6 max-md:p-5">
+      <Modal
+        open
+        onClose={onClose}
+        label={library ? `编辑「${library.name}」` : "添加媒体库"}
+        width="lg"
+        panelClassName="flex max-h-[82dvh] flex-col"
+      >
+        {/* 头部：标题 + 分段页签 */}
+        <div className="shrink-0 border-b border-white/[0.06] px-6 pt-5 max-md:px-5">
           <h2 className="text-[17px] font-bold text-white">
             {library ? "编辑媒体库" : "添加媒体库"}
             {library && (
@@ -918,13 +990,42 @@ export function LibraryFormDialog({
               </span>
             )}
           </h2>
+          <div role="tablist" aria-label="表单分区" className="mt-3 flex gap-5">
+            {(
+              [
+                ["basic", "基本信息"],
+                ["scope", "收藏范围"],
+              ] as const
+            ).map(([key, tabLabel]) => (
+              <button
+                key={key}
+                type="button"
+                role="tab"
+                aria-selected={tab === key}
+                onClick={() => setTab(key)}
+                className={`relative pb-2.5 text-[13px] font-medium transition-colors ${
+                  tab === key ? "text-white" : "text-[var(--text-muted)] hover:text-white"
+                }`}
+              >
+                {tabLabel}
+                {/* 收藏范围已有声明时点亮小圆点：不点开页签也知道设过 */}
+                {key === "scope" && scopeDeclared && (
+                  <span className="ml-1 inline-block size-1.5 -translate-y-1 rounded-full bg-[var(--accent)]" />
+                )}
+                {tab === key && (
+                  <span className="absolute inset-x-0 bottom-0 h-0.5 rounded-full bg-[var(--accent)]" />
+                )}
+              </button>
+            ))}
+          </div>
+        </div>
 
-          {error && (
-            <p className="rounded-lg border border-red-400/25 bg-red-500/10 px-3.5 py-2.5 text-[13px] leading-6 text-red-200">
-              {error}
-            </p>
-          )}
-
+        {/* 主体：当前页签的表单区。视口够高时 min-h 抑制切页签的高度跳动；
+            矮视口（横屏手机）必须允许收缩，否则底栏会被挤出面板裁掉——
+            这里跟的是高度不是宽度，故用 min-height 媒体查询而非 md: 断点 */}
+        <div className="scroll-thin min-h-0 flex-1 space-y-4 overflow-y-auto p-6 max-md:p-5 [@media(min-height:600px)]:min-h-[280px]">
+          {tab === "basic" && (
+            <>
           {/* 类型：创建后不可改（订阅按类型挂库） */}
           <div>
             <label className={labelClass}>库类型{library ? "（创建后不可修改）" : ""}</label>
@@ -950,6 +1051,10 @@ export function LibraryFormDialog({
               type="text"
               value={name}
               onChange={(e) => setName(e.target.value)}
+              onKeyDown={(e) => {
+                // isComposing：中文输入法选词的回车不当提交
+                if (e.key === "Enter" && !e.nativeEvent.isComposing && canSubmit) submit();
+              }}
               placeholder="如：电影库 / 动漫库"
               autoComplete="off"
               className={inputClass}
@@ -1030,100 +1135,112 @@ export function LibraryFormDialog({
             </div>
             <p className="mt-1.5 text-[11px] leading-relaxed text-[var(--text-faint)]">
               新入库的内容落在<strong className="font-medium text-[var(--text-muted)]">主根</strong>下：主根/标题
-              (年份)。其余为扩展根：扫描与监控照常覆盖、存量入账，但不写入新内容，适合跨盘存放的旧内容。
+              (年份)。其余为扩展根：扫描与监控照常覆盖，但不写入新内容。
             </p>
           </div>
+            </>
+          )}
 
           {/* 收藏范围（可选）：声明"本库收什么"，订阅与监听导入按它自动选库。
               区域按预设组一键勾选（存储是展开后的国家码）；两个维度间是"且" */}
-          <div>
-            <label className={labelClass}>
-              收藏范围
-              <span className="ml-1.5 font-normal text-[var(--text-faint)]">
-                （可选：声明后，订阅与监听导入按作品特征自动选进本库）
-              </span>
-            </label>
-            {routingOptions === null ? (
-              <p className="rounded-xl border border-white/[0.08] bg-white/[0.03] px-3 py-2.5 text-[12px] text-[var(--text-faint)]">
-                正在加载可选项…
-              </p>
-            ) : (
-              <div className="space-y-3 rounded-xl border border-white/[0.08] bg-white/[0.03] p-3">
-                <div>
-                  <p className="mb-1.5 text-[11px] text-[var(--text-faint)]">
-                    区域（勾选任一即匹配）
-                  </p>
-                  <div className="flex flex-wrap gap-1.5">
-                    {routingOptions.region_presets.map((preset) => {
-                      const active = preset.countries.every((c) => matchRegions.includes(c));
-                      return (
-                        <button
-                          key={preset.key}
-                          type="button"
-                          data-active={active}
-                          title={preset.countries
-                            .map((c) => routingOptions.country_names[c] ?? c)
-                            .join(" / ")}
-                          onClick={() =>
-                            setMatchRegions((prev) =>
-                              active
-                                ? prev.filter((c) => !preset.countries.includes(c))
-                                : [...new Set([...prev, ...preset.countries])],
-                            )
-                          }
-                          className="glass-row nav-item !w-auto px-3 py-1.5 text-xs font-medium"
-                        >
-                          {preset.label}
-                        </button>
-                      );
-                    })}
-                  </div>
-                </div>
-                <div>
-                  <p className="mb-1.5 text-[11px] text-[var(--text-faint)]">
-                    类型（勾选任一即匹配）
-                  </p>
-                  <div className="flex flex-wrap gap-1.5">
-                    {genreOptions.map((g) => (
+          {tab === "scope" && (
+            <>
+          <p className="text-[12px] leading-relaxed text-[var(--text-muted)]">
+            可选：声明「本库收什么」后，订阅与监听导入按作品特征自动选进本库。
+            全部留空 = 不声明，该类型的默认库承接未命中的作品；订阅时永远可以手动改库。
+          </p>
+          {routingOptions === null ? (
+            <p className="rounded-xl border border-white/[0.08] bg-white/[0.03] px-3 py-2.5 text-[12px] text-[var(--text-faint)]">
+              正在加载可选项…
+            </p>
+          ) : (
+            <>
+              <div>
+                <label className={labelClass}>区域（勾选任一即匹配）</label>
+                <div className="flex flex-wrap gap-1.5">
+                  {routingOptions.region_presets.map((preset) => {
+                    const active = preset.countries.every((c) => matchRegions.includes(c));
+                    return (
                       <button
-                        key={g.id}
+                        key={preset.key}
                         type="button"
-                        data-active={matchGenres.includes(g.id)}
+                        data-active={active}
+                        title={preset.countries
+                          .map((c) => routingOptions.country_names[c] ?? c)
+                          .join(" / ")}
                         onClick={() =>
-                          setMatchGenres((prev) =>
-                            prev.includes(g.id)
-                              ? prev.filter((id) => id !== g.id)
-                              : [...prev, g.id],
+                          setMatchRegions((prev) =>
+                            active
+                              ? prev.filter((c) => !preset.countries.includes(c))
+                              : [...new Set([...prev, ...preset.countries])],
                           )
                         }
                         className="glass-row nav-item !w-auto px-3 py-1.5 text-xs font-medium"
                       >
-                        {g.label}
+                        {preset.label}
                       </button>
-                    ))}
-                  </div>
+                    );
+                  })}
                 </div>
-                <p className="text-[11px] leading-relaxed text-[var(--text-faint)]">
-                  区域与类型同时勾选时须<strong className="font-medium text-[var(--text-muted)]">同时满足</strong>
-                  （如「日韩 + 动画」= 只收日韩的动画）。全部留空 =
-                  不声明，该类型的默认库会承接所有未命中的作品；订阅弹窗里永远可以手动改库。
-                </p>
               </div>
-            )}
-          </div>
+              <div>
+                <label className={labelClass}>类型（勾选任一即匹配）</label>
+                <div className="flex flex-wrap gap-1.5">
+                  {genreOptions.map((g) => (
+                    <button
+                      key={g.id}
+                      type="button"
+                      data-active={matchGenres.includes(g.id)}
+                      onClick={() =>
+                        setMatchGenres((prev) =>
+                          prev.includes(g.id)
+                            ? prev.filter((id) => id !== g.id)
+                            : [...prev, g.id],
+                        )
+                      }
+                      className="glass-row nav-item !w-auto px-3 py-1.5 text-xs font-medium"
+                    >
+                      {g.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              {matchRegions.length > 0 && matchGenres.length > 0 && (
+                <p className="text-[11px] leading-relaxed text-[var(--text-faint)]">
+                  区域与类型须<strong className="font-medium text-[var(--text-muted)]">同时满足</strong>
+                  （如「日韩 + 动画」= 只收日韩的动画）。
+                </p>
+              )}
+            </>
+          )}
+            </>
+          )}
+        </div>
 
-          <div className="flex items-center justify-end gap-3 pt-1">
-            <button type="button" onClick={onClose} className="btn-glass h-9 px-4 text-[13px] font-medium">
-              取消
-            </button>
-            <button
-              type="button"
-              onClick={submit}
-              disabled={!canSubmit}
-              className="btn-accent h-9 rounded-full px-5 text-[13px] font-semibold disabled:opacity-40"
-            >
-              {busy ? "保存中…" : "保存"}
-            </button>
+        {/* 底栏：错误 + 范围摘要 + 操作，任一页签下常显 */}
+        <div className="shrink-0 border-t border-white/[0.06] px-6 py-4 max-md:px-5">
+          {error && (
+            <p className="mb-3 rounded-lg border border-red-400/25 bg-red-500/10 px-3.5 py-2.5 text-[13px] leading-6 text-red-200">
+              {error}
+            </p>
+          )}
+          <div className="flex items-center justify-between gap-3">
+            <p className="min-w-0 truncate text-[11px] text-[var(--text-faint)]">
+              {missingFields.length > 0 ? `还需填写：${missingFields.join("、")}` : scopeSummary}
+            </p>
+            <div className="flex shrink-0 items-center gap-3">
+              <button type="button" onClick={onClose} className="btn-glass h-9 px-4 text-[13px] font-medium">
+                取消
+              </button>
+              <button
+                type="button"
+                onClick={submit}
+                disabled={!canSubmit}
+                className="btn-accent h-9 rounded-full px-5 text-[13px] font-semibold disabled:opacity-40"
+              >
+                {busy ? "保存中…" : "保存"}
+              </button>
+            </div>
           </div>
         </div>
       </Modal>

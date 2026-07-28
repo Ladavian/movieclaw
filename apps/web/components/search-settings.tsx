@@ -75,7 +75,8 @@ interface SiteOption {
 }
 
 /**
- * 设置页「搜索」分区：搜索面板分类栏的完整配置。
+ * 搜索分类配置：搜索面板分类栏的完整设置，作为「资源站点」分区的
+ * 「搜索分类」标签页（分类筛的就是同分区接入的那些站点，不单设分区）。
  *
  * 一个统一混排的标签列表：内置分类（不可删只可隐藏）与自定义分类（可增删改）
  * 同列拖拽排序、同款显隐开关；「全部」固定在搜索面板首位，不在此列表中。
@@ -255,7 +256,6 @@ export function SearchSection() {
   return (
     <div className="space-y-5">
       <section>
-        <h3 className="group-label mb-2.5 px-1">搜索分类</h3>
         {/* divide-y 常驻：拖动中若移除分隔线会让整列高度跳 1px×行数，按下瞬间坐标漂移 */}
         <div className="css-glass select-none divide-y divide-white/[0.055] !rounded-2xl">
           {tabs.map((tab, index) => (
@@ -527,7 +527,7 @@ function PresetEditor({
             <p className="text-[12px] text-[var(--text-faint)]">正在加载站点列表…</p>
           ) : siteOptions.length === 0 ? (
             <p className="text-[12px] text-[var(--text-faint)]">
-              还没有配置任何站点；先去「资源站点」接入站点，或直接保存（默认搜全部可用站点）。
+              还没有接入任何站点；先切到「站点接入」标签页添加，或直接保存（默认搜全部可用站点）。
             </p>
           ) : (
             <div className="flex flex-wrap gap-1.5">

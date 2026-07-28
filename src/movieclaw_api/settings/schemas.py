@@ -299,22 +299,24 @@ class SidebarUiPrefs(BaseModel):
     两个值直接对应前端 WebGL 着色器的参数（见 apps/web/lib/glass.ts）：
     侧栏玻璃的基底是 LiquidGlassCard 同款材质（见 apps/web/lib/glass.ts），
     三个值是在其上微调的滑杆，默认值即 Card 出厂观感：
-    - ``transparency``：玻璃透明程度。0 = Card 标准玻璃（默认），1 = 玻璃完全
+    - ``transparency``：玻璃透明程度。0 = Card 标准玻璃，1 = 玻璃完全
       隐去；对应 shader 的 u_opacity（材质整体淡出）。
-    - ``brightness``：玻璃明暗。-1 最暗 ~ 1 最亮，默认 0（不加暗不提亮）；
+    - ``brightness``：玻璃明暗。-1 最暗 ~ 1 最亮，0 = 不加暗不提亮；
       对应 shader 的 tint 参数。
     - ``depth``：玻璃厚度（边缘曲率带宽度，px）。越大越像厚玻璃、边缘折射带
-      越宽；对应 shader 的 u_zRadius，默认 32（Card 出厂值），过小会使
-      高度场退化，故下限取 10。
-    默认值必须与前端 DEFAULT_UI_PREFS 保持一致。
+      越宽；对应 shader 的 u_zRadius，过小会使高度场退化，故下限取 10。
+    默认值是实际调校后确定的出厂观感（半透 + 略压暗 + 偏薄的边缘折射带），
+    而非 Card 材质的原始参数；必须与前端 DEFAULT_UI_PREFS 保持一致。
     """
 
     transparency: float = Field(
-        default=0.0, ge=0.0, le=1.0, description="玻璃透明程度：0 标准玻璃，1 完全隐去"
+        default=0.49, ge=0.0, le=1.0, description="玻璃透明程度：0 标准玻璃，1 完全隐去"
     )
-    brightness: float = Field(default=0.0, ge=-1.0, le=1.0, description="玻璃明暗：-1 最暗，1 最亮")
+    brightness: float = Field(
+        default=-0.36, ge=-1.0, le=1.0, description="玻璃明暗：-1 最暗，1 最亮"
+    )
     depth: float = Field(
-        default=32.0, ge=10.0, le=90.0, description="玻璃厚度（边缘曲率带宽度，px）"
+        default=28.0, ge=10.0, le=90.0, description="玻璃厚度（边缘曲率带宽度，px）"
     )
 
 
@@ -328,18 +330,19 @@ class ScrimUiPrefs(BaseModel):
     - ``blur``：高斯模糊半径（px）。0 = 不模糊、背景大图清晰透出；越大背景
       越朦胧。
     - ``dark``：压暗程度（蒙版底色的不透明度）。0 = 完全不压暗，1 = 全黑。
-    默认值即历史版本「外观预览态」的轻蒙版观感（浅暗 + 轻模糊，背景大图
-    隐约透出），必须与前端 DEFAULT_UI_PREFS 保持一致。
+    默认值是实际调校后确定的出厂观感：中等模糊 + 近七成压暗，背景大图化为
+    朦胧色块托住内容、又不至于抢走注意力；必须与前端 DEFAULT_UI_PREFS
+    以及 globals.css 里 .page-scrim 的变量兜底值保持一致。
     """
 
     blur: float = Field(
-        default=3.0,
+        default=13.0,
         ge=0.0,
         le=40.0,
         description="蒙版高斯模糊半径（px）：0 不模糊，越大背景越朦胧",
     )
     dark: float = Field(
-        default=0.45,
+        default=0.69,
         ge=0.0,
         le=1.0,
         description="蒙版压暗程度：0 完全不压暗，1 全黑",

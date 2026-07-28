@@ -46,6 +46,7 @@ import {
  *   1. 沉浸背景 —— 进入本页时把全站背景临时换成该片剧照（setOverrideBackdrop），
  *      页面本身不再画 Hero 卡片：大图直出、零边界。顶栏首屏只有一颗返回键浮在
  *      剧照上。没有横幅剧照的条目退回海报（背景层自己会铺满并模糊）。
+ *      豆瓣来源例外：图源只有小尺寸海报，铺满是糊图，索性保留用户配置的背景。
  *   2. 氛围留白 + 渐变内容层 —— 留一段什么都不放的高度让剧照呼吸，其下从全透明
  *      渐入页面底色，与背景之间没有接缝。
  *   3. 头部信息区 —— 海报 + 标题 / 元信息 / 外部词条链接 / 订阅操作，
@@ -113,8 +114,12 @@ export function MediaDetailView({
   // 沉浸背景：进入本页把全站背景临时换成该片剧照，离开即恢复用户配置的背景。
   // 与媒体库条目详情页同一条链路（见 lib/backdrop.tsx 的 overrideUrl）。
   // 没有横幅剧照时退回海报——背景层自己会铺满，竖图拉伸后本就是一层氛围色。
+  //
+  // 豆瓣来源不换背景：豆瓣只有小尺寸海报、没有高清横幅剧照，铺成全屏背景是一片
+  // 糊图，比用户自己配置的背景差得多。宁可保持原背景，也不要为了"沉浸"降质。
   const { setOverrideBackdrop } = useBackdrop();
-  const immersiveUrl = item?.backdropUrl || item?.posterUrl || "";
+  const immersiveUrl =
+    source === "douban" ? "" : item?.backdropUrl || item?.posterUrl || "";
   useEffect(() => {
     if (!immersiveUrl) return;
     setOverrideBackdrop(immersiveUrl);

@@ -22,6 +22,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 
@@ -33,6 +34,9 @@ from movieclaw_db.models import ImportWatch, Library
 from movieclaw_db.models.base import utcnow
 
 logger = logging.getLogger("movieclaw_api.import_watch_config")
+
+# 后台监听重建任务的存活引用：create_task 若不持有引用可能被 GC 中途取消
+_refresh_tasks: set[asyncio.Task] = set()
 
 STRATEGIES = ("hardlink", "copy")
 _KINDS = ("movie", "tv")
@@ -77,7 +81,7 @@ class ImportWatchConfigService:
         self._session.add(row)
         await self._session.commit()
         await self._session.refresh(row)
-        await _refresh_watcher()
+        _refresh_watcher()
         library = await self._session.get(Library, library_id) if library_id else None
         logger.info(
             "已创建监听导入规则：%s → %s（%s）",
@@ -111,14 +115,14 @@ class ImportWatchConfigService:
         row.updated_at = utcnow()
         await self._session.commit()
         await self._session.refresh(row)
-        await _refresh_watcher()
+        _refresh_watcher()
         return row
 
     async def delete(self, rule_id: int) -> None:
         row = await self.get(rule_id)
         await self._session.delete(row)
         await self._session.commit()
-        await _refresh_watcher()
+        _refresh_watcher()
         logger.info("已删除监听导入规则：%s", row.source_path)
 
     # -- 校验 --------------------------------------------------------------
@@ -276,10 +280,23 @@ async def resolve_dispatch_rule(
     return None
 
 
-async def _refresh_watcher() -> None:
-    """规则变更后重建监听（监听器未启动时为 no-op）。"""
-    from movieclaw_api.services.library.ingest import get_ingest_watcher
+def _refresh_watcher() -> None:
+    """规则变更后在后台重建监听（监听器未启动时为 no-op）。
 
-    watcher = get_ingest_watcher()
-    if watcher is not None:
-        await watcher.refresh_watches()
+    重建的 recursive 建 watch 在大目录/网络挂载上可达数秒到数十秒，不能
+    拖住保存请求——只调度任务立即返回；重建期间完成的下载由兜底巡检接住。
+    """
+
+    async def _do() -> None:
+        from movieclaw_api.services.library.ingest import get_ingest_watcher
+
+        try:
+            watcher = get_ingest_watcher()
+            if watcher is not None:
+                await watcher.refresh_watches()
+        except Exception:  # noqa: BLE001 -- 后台任务无人 await，异常必须就地落日志
+            logger.exception("重建监听导入的目录监听失败（兜底巡检仍会发现完成的下载）")
+
+    task = asyncio.create_task(_do())
+    _refresh_tasks.add(task)
+    task.add_done_callback(_refresh_tasks.discard)

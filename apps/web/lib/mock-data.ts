@@ -11,7 +11,6 @@ import {
   FolderIcon,
   GlobeIcon,
   PaletteIcon,
-  SearchIcon,
   ServerIcon,
   SparkIcon,
   TerminalIcon,
@@ -115,7 +114,6 @@ export const settingsSectionGroups: SettingsSectionGroup[] = [
     items: [
       { id: "profile", label: "个人信息", description: "头像、昵称与登录密码", icon: UserIcon },
       { id: "appearance", label: "外观", description: "首页背景与界面质感", icon: PaletteIcon },
-      { id: "search", label: "搜索", description: "分类栏排序与自定义分类", icon: SearchIcon },
     ],
   },
   {
@@ -124,7 +122,7 @@ export const settingsSectionGroups: SettingsSectionGroup[] = [
     label: "资源与下载",
     items: [
       { id: "subscription", label: "订阅", description: "订阅链路体检与规则组", icon: BookmarkIcon },
-      { id: "sites", label: "资源站点", description: "PT 站点接入、鉴权与插件 Cookie 同步", icon: ServerIcon },
+      { id: "sites", label: "资源站点", description: "站点接入与鉴权、搜索分类、插件 Cookie 同步", icon: ServerIcon },
       { id: "downloaders", label: "下载器", description: "qBittorrent / Transmission 接入", icon: DownloadIcon },
       { id: "import-watch", label: "监听导入", description: "监听下载目录，完成后自动整理入库", icon: FolderIcon },
     ],

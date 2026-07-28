@@ -13,6 +13,7 @@ from collections.abc import Sequence
 
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlmodel import select
 
 from movieclaw_db.models import MediaEpisode, MediaItem, MediaMetadata, MediaSeason, utcnow
 from movieclaw_db.repositories import MediaItemRepository
@@ -122,6 +123,21 @@ class MediaLibraryService:
             )
         except Exception as exc:  # noqa: BLE001 -- 预取失败不是错误，建档时会重来
             logger.debug("TMDB 档案预取失败（改由建档时重试）：%s/%s：%s", kind.value, tmdb_id, exc)
+
+    async def runtime_minutes(self, media_item_id: int) -> int | None:
+        """条目档案里的片长（电影）/单集常规时长（剧集），分钟；未知为 None。
+
+        识别链用它校验钉死身份：NFO 声明的条目片长与文件实测时长悬殊时是
+        "声明指向了另一部作品"的硬证据（见 library_scan._pinned_mismatch）。
+        """
+        row = (
+            await self._session.execute(
+                select(MediaMetadata.runtime_minutes).where(
+                    MediaMetadata.media_item_id == media_item_id
+                )
+            )
+        ).scalar_one_or_none()
+        return row
 
     async def resolve_douban(
         self,

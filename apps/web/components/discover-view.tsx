@@ -20,6 +20,7 @@ import { HttpError } from "@/lib/http";
 import { useMediaDetail } from "@/lib/media-detail";
 import { usePageChrome } from "@/lib/page-chrome";
 import { useIsMobile } from "@/lib/use-media-query";
+import { useTapGuard } from "@/lib/use-tap-guard";
 import type {
   DiscoverPageData,
   MediaItem,
@@ -335,6 +336,9 @@ function HeroBanner({ items }: { items: MediaItem[] }) {
 
 function HeroSlide({ item, active }: { item: MediaItem; active: boolean }) {
   const { open } = useMediaDetail();
+  // Hero 占满首屏，手机上「向下滑看海报墙」几乎必然从这块起手，
+  // 「更多信息」正落在起手区里，同样过一遍误触判定。
+  const tapGuard = useTapGuard(() => open(item));
   return (
     <div
       aria-hidden={!active}
@@ -406,7 +410,7 @@ function HeroSlide({ item, active }: { item: MediaItem; active: boolean }) {
           </button>
           <button
             type="button"
-            onClick={() => open(item)}
+            {...tapGuard}
             className="btn-glass h-10 bg-white/10 px-5 text-[13px] font-medium backdrop-blur-md"
           >
             <InfoIcon className="size-4" />

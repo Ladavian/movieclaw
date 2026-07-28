@@ -488,15 +488,20 @@ async def get_library(
     session: AsyncSession = Depends(get_session),
 ) -> ApiResponse[LibraryView]:
     service = LibraryConfigService(session)
+    row = await service.get(library_id)
+    # 字段口径与列表接口保持一致（stats/metadata_refresh 一个不缺）：
+    # 单库接口少给字段就是给调用方埋雷——stats 会静默回全零默认值
     return ok(
         LibraryView.from_model(
-            await service.get(library_id),
+            row,
+            stats=(await _stats_by_library(session)).get(library_id),
             scanning=is_scanning(library_id),
             scan_progress=_scan_progress_view(library_id),
             last_scan=_last_scan_view(library_id),
             organizing=is_organizing(library_id),
             organize_progress=_organize_progress_view(library_id),
             last_organize=_last_organize_view(library_id),
+            metadata_refresh=_metadata_refresh_view(library_id),
         )
     )
 

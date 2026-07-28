@@ -399,6 +399,11 @@ function SearchPalette({
                 : "搜索资源或 IMDb ID… · 下次按 ⌘K / Ctrl+K 唤醒"
             }
             aria-label={mode === "media" ? "搜索影视条目" : "搜索站点资源"}
+            // 搜索词是片名/IMDb ID，不是英文句子：iOS 的首字母大写和自动纠错
+            // 会把 "tt0111161"、"Dune" 这类输入改得面目全非，全部关掉
+            autoCapitalize="off"
+            autoCorrect="off"
+            spellCheck={false}
             className="h-[52px] min-w-0 flex-1 bg-transparent text-[15px] text-[var(--text)] outline-none placeholder:text-[var(--text-faint)]"
           />
           <ModeSwitch mode={mode} onChange={changeMode} />

@@ -215,6 +215,10 @@ export function LibraryItemDetailView({
       // 立刻重拉一次详情：服务端的 scraping 标志会接管后续状态展示，
       // 前端不再盲等固定秒数（那种写法一旦离开页面状态就丢了）
       reload();
+      // 后台任务在响应发出后才起跑，上面那次 reload 可能抢在 scraping
+      // 标志立起之前拉到 false——稍后再拉一次兜底，否则界面毫无动静、
+      // 轮询也不会启动，用户会以为没点上
+      setTimeout(reload, 1500);
     } catch (err) {
       setReidentifyError(err instanceof Error ? err.message : "元数据刷新失败，请稍后重试");
     } finally {

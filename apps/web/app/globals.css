@@ -73,6 +73,28 @@ body {
   height: 100%;
 }
 
+html {
+  /* iOS 横屏时会自作主张放大「它认为是正文」的文字，把精排的紧凑布局撑破；
+     锁定为 100% 关掉这个推断（无障碍缩放不受影响，用户捏合仍然有效）。 */
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+  /* iOS 点按任意可点元素会闪一块系统灰色高亮，与全站自定义的
+     active 态（缩放/白色蒙层）叠在一起很脏，关掉用自己的。 */
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* iOS 对每次点按都要等一拍判断「是不是双击缩放」，快速连点（翻页、
+   步进按钮）会被误判成缩放手势把页面放大。声明 manipulation 告诉系统
+   这些元素只做点按/平移，判定取消、响应也更跟手。捏合缩放不受影响。 */
+button,
+a,
+input,
+select,
+textarea,
+[role="button"] {
+  touch-action: manipulation;
+}
+
 body {
   margin: 0;
   color: var(--text);
@@ -174,13 +196,14 @@ body::before {
  * 显隐由 app-shell 统一控制，新增页面自动继承、无需登记）。
  * 模糊度与压暗程度由用户偏好驱动（ui.preferences.scrim → --scrim-blur /
  * --scrim-dark，见 lib/ui-prefs.tsx），设置里的滑杆全站即时生效；
- * 变量未就绪时兜底为默认值（浅暗 0.45 + 轻模糊 3px，背景大图隐约透出）。
+ * 变量未就绪时兜底为出厂默认值（压暗 0.69 + 模糊 13px，背景大图化为朦胧色块），
+ * 须与 lib/api/ui.ts 的 DEFAULT_UI_PREFS 及后端 ScrimUiPrefs 的默认值一致。
  */
 .page-scrim,
 .search-palette-overlay {
-  background: rgb(5 7 12 / var(--scrim-dark, 0.45));
-  backdrop-filter: blur(var(--scrim-blur, 3px));
-  -webkit-backdrop-filter: blur(var(--scrim-blur, 3px));
+  background: rgb(5 7 12 / var(--scrim-dark, 0.69));
+  backdrop-filter: blur(var(--scrim-blur, 13px));
+  -webkit-backdrop-filter: blur(var(--scrim-blur, 13px));
 }
 .page-scrim {
   position: fixed;
@@ -296,6 +319,9 @@ a {
 /* composer 静止即带投影，聚焦时叠加指示环并加深投影（保留投影不闪断） */
 .composer-shell {
   transition: box-shadow 160ms ease;
+  /* 玻璃 composer 折射任意背景图，正文/占位字统一垫一层极淡暗影托底：
+     暗图下几乎不可见，亮图、花图下把字从纹理里托出来（text-shadow 可继承） */
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.45);
 }
 .composer-shell:focus-within {
   box-shadow:
@@ -585,6 +611,20 @@ a {
 }
 
 /*
+ * 直接压在背景大图上的文字提示条（首页 LLM 引导、创建失败错误等）。
+ *
+ * 背景图是用户上传的任意图片，亮度与纹理完全不可控——文字可读性不能押注
+ * 在「图恰好够暗/够素」上（与 .menu-surface 的取舍同理）：给一个足够实的
+ * 深色底 + 强模糊，无论背后是什么图对比度都成立，只留一丝透维持玻璃语言。
+ * 边框颜色不在这里定死，由使用方按语义配（默认 --line、错误态红）。
+ */
+.notice-surface {
+  background: rgb(15 17 23 / 0.55);
+  backdrop-filter: blur(20px) saturate(1.2);
+  -webkit-backdrop-filter: blur(20px) saturate(1.2);
+}
+
+/*
  * 设置内容区的子卡片（个人信息 / 字段组 / 开关组 / 站点配置等）。
  * 现只用于设置模式，承载在近黑玻璃面板之上。质感对齐参考站 Component Studio 的元素：
  * 不是「浮起的实心灰块 + 重投影」，而是「玻璃上的一层极淡白色磨砂内嵌」——
@@ -804,6 +844,10 @@ body.cmdk-open .app-shell {
  */
 .mobile-topbar {
   padding-top: var(--safe-top);
+  /* 横屏刘海：顶栏是 absolute 铺满全宽的浮层，不吃主区的安全区内边距，
+     左右要自己让开，否则汉堡/搜索会缩进刘海或圆角里。 */
+  padding-left: var(--safe-left);
+  padding-right: var(--safe-right);
   background: linear-gradient(
     180deg,
     rgba(9, 11, 16, 0.86) 0%,

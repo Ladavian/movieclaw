@@ -69,7 +69,10 @@ export function Composer({
           }
         }}
         placeholder={placeholder ?? (busy ? "生成中，可先输入下一条…" : "随心输入，描述一个新任务…")}
-        className="scroll-thin block w-full resize-none bg-transparent px-4 pb-1 pt-3.5 text-[14px] leading-6 text-[var(--text)] placeholder:text-[var(--text-faint)] focus:outline-none"
+        // 锁定态的占位符是提示语（说明为何不可用）而非装饰，按 muted 档渲染保证可读
+        className={`scroll-thin block w-full resize-none bg-transparent px-4 pb-1 pt-3.5 text-[14px] leading-6 text-[var(--text)] focus:outline-none ${
+          disabled ? "placeholder:text-[var(--text-muted)]" : "placeholder:text-[var(--text-faint)]"
+        }`}
       />
       <div className="flex items-center justify-between px-2.5 pb-2.5 pt-1">
         <button

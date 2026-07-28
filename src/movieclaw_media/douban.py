@@ -34,6 +34,11 @@ logger = logging.getLogger("movieclaw_media.douban")
 # 详情页演职员条最多取多少位（与 TMDB 侧的 service._CAST_LIMIT 同口径）
 _CAST_LIMIT = 16
 
+# 角色名里的中日韩字符；以及中文角色名后面跟着的那段拉丁原文（含空格、点、
+# 撇号、连字符）。只在角色名本身含中日韩字符时才裁，纯外文角色名要原样保留。
+_CJK = re.compile(r"[㐀-鿿぀-ヿ가-힯]")
+_LATIN_ROLE_TAIL = re.compile(r"\s+[A-Za-z][A-Za-z0-9 .'’-]*$")
+
 DEFAULT_API_BASE_URL = "https://m.douban.com/rexxar/api/v2"
 _PAGE_TTL = 6 * 60 * 60
 _SEARCH_TTL = 10 * 60
@@ -184,16 +189,45 @@ class DoubanClient:
             raise DoubanError("豆瓣未返回有效的条目详情")
         return data
 
+    async def celebrities(self, douban_id: str) -> dict[str, Any]:
+        """读取豆瓣完整演职员表。
+
+        详情接口（/movie/{id}）里的 actors 只有姓名，没有头像也没有角色；带头像和
+        角色名的完整名单在这个独立接口里，形如 {"directors": [...], "actors": [...]}，
+        每人含 avatar.{large,normal}、character、id。演职员条要出头像就必须多打这一跳。
+        """
+
+        async def fetch() -> dict[str, Any]:
+            try:
+                async with self._limiter:
+                    response = await self._client.get(
+                        f"/movie/{douban_id}/celebrities", params={"for_mobile": 1}
+                    )
+                response.raise_for_status()
+                return response.json()
+            except (httpx.HTTPError, ValueError) as exc:
+                logger.warning("豆瓣演职员表请求失败：%s（%s）", douban_id, exc)
+                raise _translate_httpx_error(exc, "演职员表") from exc
+
+        # 演职员表与详情同源同频（基本不变），沿用详情档位的双 TTL
+        return await self._swr.get_or_fetch(
+            f"celebrities:{douban_id}",
+            fresh_ttl=_DETAIL_FRESH_TTL,
+            stale_ttl=_DETAIL_STALE_TTL,
+            factory=fetch,
+        )
+
     async def aclose(self) -> None:
         await self._client.aclose()
 
 
 def _cast_members(actors: Any) -> list[MediaCastMember]:
-    """豆瓣条目的 actors → 演职员条。
+    """豆瓣条目的演职员数组 → 演职员条（演职员表接口与详情接口的两种形态都吃）。
 
     豆瓣这个字段的形态不稳定：avatar 有时是字符串，有时是 {small,normal,large}
     的字典；character 常带「饰 」前缀（如「饰 老东家」），去掉前缀交给前端统一
-    加。取不到头像的人照样保留——名字与角色本身就是信息。
+    加，中文角色名后缀的原文（「安迪·杜佛兰 Andy Dufresne」）在窄卡片里只会被
+    截断，一并去掉。取不到头像的人照样保留——名字与角色本身就是信息。
     """
     members: list[MediaCastMember] = []
     for person in (actors or [])[:_CAST_LIMIT]:
@@ -207,6 +241,7 @@ def _cast_members(actors: Any) -> list[MediaCastMember]:
             avatar = avatar.get("large") or avatar.get("normal") or avatar.get("small")
         role = (person.get("character") or "").strip()
         role = role.removeprefix("饰 ").removeprefix("饰演 ").strip()
+        role = _LATIN_ROLE_TAIL.sub("", role) if _CJK.search(role) else role
         members.append(
             MediaCastMember(
                 name=name,
@@ -276,6 +311,18 @@ class DoubanDiscoverService:
             lambda: self._build_detail(douban_id),
         )
 
+    async def _celebrity_actors(self, douban_id: str) -> list[Any]:
+        """取带头像的演员名单；这一跳失败只降级演职员条，不影响详情页其余部分。"""
+        try:
+            return (await self._client.celebrities(douban_id)).get("actors") or []
+        except DoubanError as exc:
+            logger.warning(
+                "豆瓣演职员表不可用：%s（%s），退回详情接口里的演员姓名（无头像）",
+                douban_id,
+                exc,
+            )
+            return []
+
     async def _build_detail(self, douban_id: str) -> MediaDetail:
         data = await self._client.detail(douban_id)
         kind = MediaKind.TV if data.get("type") == "tv" or data.get("is_tv") else MediaKind.MOVIE
@@ -307,13 +354,16 @@ class DoubanDiscoverService:
             poster_url=cover,
         )
         directors = [person.get("name") for person in data.get("directors") or []]
+        # 演职员优先用带头像的完整名单；该接口不可用时退回详情里的姓名列表，
+        # 只是没有头像和角色——不能因为多打的这一跳失败就让整个详情页失败。
+        actors = await self._celebrity_actors(douban_id) or data.get("actors")
         pubdates = data.get("pubdate") or []
         released = data.get("release_date") or (pubdates[0] if pubdates else "")
         return MediaDetail(
             card=card,
             facts=MediaFacts(
                 directors=[name for name in directors if name][:3],
-                cast=_cast_members(data.get("actors")),
+                cast=_cast_members(actors),
                 country=" / ".join(data.get("countries") or []),
                 language=" / ".join(data.get("languages") or []),
                 released=released,

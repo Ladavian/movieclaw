@@ -214,6 +214,8 @@ export interface LibraryItem {
   missing_episode_count: number;
   /** 最近一次文件入账时间（ISO 字符串），首页「最近添加」排序依据 */
   added_at: string | null;
+  /** 在位但尚未探出介质规格的文件数——扫描补探阶段据此把「还在处理」的条目排到墙前面 */
+  probe_pending_count: number;
 }
 
 /** 收敛器判不了时留下的一个候选（点一下即可认领）。 */

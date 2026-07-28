@@ -11,6 +11,7 @@ L1 阶段它的唯一消费者是投递：订阅/手动下载按"入库到哪个
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import posixpath
 import re
@@ -23,6 +24,9 @@ from movieclaw_db.repositories.library_repo import LibraryRepository
 from movieclaw_media.models import MediaKind
 
 logger = logging.getLogger("movieclaw_api.library_config")
+
+# 后台监听重建任务的存活引用：create_task 若不持有引用可能被 GC 中途取消
+_refresh_tasks: set[asyncio.Task] = set()
 
 # 条目目录名里的文件系统保留字符（跨 ext4/NTFS/APFS 的并集），统一替换为空格。
 # Plex/Emby 对目录名的解析只依赖 "标题 (年份)" 结构，替换不影响识别。
@@ -136,17 +140,31 @@ class LibraryConfigService:
             raise ConflictException(f"名称「{name}」已被使用，请换一个")
 
     @staticmethod
-    async def _refresh_watcher() -> None:
-        """库/根路径/监听目录变更后重建实时监听（监听器未启动时为 no-op）。"""
-        from movieclaw_api.services.library.ingest import get_ingest_watcher
-        from movieclaw_api.services.library.watch import get_library_watcher
+    def _refresh_watcher() -> None:
+        """库/根路径/监听目录变更后在后台重建实时监听（监听器未启动时为 no-op）。
 
-        watcher = get_library_watcher()
-        if watcher is not None:
-            await watcher.refresh_watches()
-        ingest_watcher = get_ingest_watcher()
-        if ingest_watcher is not None:
-            await ingest_watcher.refresh_watches()
+        重建对大库（recursive 建 watch）/网络挂载可达数秒到数十秒，不能拖住
+        保存请求——这里只调度任务立即返回，弹窗秒关；重建期间的新文件由
+        定期对账兜底，不存在漏网。
+        """
+
+        async def _do() -> None:
+            from movieclaw_api.services.library.ingest import get_ingest_watcher
+            from movieclaw_api.services.library.watch import get_library_watcher
+
+            try:
+                watcher = get_library_watcher()
+                if watcher is not None:
+                    await watcher.refresh_watches()
+                ingest_watcher = get_ingest_watcher()
+                if ingest_watcher is not None:
+                    await ingest_watcher.refresh_watches()
+            except Exception:  # noqa: BLE001 -- 后台任务无人 await，异常必须就地落日志
+                logger.exception("重建媒体库实时监听失败（定期对账仍会兜底发现新文件）")
+
+        task = asyncio.create_task(_do())
+        _refresh_tasks.add(task)
+        task.add_done_callback(_refresh_tasks.discard)
 
     async def create(
         self,
@@ -166,7 +184,7 @@ class LibraryConfigService:
         row = await self._repo.create(
             name=name.strip(), kind=kind.value, root_paths=roots, match_rules=rules
         )
-        await self._refresh_watcher()
+        self._refresh_watcher()
         return row
 
     async def update(
@@ -189,7 +207,7 @@ class LibraryConfigService:
             library_id, name=name.strip(), root_paths=roots, match_rules=rules
         )
         assert updated is not None  # get() 已确认存在
-        await self._refresh_watcher()
+        self._refresh_watcher()
         return updated
 
     async def set_default(self, library_id: int) -> Library:
@@ -203,5 +221,5 @@ class LibraryConfigService:
         """删除库。挂在它上面的订阅回落到该类型默认库（外键 SET NULL）。"""
         row = await self.get(library_id)
         await self._repo.delete(library_id)
-        await self._refresh_watcher()
+        self._refresh_watcher()
         logger.info("媒体库「%s」已删除，其订阅将回落到该类型的默认库", row.name)

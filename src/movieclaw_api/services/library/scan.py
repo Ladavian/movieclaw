@@ -46,7 +46,12 @@ from pathlib import Path
 
 from sqlmodel import select
 
-from movieclaw_api.services.library.layout import VIDEO_EXTS, entry_dirs, season_from_dir
+from movieclaw_api.services.library.layout import (
+    VIDEO_EXTS,
+    entry_dirs,
+    season_from_dir,
+    trailing_index_episode,
+)
 from movieclaw_api.services.library.nfo import NfoIdentity, read_entry_identity
 from movieclaw_api.services.library.resolve import (
     LocalEvidence,
@@ -78,6 +83,10 @@ _IGNORE_MARKERS = ("sample",)
 # 「风筝 (2017) [tmdbid=75956]」「Kite [tmdb-75956]」「{tmdb-75956}」
 _PATH_TMDBID = re.compile(r"[\[{]\s*tmdb(?:id)?\s*[-=]\s*(\d+)\s*[\]}]", re.IGNORECASE)
 
+# 方括号/花括号标记组（[tmdbid=N]、[1080p] 等）：匹配"Title (Year)"惯例名
+# 前先剥掉，否则尾部标记会挡住惯例识别
+_BRACKET_GROUP = re.compile(r"[\[{][^\]}]*[\]}]")
+
 # 识别器版本号：识别链（NFO 解析 / 名称解析 / TMDB 证据收敛）发生**实质**
 # 变更时 +1。扫描会对「已识别、但版本落后且非人工认领」的行重走识别链复核
 # （身份对账）：新旧结论一致只更新版本戳；不一致写入复核建议、由用户在
@@ -86,7 +95,10 @@ _PATH_TMDBID = re.compile(r"[\[{]\s*tmdb(?:id)?\s*[-=]\s*(\d+)\s*[\]}]", re.IGNO
 # 版本史：1 = 特性上线前的隐式版本（存量行 resolved_version 为 NULL）；
 #         2 = NFO 结构化解析（修复演员 person id / 分集 id 冒认条目身份）
 #         3 = 钉死身份不再免检（类型冲突检测 + 声明与本地证据的矛盾校验）
-RESOLVER_VERSION = 3
+#         4 = 原盘目录名不再被 .stem 截断（E.T.外星人）；钉死身份矛盾校验
+#             增加时长轴并收紧超短标题的包含判定（3 分钟短片《4》冒认
+#             神奇4侠）；目录名 Title (Year) 惯例作备选查询词
+RESOLVER_VERSION = 4
 
 # 身份来源的中文名（日志与提示用）
 _ID_SOURCE_NAMES = {
@@ -98,6 +110,13 @@ _KIND_NAMES = {MediaKind.MOVIE: "电影", MediaKind.TV: "剧集"}
 # 钉死身份的年份反证阈值（年）：同一部作品在 TMDB 与文件名上的年份不会差
 # 这么多；超出才有资格参与"推翻用户显式声明"的判定（见 _pinned_mismatch）
 _PINNED_YEAR_TOLERANCE = 2
+
+# 钉死身份的时长反证阈值：条目片长与文件实测时长**相差 3 倍以上且绝对差
+# 超过 30 分钟**才算矛盾。同一部作品的导演剪辑/加长版差不到 2 倍，3 倍
+# 起步的只会是"NFO 指向了另一部作品"（实测：3 分钟短片《4》冒认 115
+# 分钟的神奇4侠）；绝对差下限挡住两部都是短片时的倍数噪声
+_PINNED_RUNTIME_RATIO = 3
+_PINNED_RUNTIME_GAP_SECONDS = 30 * 60
 
 # 新文件的静默窗口：mtime 距今不足该值视为"疑似写入中"，本轮暂缓入账。
 # 只看 mtime 不看大小——BT 客户端预分配全尺寸文件，大小从一开始就不变
@@ -567,6 +586,16 @@ def _is_disc_dir(directory: Path) -> bool:
     return (directory / "BDMV").is_dir() or (directory / "VIDEO_TS").is_dir()
 
 
+def unit_name(file: Path, is_disc: bool) -> str:
+    """识别单元的"干净名字"：普通文件去扩展名，原盘目录名**原样保留**。
+
+    目录没有扩展名，对它用 ``Path.stem`` 会把含点片名的最后一段误当扩展名
+    截掉（实测：原盘目录「E.T.外星人 (1982)」→ stem 只剩「E.T」，片名与
+    年份证据全丢，整条识别链因此空转）。识别链上凡是要拿单元名字的地方
+    都必须走这里，不允许直接用 ``file.stem``。"""
+    return file.name if is_disc else file.stem
+
+
 def disc_main_stream(disc_dir: Path) -> Path | None:
     """原盘的主流文件：BDMV/STREAM 或 VIDEO_TS 下最大的流文件（探测用）。"""
     for sub, exts in (("BDMV/STREAM", {".m2ts"}), ("VIDEO_TS", {".vob"})):
@@ -690,6 +719,7 @@ async def _ingest_file(
             episodes_cache,
             duration_seconds=spec.duration_seconds if spec else None,
             hint=hint,
+            is_disc=is_disc,
         )
         unidentified_reason, candidates = identified.reason, identified.candidates
         unidentified_code = identified.code
@@ -705,7 +735,7 @@ async def _ingest_file(
             summary.unidentified += 1
             if unidentified_code == UnidentifiedCode.KIND_MISMATCH:
                 summary.kind_mismatched += 1
-    attrs = enrich(file.stem if not is_disc else file.name)
+    attrs = enrich(unit_name(file, is_disc))
     assert library.id is not None
     await repo.upsert_by_path(
         LibraryFile(
@@ -791,6 +821,7 @@ async def _review_identity(
         episodes_cache,
         duration_seconds=row.duration_seconds,
         hint=hint,
+        is_disc=row.container in ("bluray", "dvd"),
     )
     item = identified.item
     if item is None and identified.code == UnidentifiedCode.TMDB_UNREACHABLE:
@@ -1068,6 +1099,7 @@ async def _identify(
     *,
     duration_seconds: int | None = None,
     hint: _SubtitleHint | None = None,
+    is_disc: bool = False,
 ) -> _Identified:
     """识别链主入口。
 
@@ -1076,19 +1108,34 @@ async def _identify(
     与"确实找不到匹配"区分开：前者修好网络重扫即可，后者需要人工认领。
     收敛器给出候选时一并带回（``candidates``），让用户在清单里直接点选。
     """
-    nfo = _entry_nfo(kind, root, file)
+    nfo = _entry_nfo(kind, root, file, is_disc=is_disc)
 
     # ⓪ 类型冲突：文件实际是剧集/电影，与所在库的类型对不上（零网络成本）
-    conflict = _kind_conflict(kind, file, nfo)
+    conflict = _kind_conflict(kind, file, nfo, is_disc=is_disc)
     if conflict is not None:
         return _Identified(None, conflict, code=UnidentifiedCode.KIND_MISMATCH)
 
     # 本地证据先算出来：既是步骤②的输入，也是步骤①校验钉死身份的标尺
-    evidence = guess_evidence(kind, root, file)
+    evidence = guess_evidence(kind, root, file, is_disc=is_disc)
 
     # ① 显式精确身份：路径 tmdbid 标记（就近优先）→ NFO
+    # 各级路径上的标记互相矛盾时全部不采信（实测：目录标着正主、文件名
+    # 标着同名短片，"就近优先"会静默选中错的那个）——自相矛盾的声明不如
+    # 让名称解析用物理证据（年份/时长）裁决；解析也失败时原因里说清矛盾
     rejected_pin: str | None = None
-    tmdb_id, id_source = pinned_tmdb_id(kind, root, file, nfo=nfo)
+    path_ids = _path_tmdb_ids(root, file)
+    if len(path_ids) > 1:
+        rejected_pin = (
+            f"路径上的 tmdbid 标记互相矛盾（{'、'.join(str(i) for i in path_ids)}），均不采信"
+        )
+        logger.warning("%s：%s", rejected_pin, file)
+        tmdb_id, id_source = (
+            (nfo.tmdb_id, IdentitySource.NFO)
+            if nfo is not None and nfo.tmdb_id is not None
+            else (None, None)
+        )
+    else:
+        tmdb_id, id_source = pinned_tmdb_id(kind, root, file, nfo=nfo)
     if tmdb_id is not None and id_source is not None:
         try:
             item = await media_service.ensure_media_item(kind, tmdb_id)
@@ -1100,7 +1147,19 @@ async def _identify(
                 exc,
             )
         else:
-            mismatch = _pinned_mismatch(item, evidence)
+            # 时长轴只对电影生效：剧集的 runtime 是"单集常规时长"，特别篇/
+            # 合集文件的实测时长天然偏离，拿去推翻声明会误伤
+            runtime_minutes = (
+                await media_service.runtime_minutes(item.id)
+                if kind is MediaKind.MOVIE and item.id is not None
+                else None
+            )
+            mismatch = _pinned_mismatch(
+                item,
+                evidence,
+                duration_seconds=duration_seconds,
+                runtime_minutes=runtime_minutes,
+            )
             if mismatch is None:
                 return _Identified(item, source=id_source)
             # 声明与本地证据严重矛盾：不采信，降级走名称解析（它要过完整的
@@ -1146,7 +1205,9 @@ async def _resolve_by_name(
         if evidence is None:
             if hint.alt_title:
                 evidence = LocalEvidence(title=hint.alt_title)
-        else:
+        elif hint.alt_title:
+            # 线索里真有中文名才顶掉备选词——guess_evidence 可能已放了
+            # "Title (Year)"惯例名在这个位置，别被空线索冲掉
             evidence.alt_title = hint.alt_title
         if evidence is not None:
             evidence.total_episodes = hint.total_episodes
@@ -1201,7 +1262,12 @@ async def _resolve_by_name(
 
 
 def pinned_tmdb_id(
-    kind: MediaKind, root: Path, file: Path, *, nfo: NfoIdentity | None = None
+    kind: MediaKind,
+    root: Path,
+    file: Path,
+    *,
+    nfo: NfoIdentity | None = None,
+    is_disc: bool = False,
 ) -> tuple[int | None, IdentitySource | None]:
     """路径/NFO 里被**显式钉死**的 TMDB 身份，返回 (id, 来源)。
 
@@ -1214,12 +1280,14 @@ def pinned_tmdb_id(
     if tmdb_id is not None:
         return tmdb_id, IdentitySource.PATH_TAG
     if nfo is None:
-        nfo = _entry_nfo(kind, root, file)
+        nfo = _entry_nfo(kind, root, file, is_disc=is_disc)
     tmdb_id = nfo.tmdb_id if nfo is not None else None
     return (tmdb_id, IdentitySource.NFO) if tmdb_id is not None else (None, None)
 
 
-def _kind_conflict(kind: MediaKind, file: Path, nfo: NfoIdentity | None) -> str | None:
+def _kind_conflict(
+    kind: MediaKind, file: Path, nfo: NfoIdentity | None, *, is_disc: bool = False
+) -> str | None:
     """文件的实际类型与所在库的类型是否冲突（冲突时返回中文原因）。
 
     为什么这一刀必须在识别链最前面：TMDB 的 movie 与 tv 是**两套独立的 id
@@ -1239,35 +1307,64 @@ def _kind_conflict(kind: MediaKind, file: Path, nfo: NfoIdentity | None) -> str 
             f"{_KIND_NAMES[nfo.kind]}，但所在媒体库的类型是「{_KIND_NAMES[kind]}」"
         )
     if kind is MediaKind.MOVIE:
-        attrs = enrich(file.stem)
+        attrs = enrich(unit_name(file, is_disc))
         if season_from_dir(file.parent) is not None or (attrs.seasons and attrs.episodes):
             return "文件带季集号（是剧集），但所在媒体库的类型是「电影」"
     return None
 
 
-def _pinned_mismatch(item: MediaItem, evidence: LocalEvidence | None) -> str | None:
+def _pinned_mismatch(
+    item: MediaItem,
+    evidence: LocalEvidence | None,
+    *,
+    duration_seconds: int | None = None,
+    runtime_minutes: int | None = None,
+) -> str | None:
     """钉死身份拉到的条目是否与本地证据**严重**矛盾（矛盾时返回条目描述）。
 
     显式声明是用户的强意图，判定必须克制——手写 ``[tmdbid=N]`` 的主要用途
     恰恰是"机器认不出来时我告诉你"（拼音名、意译名目录），标题对不上是
-    这类场景的常态，单凭标题不符推翻声明会误伤一大片。因此要求**标题与
-    年份双双不符**才判矛盾：
-    - 标题：本地片名与条目主名/原名/别名归一后既不相等也无包含关系；
-    - 年份：两边都有年份且相差超过 2 年（同一部作品的年份偏差不会这么大）。
+    这类场景的常态，单凭标题不符推翻声明会误伤一大片。因此**标题相符就
+    永不推翻**；标题不符时还须至少一条硬证据反对才判矛盾：
+    - 标题：本地片名与条目主名/原名/别名归一后既不相等也无包含关系。
+      包含判定要求**短边至少 2 个字符**——单字符标题（实测：短片《4》）
+      几乎是任何片名的子串，包含关系在它身上零区分度；
+    - 年份：两边都有年份且相差超过 2 年（同一部作品的年份偏差不会这么大）；
+    - 时长（调用方只对电影传入）：条目片长与实测时长相差 3 倍以上且绝对差
+      超 30 分钟（实测：NFO 里 3 分钟短片《4》冒认 115 分钟的神奇4侠，
+      年份恰好同为 2025，年份轴对这类错误天然失明）。
 
     命中的是"标记打错数字"「NFO 是别的片子的残留」这类真错误，以及库类型
     选错时侥幸绕过类型检测的漏网之鱼。
     """
-    if evidence is None or evidence.year is None or item.year is None:
-        return None
-    if abs(item.year - evidence.year) <= _PINNED_YEAR_TOLERANCE:
+    if evidence is None:
         return None
     local = normalize_title(evidence.title)
     for text in (item.title, item.original_title, *item.aliases):
         known = normalize_title(text) if text else ""
-        if known and (known == local or known in local or local in known):
+        if not known:
+            continue
+        if known == local:
             return None
-    return f"《{item.title}》({item.year})"
+        if min(len(known), len(local)) >= 2 and (known in local or local in known):
+            return None
+    year_conflict = (
+        evidence.year is not None
+        and item.year is not None
+        and abs(item.year - evidence.year) > _PINNED_YEAR_TOLERANCE
+    )
+    runtime_note = ""
+    if duration_seconds and runtime_minutes:
+        shorter, longer = sorted((duration_seconds, runtime_minutes * 60))
+        if longer >= shorter * _PINNED_RUNTIME_RATIO and (
+            longer - shorter >= _PINNED_RUNTIME_GAP_SECONDS
+        ):
+            runtime_note = (
+                f"，片长 {runtime_minutes} 分钟 vs 本地实测约 {round(duration_seconds / 60)} 分钟"
+            )
+    if not year_conflict and not runtime_note:
+        return None
+    return f"《{item.title}》({item.year if item.year is not None else '年份未知'}{runtime_note})"
 
 
 def _path_tmdb_id(root: Path, file: Path) -> int | None:
@@ -1285,8 +1382,29 @@ def _path_tmdb_id(root: Path, file: Path) -> int | None:
         current = current.parent
 
 
-def _entry_nfo(kind: MediaKind, root: Path, file: Path) -> NfoIdentity | None:
+def _path_tmdb_ids(root: Path, file: Path) -> list[int]:
+    """路径各级名字上的**全部** tmdbid 标记（去重保序，就近在前）。
+
+    超过一个说明声明自相矛盾（识别链据此整体不采信，见 ``_identify``）。
+    """
+    ids: dict[int, None] = {}
+    current = file
+    while True:
+        for raw in _PATH_TMDBID.findall(current.name):
+            ids.setdefault(int(raw), None)
+        if current == root or current.parent == current:
+            return list(ids)
+        current = current.parent
+
+
+def _entry_nfo(
+    kind: MediaKind, root: Path, file: Path, *, is_disc: bool = False
+) -> NfoIdentity | None:
     """找该文件适用的条目级 NFO：同名 .nfo → 目录级 movie/tvshow.nfo（向上到库根）。
+
+    原盘单元（``is_disc``）的"文件"是目录：``with_suffix`` 对含点目录名
+    会拼出无意义路径（「E.T.外星人 (1982)」→「E.T.nfo」），且刮削器惯例
+    把 movie.nfo 写在**盘内**——因此原盘从自身目录开始向上找、不做同名。
 
     本函数只负责"查找顺序"这层策略；单份 NFO 的解析交给 library_nfo 的
     结构化解析器（正则扒文本会被 <actor> 块里的演员 person id 污染）。
@@ -1301,18 +1419,8 @@ def _entry_nfo(kind: MediaKind, root: Path, file: Path) -> NfoIdentity | None:
     前面，整库每个文件都被自己写的 NFO 判成"放错库了"。只有一份声明时
     不受影响——真正放错库的文件照样判得出来。
     """
-    entry_names = (
-        ("movie.nfo", "tvshow.nfo") if kind is MediaKind.MOVIE else ("tvshow.nfo", "movie.nfo")
-    )
-    candidates = [file.with_suffix(".nfo")]
-    current = file.parent
-    while True:
-        candidates.extend(current / name for name in entry_names)
-        if current == root or current.parent == current:
-            break
-        current = current.parent
     fallback: NfoIdentity | None = None
-    for nfo in candidates:
+    for nfo in entry_nfo_candidates(kind, root, file, is_disc=is_disc):
         if not nfo.is_file():
             continue
         identity = read_entry_identity(nfo)
@@ -1325,7 +1433,30 @@ def _entry_nfo(kind: MediaKind, root: Path, file: Path) -> NfoIdentity | None:
     return fallback
 
 
-def guess_evidence(kind: MediaKind, root: Path, file: Path) -> LocalEvidence | None:
+def entry_nfo_candidates(
+    kind: MediaKind, root: Path, file: Path, *, is_disc: bool = False
+) -> list[Path]:
+    """条目级 NFO 的查找路径序列（就近优先；``_entry_nfo`` 与认领纠错共用）。
+
+    普通文件：同名 .nfo → 各级目录的 movie/tvshow.nfo（向上到库根）；
+    原盘目录：盘内 movie/tvshow.nfo → 各级父目录（目录名不做同名拼接）。
+    """
+    entry_names = (
+        ("movie.nfo", "tvshow.nfo") if kind is MediaKind.MOVIE else ("tvshow.nfo", "movie.nfo")
+    )
+    candidates = [] if is_disc else [file.with_suffix(".nfo")]
+    current = file if is_disc else file.parent
+    while True:
+        candidates.extend(current / name for name in entry_names)
+        if current == root or current.parent == current:
+            break
+        current = current.parent
+    return candidates
+
+
+def guess_evidence(
+    kind: MediaKind, root: Path, file: Path, *, is_disc: bool = False
+) -> LocalEvidence | None:
     """收集本地识别证据：条目名/年份 + 剧集的季集号（供收敛验证器佐证）。
 
     条目名：剧集优先用"剧集目录名"（比文件名干净），电影优先用文件名；
@@ -1337,7 +1468,8 @@ def guess_evidence(kind: MediaKind, root: Path, file: Path) -> LocalEvidence | N
     SxxExx，各有一半信息）；S00 特别篇不计入季数证据。
     """
     dir_names = [d.name for d in entry_dirs(root, file)]
-    sources = [*dir_names, file.stem] if kind is MediaKind.TV else [file.stem, *dir_names]
+    own = unit_name(file, is_disc)
+    sources = [*dir_names, own] if kind is MediaKind.TV else [own, *dir_names]
     parsed = [enrich(text) for text in sources]
 
     evidence: LocalEvidence | None = None
@@ -1345,13 +1477,29 @@ def guess_evidence(kind: MediaKind, root: Path, file: Path) -> LocalEvidence | N
         title = (attrs.titles_zh[0] if attrs.titles_zh else None) or (
             attrs.titles_en[0] if attrs.titles_en else None
         )
+        # "Title (Year)"惯例（Emby/TMM 整理过的目录名）：先剥掉 [tmdbid=N]
+        # 这类方括号标记组再匹配，允许年份后还挂着画质等尾巴。500 库实测：
+        # 惯例名是**高置信来源**——NER 面向脏乱种子名训练，对整理过的干净
+        # 名字反而会截断（「知否知否应是绿肥红瘦」只抽出「绿肥红瘦」，
+        # 「E.T.外星人」只剩「外星人」），截断词同年撞上别的条目就是静默
+        # 错挂。因此两者并存且不同形时，惯例名当主查询词、NER 结果降为
+        # 备选（收敛失败后换词重跑，混排名拆分的价值仍在）
+        cleaned = _BRACKET_GROUP.sub(" ", text).strip()
+        plain = re.match(r"^(.+?)\s*\((\d{4})\)", cleaned)
+        plain_title = plain.group(1).strip() if plain else None
+        if plain_title and title and normalize_title(plain_title) != normalize_title(title):
+            evidence = LocalEvidence(
+                title=plain_title, year=int(plain.group(2)), alt_title=title
+            )
+            break
         if title:
             evidence = LocalEvidence(title=title, year=attrs.year)
+            if plain and evidence.year is None:
+                evidence.year = int(plain.group(2))
             break
-        # enrich 抽不出时退回"Title (Year)"目录名惯例
-        plain = re.match(r"^(.+?)\s*\((\d{4})\)$", text.strip())
-        if plain:
-            evidence = LocalEvidence(title=plain.group(1).strip(), year=int(plain.group(2)))
+        # NER 抽不出时退回惯例名
+        if plain_title:
+            evidence = LocalEvidence(title=plain_title, year=int(plain.group(2)))
             break
     if evidence is None:
         return None
@@ -1385,17 +1533,24 @@ def local_episode_count(directory: Path) -> int | None:
         if any(marker in name.lower() for marker in _IGNORE_MARKERS):
             continue
         attrs = enrich(entry.stem)
-        if attrs.episodes:
-            episodes.add(attrs.episodes[0])
+        episode = attrs.episodes[0] if attrs.episodes else trailing_index_episode(entry.stem)
+        if episode:
+            episodes.add(episode)
     return len(episodes) if len(episodes) >= 2 else None
 
 
 def _unit_for(kind: MediaKind, file: Path) -> tuple[int, int]:
-    """期望单元：电影 (0,0)；剧集从文件名解析集号、季号缺失看父目录。"""
+    """期望单元：电影 (0,0)；剧集从文件名解析集号、季号缺失看父目录。
+
+    常规集号（SxxExx/「第N集」）全灭时退回裸尾号兜底（「走向共和01」，
+    央视老剧惯例）——否则整目录几十集全坍缩成同一个 E0 单元。
+    """
     if kind is MediaKind.MOVIE:
         return 0, 0
     attrs = enrich(file.stem)
-    episode = attrs.episodes[0] if attrs.episodes else 0
+    episode = (
+        attrs.episodes[0] if attrs.episodes else (trailing_index_episode(file.stem) or 0)
+    )
     season = attrs.seasons[0] if attrs.seasons else season_from_dir(file.parent)
     return season if season is not None else 0, episode
 
@@ -1495,9 +1650,9 @@ async def _reidentify(
             # 文件所在的库根：识别链用它界定条目目录与 NFO 向上查找的边界；
             # 根已被移出配置时退回父目录（仍能按文件名识别）
             root = next((r for r in roots if r in file.parents), file.parent)
-            if pinned_tmdb_id(kind, root, file)[0] is not None:
-                summary.pinned_identity = True
             is_disc = row.container in ("bluray", "dvd")
+            if pinned_tmdb_id(kind, root, file, is_disc=is_disc)[0] is not None:
+                summary.pinned_identity = True
             identified = await _identify(
                 media_service,
                 kind,
@@ -1507,6 +1662,7 @@ async def _reidentify(
                 episodes_cache,
                 duration_seconds=row.duration_seconds,
                 hint=_hint_for(file, hints),
+                is_disc=is_disc,
             )
             item, reason = identified.item, identified.reason
             # 网络类失败（TMDB 不通）不冲掉现有身份——用户要的是"重新刮削"，

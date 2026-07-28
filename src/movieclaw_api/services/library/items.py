@@ -132,7 +132,7 @@ def _external_subtitles(video: Path) -> list[str]:
 
 
 class _FileFacts(NamedTuple):
-    """海报墙聚合用到的六个台账字段（顺序与查询列一致）。
+    """海报墙聚合用到的七个台账字段（顺序与查询列一致）。
 
     代码读起来与整行取时一模一样，只是不再拖着四十列（含三列 JSON）走。"""
 
@@ -142,6 +142,8 @@ class _FileFacts(NamedTuple):
     resolution: str | None
     missing_since: datetime | None
     created_at: datetime
+    # 尚未探出介质规格（audio_streams IS NULL 在 SQL 里算好，不取 JSON 本体）
+    unprobed: bool
 
 
 async def build_library_wall(session: AsyncSession, library_id: int) -> list[LibraryItemView]:
@@ -167,6 +169,7 @@ async def build_library_wall(session: AsyncSession, library_id: int) -> list[Lib
                 LibraryFile.resolution,
                 LibraryFile.missing_since,
                 LibraryFile.created_at,
+                LibraryFile.audio_streams.is_(None),  # type: ignore[union-attr]
             ).where(
                 LibraryFile.library_id == library_id,
                 LibraryFile.media_item_id.is_not(None),  # type: ignore[union-attr]
@@ -174,10 +177,8 @@ async def build_library_wall(session: AsyncSession, library_id: int) -> list[Lib
         )
     ).all()
     files_by_item: dict[int, list[_FileFacts]] = {}
-    for media_item_id, season, episode, size, resolution, missing_since, created_at in file_rows:
-        files_by_item.setdefault(media_item_id, []).append(
-            _FileFacts(season, episode, size, resolution, missing_since, created_at)
-        )
+    for media_item_id, *facts in file_rows:
+        files_by_item.setdefault(media_item_id, []).append(_FileFacts(*facts))
     # 用子查询而不是把几千个 id 塞进 IN 列表：SQLite 的绑定变量数有上限，
     # 大库会撞。条目行本身要整取——展示要用到标题/年份/状态等大部分列
     items = (
@@ -255,6 +256,10 @@ async def build_library_wall(session: AsyncSession, library_id: int) -> list[Lib
                 air_status=derive_air_status(item.status) if item.kind == "tv" else None,
                 missing_episode_count=missing_episodes,
                 added_at=max(f.created_at for f in files),
+                # 缺失文件不算「待补探」：文件都不在了，探不是「还没轮到」而是「探不了」
+                probe_pending_count=sum(
+                    1 for f in files if f.unprobed and f.missing_since is None
+                ),
             )
         )
     views.sort(key=lambda v: v.title)

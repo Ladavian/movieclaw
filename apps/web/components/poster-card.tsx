@@ -8,6 +8,7 @@ import { PosterImage } from "@/components/poster-image";
 import { useSubscribeEntry } from "@/components/subscribe-entry";
 import { useMediaDetail } from "@/lib/media-detail";
 import type { MediaItem, MediaType } from "@/lib/media-types";
+import { useTapGuard } from "@/lib/use-tap-guard";
 
 /**
  * 海报卡片：发现页海报墙的最小单元（Netflix 式）。
@@ -102,19 +103,28 @@ export function PosterCardVisual({
   href?: Route;
   action?: PosterCardAction;
 }) {
+  // 触摸端误触保护：海报墙滑动远多于点击，浏览器原生的 click 抑制拦不住
+  // 「滑到边缘」「点一下停惯性」这类手势，统一交给 useTapGuard 判定。
+  // Link 分支不传动作，仅靠 preventDefault 拦掉不合格点击的跳转。
+  const tapGuard = useTapGuard(onClick);
   const content = <PosterCardContent item={item} rank={rank} action={action} />;
   const interactiveClass =
     "group/card block w-full cursor-pointer rounded-2xl text-left outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-ring)]";
   if (href) {
     return (
-      <Link href={href} className={interactiveClass} aria-label={`查看《${item.title}》详情`}>
+      <Link
+        href={href}
+        {...tapGuard}
+        className={interactiveClass}
+        aria-label={`查看《${item.title}》详情`}
+      >
         {content}
       </Link>
     );
   }
   if (!onClick) return <div className="group/card block w-full text-left">{content}</div>;
   return (
-    <button type="button" onClick={onClick} className={interactiveClass}>
+    <button type="button" {...tapGuard} className={interactiveClass}>
       {content}
     </button>
   );
@@ -254,6 +264,10 @@ function PosterCardActionButton({
       ? SUBSCRIBE_ACTION_META[action]
       : null;
   const existingSub = subscribeMeta ? subscriptionOf(item) : undefined;
+  const trigger = () => void openSubscribe(item);
+  // 圆键就贴在海报角上，横滑时拇指最容易蹭到，同样过一遍误触判定。
+  // Hook 不能放在下面的提前返回之后，故与 trigger 一起提到最前。
+  const tapGuard = useTapGuard(trigger);
 
   if (!subscribeMeta) {
     // 已入库标识：非交互，与库存格下方的绿点语言一致。
@@ -267,7 +281,6 @@ function PosterCardActionButton({
     );
   }
 
-  const trigger = () => void openSubscribe(item);
   const label = existingSub
     ? `管理《${item.title}》的订阅`
     : `${subscribeMeta.label}《${item.title}》`;
@@ -278,10 +291,15 @@ function PosterCardActionButton({
       tabIndex={0}
       aria-label={label}
       title={compact ? label : undefined}
+      onPointerDown={tapGuard.onPointerDown}
+      onPointerUp={tapGuard.onPointerUp}
+      onPointerCancel={tapGuard.onPointerCancel}
       onClick={(e) => {
+        // 无论判定结果如何都先拦住冒泡：这颗键嵌在整卡的 button/Link 里，
+        // 放行会让「订阅」顺带把详情页也打开。判定通过与否交给 tapGuard。
         e.preventDefault();
         e.stopPropagation();
-        trigger();
+        tapGuard.onClick(e);
       }}
       onKeyDown={(e) => {
         if (e.key === "Enter" || e.key === " ") {

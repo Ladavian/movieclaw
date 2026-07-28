@@ -233,6 +233,11 @@ class LibraryItemView(BaseModel):
     added_at: datetime | None = Field(
         default=None, description="最近一次文件入账时间（首页「最近添加」排序依据）"
     )
+    probe_pending_count: int = Field(
+        default=0,
+        description="在位但尚未探出介质规格的文件数——扫描补探阶段前端据此"
+        "把「还在处理」的条目排到海报墙前面并点亮标记",
+    )
 
     @field_serializer("added_at")
     def _serialize_utc(self, value: datetime | None) -> str | None:

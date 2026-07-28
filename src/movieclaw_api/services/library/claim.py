@@ -14,18 +14,26 @@
 
 from __future__ import annotations
 
+import asyncio
+import logging
+from pathlib import Path
+
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from movieclaw_api.exceptions import BadRequestException, NotFoundException
 from movieclaw_api.services import media_discover
 from movieclaw_api.services.library.config import LibraryConfigService
-from movieclaw_api.services.library.scan import RESOLVER_VERSION
+from movieclaw_api.services.library.layout import entry_dirs
+from movieclaw_api.services.library.nfo import read_entry_identity, rewrite_identity_nfo
+from movieclaw_api.services.library.scan import RESOLVER_VERSION, entry_nfo_candidates
 from movieclaw_api.services.media_library import MediaLibraryService
 from movieclaw_api.services.subscription import close_fulfilled_wanted
-from movieclaw_db.models import LibraryFile, MediaItem, utcnow
+from movieclaw_db.models import Library, LibraryFile, MediaItem, utcnow
 from movieclaw_db.models.library_file import IdentitySource
 from movieclaw_db.repositories.library_file_repo import LibraryFileRepository
 from movieclaw_media.models import MediaKind
+
+logger = logging.getLogger("movieclaw_api.library_claim")
 
 
 async def claim_files(
@@ -80,9 +88,50 @@ async def claim_files(
             episode_number=episode_number,
             resolved_version=RESOLVER_VERSION,
         )
+    # 盘上纠错：把与认领结论矛盾的条目 NFO 原地改写。不做这一步，下次
+    # 全量重扫会把毒 NFO 的错误身份原样读回（NFO 优先的识别链是自我固化
+    # 的），Emby/Jellyfin 也会继续按错误 id 入档——用户的拍板必须落到盘上
+    await asyncio.to_thread(_correct_conflicting_nfos, rows, kind, library, item)
     # 库存对账：认领让单元"在库"成立，关闭对应的订阅工单
     await close_fulfilled_wanted(session, item.id)
     return item, len(rows)
+
+
+def _correct_conflicting_nfos(
+    rows: list[LibraryFile], kind: MediaKind, library: Library, item: MediaItem
+) -> None:
+    """把认领文件辖域内声明了**其他 tmdbid** 的条目 NFO 改写为认领身份。
+
+    辖域 = 文件自身的同名 NFO + 条目目录（原盘即目录本身）内的条目 NFO；
+    再往上的祖先目录 NFO 覆盖着多个条目，即便矛盾也只告警不动手（一份
+    出现在分组目录里的 movie.nfo 本身就是异常，改写成单一条目只会更错）。
+    类型对不上的 NFO（电影库里的 tvshow.nfo）同样只告警——那是"放错库"
+    问题，不是认领能裁决的。同步函数（调用方放线程池）。
+    """
+    roots = [Path(p) for p in library.root_paths]
+    seen: set[Path] = set()
+    for row in rows:
+        file = Path(row.file_path)
+        root = next((r for r in roots if r in file.parents), file.parent)
+        is_disc = row.container in ("bluray", "dvd")
+        entry = next(iter(entry_dirs(root, file)), None) or (file if is_disc else file.parent)
+        for nfo_path in entry_nfo_candidates(kind, root, file, is_disc=is_disc):
+            if nfo_path in seen or not nfo_path.is_file():
+                continue
+            seen.add(nfo_path)
+            identity = read_entry_identity(nfo_path)
+            if identity is None or identity.tmdb_id in (None, item.tmdb_id):
+                continue
+            in_scope = nfo_path.parent == entry or (not is_disc and nfo_path.parent == file.parent)
+            if identity.kind is not kind or not in_scope:
+                logger.warning(
+                    "认领纠错跳过 %s：它声明的是 %s tmdbid=%s，超出本次认领的裁决范围",
+                    nfo_path,
+                    identity.kind.value,
+                    identity.tmdb_id,
+                )
+                continue
+            rewrite_identity_nfo(nfo_path, item)
 
 
 async def resolve_review(

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import { CheckIcon, ChevronRightIcon, XIcon } from "@/components/icons";
 import { Modal } from "@/components/modal";
@@ -50,6 +50,13 @@ export function LibraryOrganizeDialog({
 
   const libraryId = library?.id ?? null;
 
+  // 完成判定的两个凭据：见过 organizing=true，或 last_organize 换了新结论。
+  // 只看 organizing=false 不行——POST 受理后台任务才起跑，首轮轮询可能落在
+  // 起跑前的空档里，此时 last_organize 还是上一次的旧结论，直接当"完成"
+  // 会拿旧结果糊弄用户
+  const sawRunning = useRef(false);
+  const baselineFinished = useRef<string | null>(null);
+
   // 打开时重置并拉取预览；库已在整理中（比如中途关过窗口）直接进执行页
   useEffect(() => {
     if (libraryId === null) return;
@@ -59,6 +66,8 @@ export function LibraryOrganizeDialog({
     setAgreed(false);
     setShowSkips(false);
     setProgress(null);
+    sawRunning.current = false;
+    baselineFinished.current = library?.last_organize?.finished_at ?? null;
     if (library?.organizing) {
       setPhase("running");
       return;
@@ -89,12 +98,19 @@ export function LibraryOrganizeDialog({
     const timer = setInterval(() => {
       void getLibrary(libraryId)
         .then((lib) => {
-          setProgress(lib.organize_progress);
-          if (!lib.organizing) {
+          if (lib.organizing) {
+            sawRunning.current = true;
+            setProgress(lib.organize_progress);
+            return;
+          }
+          const finished = lib.last_organize?.finished_at ?? null;
+          if (sawRunning.current || finished !== baselineFinished.current) {
+            setProgress(lib.organize_progress);
             setResult(lib.last_organize);
             setPhase("done");
             onChanged();
           }
+          // 两个凭据都没有：任务还没起跑，继续等下一轮
         })
         .catch(() => {});
     }, 1500);
@@ -121,6 +137,8 @@ export function LibraryOrganizeDialog({
 
   const start = () => {
     setError(null);
+    sawRunning.current = false;
+    baselineFinished.current = library.last_organize?.finished_at ?? null;
     setPhase("running");
     void startLibraryOrganize(library.id)
       .then(onChanged)
