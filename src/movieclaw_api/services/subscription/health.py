@@ -113,7 +113,7 @@ async def _site_check(session: AsyncSession) -> tuple[HealthCheck, bool]:
 
 def _watched_dirs() -> frozenset[str]:
     """实时监听中的源目录集合；监听器未启动（如测试环境）返回空集。"""
-    from movieclaw_api.services.library_ingest import get_ingest_watcher
+    from movieclaw_api.services.library.ingest import get_ingest_watcher
 
     watcher = get_ingest_watcher()
     return watcher.watched_keys() if watcher is not None else frozenset()
@@ -191,7 +191,7 @@ def _check_transfer(
 
 async def pipeline_health(session: AsyncSession) -> dict:
     """全部库的链路体检。返回 dict（路由层直接进响应模型）。"""
-    from movieclaw_api.services.library_routing import resolve_save_path
+    from movieclaw_api.services.library.routing import resolve_save_path
     from movieclaw_api.services.torrent_submit import mapping_covers
 
     downloader = await _default_downloader(session)

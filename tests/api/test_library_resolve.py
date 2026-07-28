@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import httpx
 
-from movieclaw_api.services.library_resolve import (
+from movieclaw_api.services.library.resolve import (
     LocalEvidence,
     normalize_title,
     parse_total_episodes,

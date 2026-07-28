@@ -15,10 +15,10 @@ import pytest_asyncio
 from fastapi import BackgroundTasks
 from sqlmodel import select
 
-import movieclaw_api.services.library_scan as scan_mod
+import movieclaw_api.services.library.scan as scan_mod
 import movieclaw_api.services.media_discover as discover_mod
 from movieclaw_api.core.config import get_settings
-from movieclaw_api.services.library_scan import scan_library
+from movieclaw_api.services.library.scan import scan_library
 from movieclaw_api.services.media_library import MediaLibraryService
 from movieclaw_api.services.subscription import SubscriptionService
 from movieclaw_db.engine import dispose_db, get_database, init_db
@@ -534,8 +534,8 @@ async def test_scan_progress_observable_and_cleared(db, tmp_path, monkeypatch) -
     """扫描进行中能轮询到 (已处理, 总数)，结束后进度清空——前端进度环的数据源。"""
     import asyncio
 
-    import movieclaw_api.services.library_scan as scan_mod
-    from movieclaw_api.services.library_scan import scan_progress
+    import movieclaw_api.services.library.scan as scan_mod
+    from movieclaw_api.services.library.scan import scan_progress
 
     root = _make_tv_library(tmp_path)
     async with db.session() as session:
@@ -706,7 +706,7 @@ async def test_reconcile_marks_missing_and_rescan_restores(db, tmp_path) -> None
     summary = await scan_library(library.id)
     assert summary.marked_missing == 1
     # 最近扫描结论要留档（前端"点了有反应"的反馈数据源）
-    from movieclaw_api.services.library_scan import last_scan
+    from movieclaw_api.services.library.scan import last_scan
 
     record = last_scan(library.id)
     assert record is not None and record[1].marked_missing == 1
@@ -887,7 +887,7 @@ async def test_scan_records_unidentified_reason_and_claim_clears(db, tmp_path) -
 async def test_scan_stop_request_cancels_early(db, tmp_path) -> None:
     """停止请求让扫描提前收尾：cancelled 标记置位、剩余文件不入账；
     没有扫描在跑时 request_stop_scan 返回 False。"""
-    from movieclaw_api.services.library_scan import request_stop_scan
+    from movieclaw_api.services.library.scan import request_stop_scan
 
     root = _make_tv_library(tmp_path)
     async with db.session() as session:

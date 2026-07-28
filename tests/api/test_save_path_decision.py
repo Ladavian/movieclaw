@@ -10,7 +10,7 @@ import pytest_asyncio
 
 from movieclaw_api.core.config import get_settings
 from movieclaw_api.services.import_watch_config import ImportWatchConfigService
-from movieclaw_api.services.library_routing import resolve_save_path
+from movieclaw_api.services.library.routing import resolve_save_path
 from movieclaw_api.services.subscription.dispatch import preview_dispatch_route
 from movieclaw_api.services.subscription.health import pipeline_health
 from movieclaw_db.engine import dispose_db, get_database, init_db

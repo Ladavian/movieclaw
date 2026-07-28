@@ -65,15 +65,15 @@ from pathlib import Path
 from sqlmodel import select
 
 from movieclaw_api.services.import_watch_config import rule_target_label
-from movieclaw_api.services.library_config import derive_save_path
-from movieclaw_api.services.library_import import (
+from movieclaw_api.services.library.config import derive_save_path
+from movieclaw_api.services.library.layout import (
     IN_PROGRESS_MARKERS,
     VIDEO_EXTS,
     entry_base_name,
     season_from_dir,
 )
-from movieclaw_api.services.library_resolve import verify_resolve
-from movieclaw_api.services.library_scan import guess_evidence
+from movieclaw_api.services.library.resolve import verify_resolve
+from movieclaw_api.services.library.scan import guess_evidence
 from movieclaw_api.services.media_discover import get_tmdb_client
 from movieclaw_api.services.media_library import MediaLibraryService
 from movieclaw_api.services.media_probe import ffprobe_available, probe_media
@@ -423,7 +423,7 @@ async def _ingest_entry(
             if dest_library is not None:
                 route_note = f"入库到订阅指定的「{dest_library.name}」"
         if dest_library is None:
-            from movieclaw_api.services.library_routing import route_for_item
+            from movieclaw_api.services.library.routing import route_for_item
 
             decision = await route_for_item(session, kind.value, item)
             dest_library = decision.library
@@ -515,7 +515,7 @@ async def _ingest_entry(
 
     if imported:
         # NFO 身份档案：Emby 零歧义、自家重扫免收敛（已存在不覆盖，失败不阻断）
-        from movieclaw_api.services.library_nfo import write_entry_nfo
+        from movieclaw_api.services.library.nfo import write_entry_nfo
 
         await asyncio.to_thread(write_entry_nfo, Path(dest_dir), item)
         # 库存对账：新入库的单元关闭对应的订阅工单（订阅止于投递）

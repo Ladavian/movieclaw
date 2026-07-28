@@ -64,8 +64,8 @@ async def dispatch(
     # 唯一实现 resolve_save_path（口径与预检/体检/手动下载同源）。
     # 完成后的搬运/入账仍由监听导入或库扫描接管，工单由库存对账关闭——
     # 订阅不亲自跟踪下载，但投递必须把种子送到那两个机制看得见的地方。
-    from movieclaw_api.services.library_config import LibraryConfigService
-    from movieclaw_api.services.library_routing import resolve_save_path
+    from movieclaw_api.services.library.config import LibraryConfigService
+    from movieclaw_api.services.library.routing import resolve_save_path
 
     # library_id 常态下已在创建时定格（收藏范围路由，library-routing 2.1）；
     # NULL 仅剩老订阅/定格库被删的回落——带上 item 让回落也走路由而非裸默认库
@@ -199,8 +199,8 @@ async def preview_dispatch_route(
     route_matched/route_reason（走了路由才有）、ok、warning
     （不 ok 时的中文指引）。
     """
-    from movieclaw_api.services.library_config import LibraryConfigService
-    from movieclaw_api.services.library_routing import resolve_save_path
+    from movieclaw_api.services.library.config import LibraryConfigService
+    from movieclaw_api.services.library.routing import resolve_save_path
     from movieclaw_api.services.torrent_submit import mapping_covers
     from movieclaw_db.models.downloader_client import DownloaderClient
     from movieclaw_db.models.site_credential import ConfigStatus
@@ -208,7 +208,7 @@ async def preview_dispatch_route(
     route_matched: bool | None = None
     route_reason: str | None = None
     if library_id is None and tmdb_id is not None:
-        from movieclaw_api.services.library_routing import route_for_tmdb
+        from movieclaw_api.services.library.routing import route_for_tmdb
 
         route_decision = await route_for_tmdb(session, kind, tmdb_id)
         library = route_decision.library

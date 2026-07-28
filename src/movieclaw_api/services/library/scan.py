@@ -46,9 +46,9 @@ from pathlib import Path
 
 from sqlmodel import select
 
-from movieclaw_api.services.library_import import VIDEO_EXTS, entry_dirs, season_from_dir
-from movieclaw_api.services.library_nfo import NfoIdentity, read_entry_identity
-from movieclaw_api.services.library_resolve import (
+from movieclaw_api.services.library.layout import VIDEO_EXTS, entry_dirs, season_from_dir
+from movieclaw_api.services.library.nfo import NfoIdentity, read_entry_identity
+from movieclaw_api.services.library.resolve import (
     LocalEvidence,
     normalize_title,
     parse_total_episodes,
@@ -266,7 +266,7 @@ def scan_progress(library_id: int) -> ScanState | None:
 
 async def scan_library(library_id: int) -> ScanSummary:
     """扫描一个库的全部根路径（后台任务入口；自开会话，不向外抛异常）。"""
-    from movieclaw_api.services.library_organize import is_organizing
+    from movieclaw_api.services.library.organize import is_organizing
 
     summary = ScanSummary(library_id=library_id)
     running = _scan_tasks.state_of(library_id)
@@ -850,7 +850,7 @@ async def _probe_backfill(
     小时级的活，用户要看得到进度、也要停得下来。ffprobe 不可用时整段跳过，
     否则每轮扫描都会白跑一遍必然失败的探测。
     """
-    from movieclaw_api.services.library_items import backfill_streams
+    from movieclaw_api.services.library.items import backfill_streams
     from movieclaw_api.services.media_probe import ffprobe_available
 
     if not ffprobe_available():
@@ -1434,7 +1434,7 @@ async def reidentify_item(library_id: int, media_item_id: int) -> ReidentifySumm
     用户仍可人工认领，绝不静默保持错误身份。
     """
     summary = ReidentifySummary(library_id=library_id, media_item_id=media_item_id)
-    from movieclaw_api.services.library_organize import is_organizing
+    from movieclaw_api.services.library.organize import is_organizing
 
     running = _scan_tasks.state_of(library_id)
     if running is not None:

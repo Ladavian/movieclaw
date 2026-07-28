@@ -228,7 +228,7 @@ async def resolve_save_path(
     ③ 没有可用库/库无根路径 → None（下载器默认目录，不会自动入库）。
     """
     from movieclaw_api.services.import_watch_config import resolve_dispatch_rule
-    from movieclaw_api.services.library_config import derive_save_path
+    from movieclaw_api.services.library.config import derive_save_path
 
     rule = await resolve_dispatch_rule(session, library.id if library else None, kind=kind)
     entry_dir = (

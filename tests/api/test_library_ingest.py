@@ -15,7 +15,7 @@ import pytest
 import pytest_asyncio
 from sqlmodel import select
 
-import movieclaw_api.services.library_ingest as ingest_mod
+import movieclaw_api.services.library.ingest as ingest_mod
 from movieclaw_api.core.config import get_settings
 from movieclaw_api.exceptions import BadRequestException
 from movieclaw_api.services.import_watch_config import ImportWatchConfigService

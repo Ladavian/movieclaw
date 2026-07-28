@@ -1012,8 +1012,8 @@ async def mirror_media_dir_assets(media_item_id: int, *, force: bool = False) ->
     判错了——库类型选错时按错误类型拉档能拿到一部毫不相干的作品且全程
     零报错，这种身份的任何产物都不该落到用户的媒体目录里。
     """
-    from movieclaw_api.services.library_import import entry_dir_of
-    from movieclaw_api.services.library_nfo import write_episode_nfo, write_full_nfo
+    from movieclaw_api.services.library.layout import entry_dir_of
+    from movieclaw_api.services.library.nfo import write_episode_nfo, write_full_nfo
     from movieclaw_db.models.library_file import FileSource, IdentitySource
 
     _TRUSTED_SOURCES = {

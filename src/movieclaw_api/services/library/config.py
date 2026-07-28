@@ -87,7 +87,7 @@ class LibraryConfigService:
             if row is not None:
                 return row
         if item is not None:
-            from movieclaw_api.services.library_routing import route_for_item
+            from movieclaw_api.services.library.routing import route_for_item
 
             return (await route_for_item(self._session, kind, item)).library
         return await self._repo.get_default(kind)
@@ -138,8 +138,8 @@ class LibraryConfigService:
     @staticmethod
     async def _refresh_watcher() -> None:
         """库/根路径/监听目录变更后重建实时监听（监听器未启动时为 no-op）。"""
-        from movieclaw_api.services.library_ingest import get_ingest_watcher
-        from movieclaw_api.services.library_watch import get_library_watcher
+        from movieclaw_api.services.library.ingest import get_ingest_watcher
+        from movieclaw_api.services.library.watch import get_library_watcher
 
         watcher = get_library_watcher()
         if watcher is not None:
@@ -157,7 +157,7 @@ class LibraryConfigService:
         match_rules: list | None = None,
     ) -> Library:
         """新增一个库。该类型尚无默认库时自动成为默认。"""
-        from movieclaw_api.services.library_routing import validate_match_rules
+        from movieclaw_api.services.library.routing import validate_match_rules
 
         roots = self._validate(name=name, root_paths=root_paths)
         rules = validate_match_rules(match_rules)
@@ -179,7 +179,7 @@ class LibraryConfigService:
     ) -> Library:
         """更新名称/根路径/收藏范围。kind 创建后不可改（订阅按类型挂库）。"""
         await self.get(library_id)
-        from movieclaw_api.services.library_routing import validate_match_rules
+        from movieclaw_api.services.library.routing import validate_match_rules
 
         roots = self._validate(name=name, root_paths=root_paths)
         rules = validate_match_rules(match_rules)

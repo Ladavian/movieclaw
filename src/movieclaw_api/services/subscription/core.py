@@ -230,7 +230,7 @@ class SubscriptionService:
         if library_id is not None:
             await self._validate_library(kind.value, library_id)
         else:
-            from movieclaw_api.services.library_routing import route_for_item
+            from movieclaw_api.services.library.routing import route_for_item
 
             decision = await route_for_item(self._session, kind.value, item)
             if decision.library is not None:

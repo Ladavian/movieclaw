@@ -116,12 +116,14 @@ def build_lifespan(settings: Settings):
         if settings.scheduler_enabled:
             from movieclaw_api.services import (  # noqa: F401  订阅管线三任务注册  # noqa: F401  下载完成检测与入库任务注册  # noqa: F401  媒体库对账任务注册
                 download_progress,
-                library_ingest,  # noqa: F401  下载监听导入任务注册
-                library_scan,
                 media_refresh,
                 torrent_matcher,
                 torrent_sync,  # noqa: F401  触发种子同步任务注册
             )
+            from movieclaw_api.services.library import (  # noqa: F401  监听导入与对账任务注册
+                ingest as library_ingest,
+            )
+            from movieclaw_api.services.library import scan as library_scan  # noqa: F401
             from movieclaw_api.services.subscription import (  # noqa: F401  缺口搜索任务注册
                 wanted_search,
             )
@@ -137,12 +139,12 @@ def build_lifespan(settings: Settings):
             logger.info("定时任务调度器已按配置关闭（SCHEDULER_ENABLED=false）")
         # 媒体库实时监控（L4）：库根路径文件事件 → 去抖 → 增量扫描；
         # watchdog 缺失/根路径未就绪时优雅降级为仅对账任务兜底。
-        from movieclaw_api.services.library_watch import init_library_watcher
+        from movieclaw_api.services.library.watch import init_library_watcher
 
         await init_library_watcher()
         # 下载监听导入：监听目录文件事件 → 去抖 → 完成检测 → 硬链/复制入库；
         # 同样在 watchdog 缺失时降级为仅兜底巡检
-        from movieclaw_api.services.library_ingest import init_ingest_watcher
+        from movieclaw_api.services.library.ingest import init_ingest_watcher
 
         await init_ingest_watcher()
         logger.info("应用启动完成，数据库就绪")
@@ -150,8 +152,8 @@ def build_lifespan(settings: Settings):
             yield
         finally:
             # 先停媒体库监听（观察者线程持有事件循环引用，须在循环关闭前退出）
-            from movieclaw_api.services.library_ingest import close_ingest_watcher
-            from movieclaw_api.services.library_watch import close_library_watcher
+            from movieclaw_api.services.library.ingest import close_ingest_watcher
+            from movieclaw_api.services.library.watch import close_library_watcher
 
             await close_ingest_watcher()
             await close_library_watcher()

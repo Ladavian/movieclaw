@@ -15,7 +15,7 @@ from movieclaw_api.services.downloader_config import (
     DownloaderConfigService,
     verify_downloader,
 )
-from movieclaw_api.services.library_config import LibraryConfigService
+from movieclaw_api.services.library.config import LibraryConfigService
 from movieclaw_api.services.torrent_submit import submit_torrent, translate_save_path
 from movieclaw_db.engine import get_session
 
@@ -46,7 +46,7 @@ async def submit_download(
     收纳——扫描的完整性检测保证半成品不入账）；未选库 → 下载器默认目录。
     提交幂等：种子已在下载器中不视为错误，data.already_exists=true。
     """
-    from movieclaw_api.services.library_routing import resolve_save_path
+    from movieclaw_api.services.library.routing import resolve_save_path
 
     library = None
     derived_path = None

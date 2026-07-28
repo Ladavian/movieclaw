@@ -278,7 +278,7 @@ async def resolve_dispatch_rule(
 
 async def _refresh_watcher() -> None:
     """规则变更后重建监听（监听器未启动时为 no-op）。"""
-    from movieclaw_api.services.library_ingest import get_ingest_watcher
+    from movieclaw_api.services.library.ingest import get_ingest_watcher
 
     watcher = get_ingest_watcher()
     if watcher is not None:

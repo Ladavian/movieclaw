@@ -22,7 +22,7 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-from movieclaw_api.services.library_config import sanitize_folder_name
+from movieclaw_api.services.library.config import sanitize_folder_name
 from movieclaw_db.models import MediaItem
 
 # 视频文件扩展名（入库对象）；其余（字幕/nfo/图片）v1 不搬运

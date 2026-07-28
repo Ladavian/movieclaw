@@ -19,7 +19,7 @@ from fastapi.testclient import TestClient
 
 from movieclaw_api.core.config import get_settings
 from movieclaw_api.exceptions import BadRequestException
-from movieclaw_api.services.library_routing import (
+from movieclaw_api.services.library.routing import (
     RoutingFacts,
     evaluate,
     gather_facts,

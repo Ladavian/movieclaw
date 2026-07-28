@@ -32,8 +32,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
 
 from movieclaw_api.schemas.library import LibraryItemView, derive_air_status
-from movieclaw_api.services.library_import import entry_dir_of
-from movieclaw_api.services.library_nfo import (
+from movieclaw_api.services.library.layout import entry_dir_of
+from movieclaw_api.services.library.nfo import (
     EntryMetadata,
     NfoActor,
     read_entry_metadata,
@@ -718,7 +718,7 @@ async def backfill_streams(
     探测失败的行保持 NULL、下次再试：失败常常是暂时的（挂载还没就绪）。
     代价是永远探不出的坏文件每轮都会被重试一次，坏文件多的库要留意。
     """
-    from movieclaw_api.services.library_scan import disc_main_stream
+    from movieclaw_api.services.library.scan import disc_main_stream
 
     probed = 0
     since_commit = 0

@@ -13,9 +13,9 @@ import pytest
 import pytest_asyncio
 from sqlmodel import select
 
-import movieclaw_api.services.library_scan as scan_mod
+import movieclaw_api.services.library.scan as scan_mod
 from movieclaw_api.core.config import get_settings
-from movieclaw_api.services.library_scan import scan_library
+from movieclaw_api.services.library.scan import scan_library
 from movieclaw_db.engine import dispose_db, get_database, init_db
 from movieclaw_db.migrations import run_migrations
 from movieclaw_db.models import LibraryFile

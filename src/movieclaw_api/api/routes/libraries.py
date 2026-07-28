@@ -55,10 +55,10 @@ from movieclaw_api.schemas.library import (
     UnidentifiedGroupView,
 )
 from movieclaw_api.schemas.response import ApiResponse, ok
-from movieclaw_api.services import library_claim, media_scrape
-from movieclaw_api.services.library_config import LibraryConfigService
-from movieclaw_api.services.library_import import entry_dir_of
-from movieclaw_api.services.library_items import (
+from movieclaw_api.services import media_scrape
+from movieclaw_api.services.library import claim as library_claim
+from movieclaw_api.services.library.config import LibraryConfigService
+from movieclaw_api.services.library.items import (
     backfill_streams_for_files,
     build_item_detail,
     build_library_wall,
@@ -67,14 +67,15 @@ from movieclaw_api.services.library_items import (
     find_episode_thumb,
     find_local_artwork,
 )
-from movieclaw_api.services.library_organize import (
+from movieclaw_api.services.library.layout import entry_dir_of
+from movieclaw_api.services.library.organize import (
     build_organize_plan,
     is_organizing,
     last_organize,
     organize_library,
     organize_progress,
 )
-from movieclaw_api.services.library_scan import (
+from movieclaw_api.services.library.scan import (
     PHASE_LABELS,
     ScanPhase,
     busy_phase,

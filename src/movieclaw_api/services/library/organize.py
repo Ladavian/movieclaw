@@ -51,8 +51,8 @@ from pathlib import Path
 
 from sqlmodel import select
 
-from movieclaw_api.services.library_config import sanitize_folder_name
-from movieclaw_api.services.library_import import VIDEO_EXTS, entry_base_name
+from movieclaw_api.services.library.config import sanitize_folder_name
+from movieclaw_api.services.library.layout import VIDEO_EXTS, entry_base_name
 from movieclaw_api.services.task_state import TaskState
 from movieclaw_db.engine import get_database
 from movieclaw_db.models import Library, LibraryFile, MediaItem, utcnow
@@ -355,7 +355,7 @@ async def organize_library(library_id: int) -> OrganizeSummary:
 
     执行时重新计算计划（不信任预览快照），逐文件"改名 → 台账随迁"收口。
     """
-    from movieclaw_api.services.library_scan import is_scanning
+    from movieclaw_api.services.library.scan import is_scanning
 
     summary = OrganizeSummary(library_id=library_id)
     if is_organizing(library_id):

@@ -11,7 +11,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from movieclaw_api.core.config import get_settings
-from movieclaw_api.services.library_config import derive_save_path, sanitize_folder_name
+from movieclaw_api.services.library.config import derive_save_path, sanitize_folder_name
 from movieclaw_db.models.library import Library
 
 
