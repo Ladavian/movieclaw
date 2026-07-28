@@ -15,7 +15,7 @@ from sqlmodel import select
 
 import movieclaw_api.services.download_progress as progress_mod
 from movieclaw_api.core.config import get_settings
-from movieclaw_api.services.wanted_fulfillment import close_fulfilled_wanted
+from movieclaw_api.services.subscription.wanted_fulfillment import close_fulfilled_wanted
 from movieclaw_db.engine import dispose_db, get_database, init_db
 from movieclaw_db.migrations import run_migrations
 from movieclaw_db.models import (

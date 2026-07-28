@@ -65,15 +65,15 @@ from pathlib import Path
 from sqlmodel import select
 
 from movieclaw_api.services.import_watch_config import rule_target_label
-from movieclaw_api.services.library_config import derive_save_path
-from movieclaw_api.services.library_import import (
+from movieclaw_api.services.library.config import derive_save_path
+from movieclaw_api.services.library.layout import (
     IN_PROGRESS_MARKERS,
     VIDEO_EXTS,
-    _entry_base_name,
+    entry_base_name,
     season_from_dir,
 )
-from movieclaw_api.services.library_resolve import verify_resolve
-from movieclaw_api.services.library_scan import _guess_evidence
+from movieclaw_api.services.library.resolve import verify_resolve
+from movieclaw_api.services.library.scan import guess_evidence
 from movieclaw_api.services.media_discover import get_tmdb_client
 from movieclaw_api.services.media_library import MediaLibraryService
 from movieclaw_api.services.media_probe import ffprobe_available, probe_media
@@ -423,7 +423,7 @@ async def _ingest_entry(
             if dest_library is not None:
                 route_note = f"入库到订阅指定的「{dest_library.name}」"
         if dest_library is None:
-            from movieclaw_api.services.library_routing import route_for_item
+            from movieclaw_api.services.library.routing import route_for_item
 
             decision = await route_for_item(session, kind.value, item)
             dest_library = decision.library
@@ -445,7 +445,7 @@ async def _ingest_entry(
 
     # 发布信息以条目名为准（比单集文件名完整），与入库管线的种子名口径一致
     release_attrs = enrich(entry.name if entry.is_dir() else entry.stem)
-    base = _entry_base_name(item)
+    base = entry_base_name(item)
     repo = LibraryFileRepository(session)
     assert dest_library.id is not None and item.id is not None
 
@@ -515,11 +515,11 @@ async def _ingest_entry(
 
     if imported:
         # NFO 身份档案：Emby 零歧义、自家重扫免收敛（已存在不覆盖，失败不阻断）
-        from movieclaw_api.services.library_nfo import write_entry_nfo
+        from movieclaw_api.services.library.nfo import write_entry_nfo
 
         await asyncio.to_thread(write_entry_nfo, Path(dest_dir), item)
         # 库存对账：新入库的单元关闭对应的订阅工单（订阅止于投递）
-        from movieclaw_api.services.wanted_fulfillment import close_fulfilled_wanted
+        from movieclaw_api.services.subscription import close_fulfilled_wanted
 
         await close_fulfilled_wanted(session, item.id)
         # 一次入库刮削的资产补齐：图片资产 + 媒体目录镜像（完整 NFO/海报/
@@ -573,7 +573,7 @@ async def _identify(
     session, kind: MediaKind, watch_root: Path, main: Path, spec
 ) -> MediaItem | None:
     """识别条目身份：条目名/文件名解析 → TMDB 证据验证收敛（扫描器同链）。"""
-    evidence = _guess_evidence(kind, watch_root, main)
+    evidence = guess_evidence(kind, watch_root, main)
     if evidence is None:
         return None
     evidence.duration_seconds = spec.duration_seconds if spec else None

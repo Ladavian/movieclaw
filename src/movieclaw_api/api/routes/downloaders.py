@@ -15,7 +15,7 @@ from movieclaw_api.services.downloader_config import (
     DownloaderConfigService,
     verify_downloader,
 )
-from movieclaw_api.services.library_config import LibraryConfigService, derive_save_path
+from movieclaw_api.services.library.config import LibraryConfigService
 from movieclaw_api.services.torrent_submit import submit_torrent, translate_save_path
 from movieclaw_db.engine import get_session
 
@@ -46,7 +46,7 @@ async def submit_download(
     收纳——扫描的完整性检测保证半成品不入账）；未选库 → 下载器默认目录。
     提交幂等：种子已在下载器中不视为错误，data.already_exists=true。
     """
-    from movieclaw_api.services.import_watch_config import resolve_dispatch_dir
+    from movieclaw_api.services.library.routing import resolve_save_path
 
     library = None
     derived_path = None
@@ -56,15 +56,13 @@ async def submit_download(
         # 手选目录不是条目级，不锚下载线索
         derived_path = payload.save_path
     elif payload.library_id is not None:
+        # 三级兜底与订阅投递同一实现（library_routing.resolve_save_path）
         library = await LibraryConfigService(session).get(payload.library_id)
-        rule_dir = await resolve_dispatch_dir(session, library.id, kind=library.kind)
-        if rule_dir is not None:
-            derived_path = rule_dir
-        elif payload.title:
-            derived_path = derive_save_path(library, title=payload.title, year=payload.year)
-            entry_level = derived_path is not None
-        else:
-            derived_path = library.primary_root
+        decision = await resolve_save_path(
+            session, library, kind=library.kind, title=payload.title, year=payload.year
+        )
+        derived_path = decision.path
+        entry_level = decision.entry_level
 
     result, row = await submit_torrent(
         session,

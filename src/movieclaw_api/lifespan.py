@@ -38,6 +38,21 @@ async def _reset_stale_verifying() -> None:
             logger.info("已重置卡在验证中的 LLM 供应商配置为待验证")
 
 
+async def _encrypt_plaintext_credentials() -> None:
+    """把加密内核上线前落库的明文站点凭据一次性转为密文（幂等）。
+
+    须在 init_secret_box 之后调用。读取侧对明文有无前缀兼容，本步骤只是
+    让静态数据尽快转密文，失败不应阻断启动。
+    """
+    try:
+        async with get_database().session() as session:
+            count = await CredentialRepository(session).encrypt_plaintext_secrets()
+        if count:
+            logger.info("已将 %d 条存量明文站点凭据加密落库", count)
+    except Exception:
+        logger.exception("存量站点凭据加密迁移失败，将在下次启动时重试")
+
+
 def build_lifespan(settings: Settings):
     """构造 FastAPI 生命周期管理器。
 
@@ -79,6 +94,8 @@ def build_lifespan(settings: Settings):
         init_site_access()
         # 重启自愈：清理上次遗留的"验证中"状态
         await _reset_stale_verifying()
+        # 存量明文凭据一次性加密（幂等，须在 init_secret_box 之后）
+        await _encrypt_plaintext_credentials()
         # Agent 运行注册表必须与当前事件循环同生共死：它持有后台 task 和
         # asyncio.Condition，不能跨 FastAPI 生命周期复用。
         init_agent_run_registry()
@@ -99,11 +116,15 @@ def build_lifespan(settings: Settings):
         if settings.scheduler_enabled:
             from movieclaw_api.services import (  # noqa: F401  订阅管线三任务注册  # noqa: F401  下载完成检测与入库任务注册  # noqa: F401  媒体库对账任务注册
                 download_progress,
-                library_ingest,  # noqa: F401  下载监听导入任务注册
-                library_scan,
                 media_refresh,
                 torrent_matcher,
                 torrent_sync,  # noqa: F401  触发种子同步任务注册
+            )
+            from movieclaw_api.services.library import (  # noqa: F401  监听导入与对账任务注册
+                ingest as library_ingest,
+            )
+            from movieclaw_api.services.library import scan as library_scan  # noqa: F401
+            from movieclaw_api.services.subscription import (  # noqa: F401  缺口搜索任务注册
                 wanted_search,
             )
 
@@ -118,12 +139,12 @@ def build_lifespan(settings: Settings):
             logger.info("定时任务调度器已按配置关闭（SCHEDULER_ENABLED=false）")
         # 媒体库实时监控（L4）：库根路径文件事件 → 去抖 → 增量扫描；
         # watchdog 缺失/根路径未就绪时优雅降级为仅对账任务兜底。
-        from movieclaw_api.services.library_watch import init_library_watcher
+        from movieclaw_api.services.library.watch import init_library_watcher
 
         await init_library_watcher()
         # 下载监听导入：监听目录文件事件 → 去抖 → 完成检测 → 硬链/复制入库；
         # 同样在 watchdog 缺失时降级为仅兜底巡检
-        from movieclaw_api.services.library_ingest import init_ingest_watcher
+        from movieclaw_api.services.library.ingest import init_ingest_watcher
 
         await init_ingest_watcher()
         logger.info("应用启动完成，数据库就绪")
@@ -131,8 +152,8 @@ def build_lifespan(settings: Settings):
             yield
         finally:
             # 先停媒体库监听（观察者线程持有事件循环引用，须在循环关闭前退出）
-            from movieclaw_api.services.library_ingest import close_ingest_watcher
-            from movieclaw_api.services.library_watch import close_library_watcher
+            from movieclaw_api.services.library.ingest import close_ingest_watcher
+            from movieclaw_api.services.library.watch import close_library_watcher
 
             await close_ingest_watcher()
             await close_library_watcher()

@@ -14,8 +14,8 @@ import pytest_asyncio
 from fastapi import BackgroundTasks
 from sqlmodel import select
 
-import movieclaw_api.services.library_items as items_mod
-import movieclaw_api.services.library_scan as scan_mod
+import movieclaw_api.services.library.items as items_mod
+import movieclaw_api.services.library.scan as scan_mod
 import movieclaw_api.services.media_discover as discover_mod
 from movieclaw_api.api.routes.libraries import (
     delete_library_item,
@@ -25,9 +25,9 @@ from movieclaw_api.api.routes.libraries import (
 )
 from movieclaw_api.core.config import get_settings
 from movieclaw_api.exceptions import NotFoundException
-from movieclaw_api.services.library_nfo import read_entry_metadata, read_tmdb_id
-from movieclaw_api.services.library_resolve import ResolveOutcome
-from movieclaw_api.services.library_scan import scan_library
+from movieclaw_api.services.library.nfo import read_entry_metadata, read_tmdb_id
+from movieclaw_api.services.library.resolve import ResolveOutcome
+from movieclaw_api.services.library.scan import scan_library
 from movieclaw_api.services.media_probe import MediaSpec, _parse_probe
 from movieclaw_db.engine import dispose_db, get_database, init_db
 from movieclaw_db.migrations import run_migrations

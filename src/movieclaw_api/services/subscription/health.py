@@ -6,9 +6,10 @@
 没有监听规则）。用户真正的问题是"订阅后能不能自动下载并入库"——体检以
 这个问题为锚，把每个库的链路逐段陈述事实，红项给修复去处。
 
-口径同源原则：判定全部复用真实投递/搬运用的同一批原语（resolve_dispatch_rule
-的兜底顺序、torrent_submit.mapping_covers 的映射覆盖、同盘检测的 st_dev
-比对），不另写一套"体检版"逻辑——否则迟早出现"体检说好、投递却挂"。
+口径同源原则：判定全部复用真实投递/搬运用的同一批原语（library_routing.
+resolve_save_path 的三级兜底、torrent_submit.mapping_covers 的映射覆盖、
+同盘检测的 st_dev 比对），不另写一套"体检版"逻辑——否则迟早出现
+"体检说好、投递却挂"。
 
 三档结论：
 - ok：这一段没有问题；
@@ -112,7 +113,7 @@ async def _site_check(session: AsyncSession) -> tuple[HealthCheck, bool]:
 
 def _watched_dirs() -> frozenset[str]:
     """实时监听中的源目录集合；监听器未启动（如测试环境）返回空集。"""
-    from movieclaw_api.services.library_ingest import get_ingest_watcher
+    from movieclaw_api.services.library.ingest import get_ingest_watcher
 
     watcher = get_ingest_watcher()
     return watcher.watched_keys() if watcher is not None else frozenset()
@@ -190,7 +191,7 @@ def _check_transfer(
 
 async def pipeline_health(session: AsyncSession) -> dict:
     """全部库的链路体检。返回 dict（路由层直接进响应模型）。"""
-    from movieclaw_api.services.import_watch_config import resolve_dispatch_rule
+    from movieclaw_api.services.library.routing import resolve_save_path
     from movieclaw_api.services.torrent_submit import mapping_covers
 
     downloader = await _default_downloader(session)
@@ -228,9 +229,11 @@ async def pipeline_health(session: AsyncSession) -> dict:
                 )
             )
 
-        rule = await resolve_dispatch_rule(session, library.id, kind=library.kind)
-        base = rule.source_path if rule else library.primary_root
-        mode = "watch" if rule else ("inplace" if library.primary_root else "downloader_default")
+        # 投递目录三级兜底走全仓唯一实现（与真实投递/预检/手动下载同源）
+        decision = await resolve_save_path(session, library, kind=library.kind)
+        rule = decision.rule
+        base = decision.path
+        mode = decision.mode
 
         if base is None:
             checks.append(

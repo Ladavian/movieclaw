@@ -64,7 +64,7 @@ async def close_fulfilled_wanted(session: AsyncSession, media_item_id: int) -> i
 
     # 时间线与派生状态：逐订阅补记（对账可能一次关闭多个订阅的工单）
     from movieclaw_api.services.subscription import recompute_subscription_status
-    from movieclaw_api.services.subscription_matching import _units_text
+    from movieclaw_api.services.subscription.matching import units_text
 
     item = await session.get(MediaItem, media_item_id)
     repo = SubscriptionRepository(session)
@@ -77,7 +77,7 @@ async def close_fulfilled_wanted(session: AsyncSession, media_item_id: int) -> i
                 subscription_id=subscription_id,
                 wanted_item_id=wanted_rows[0].id,
                 type=ActivityType.IMPORTED,
-                message=f"{_units_text(wanted_rows)}已入库（媒体库对账确认）",
+                message=f"{units_text(wanted_rows)}已入库（媒体库对账确认）",
                 payload={"units": [[w.season_number, w.episode_number] for w in wanted_rows]},
             )
         )

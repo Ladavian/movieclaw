@@ -53,8 +53,9 @@ class SiteCredential(TimestampMixin, table=True):
     - APIKEY 模式 → 使用 ``api_key``
     - CREDENTIAL 模式 → 使用 ``username`` + ``password``
 
-    ⚠️ 安全提示：cookie / api_key / password 属于敏感信息，当前为明文存储。
-    后续应接入字段级加密（用启动时注入的主密钥加密），详见项目 TODO。
+    安全说明：cookie / api_key / password 属于敏感信息，由 ``CredentialRepository``
+    在写入时用 SecretBox 加密落库（``enc::`` 前缀密文），读取明文须经该层的
+    ``decrypted_*`` 方法；加密内核上线前的存量明文在应用启动时一次性转密文。
     """
 
     __tablename__ = "site_credential"

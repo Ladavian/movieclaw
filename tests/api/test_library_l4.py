@@ -14,12 +14,12 @@ import pytest
 import pytest_asyncio
 from sqlmodel import select
 
-import movieclaw_api.services.library_scan as scan_mod
-import movieclaw_api.services.library_watch as watch_mod
+import movieclaw_api.services.library.scan as scan_mod
+import movieclaw_api.services.library.watch as watch_mod
 import movieclaw_api.services.media_discover as discover_mod
 from movieclaw_api.core.config import get_settings
-from movieclaw_api.services.library_nfo import write_entry_nfo, write_full_nfo
-from movieclaw_api.services.library_scan import scan_library
+from movieclaw_api.services.library.nfo import write_entry_nfo, write_full_nfo
+from movieclaw_api.services.library.scan import scan_library
 from movieclaw_api.services.media_probe import MediaSpec
 from movieclaw_api.services.media_server_notify import notify_media_server_refresh
 from movieclaw_db.engine import dispose_db, get_database, init_db

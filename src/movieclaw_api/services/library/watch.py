@@ -124,7 +124,7 @@ class LibraryWatcher:
 
     async def _consume(self) -> None:
         """去抖消费：首事件后等安静窗口，汇总本批涉及的库做增量扫描。"""
-        from movieclaw_api.services.library_scan import is_scanning, scan_library
+        from movieclaw_api.services.library.scan import is_scanning, scan_library
 
         while True:
             first = await self._queue.get()

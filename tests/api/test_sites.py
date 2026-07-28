@@ -369,18 +369,18 @@ async def test_sync_stats_view_handles_count_without_cursor(db) -> None:
 def test_friendly_error_categorizes_common_failures() -> None:
     import httpx
 
-    from movieclaw_api.services.verification import _friendly_error
+    from movieclaw_api.services.verification import friendly_error
     from movieclaw_tracker.exceptions import (
         TrackerAuthError,
         TrackerNetworkError,
         TrackerParseError,
     )
 
-    assert "认证失败" in _friendly_error(TrackerAuthError("用户名或密码错误"))
-    assert "无法连接" in _friendly_error(TrackerNetworkError())
-    assert "无法连接" in _friendly_error(httpx.ConnectError("boom"))
-    assert "格式异常" in _friendly_error(TrackerParseError())
-    assert "未知错误" in _friendly_error(ValueError("x"))
+    assert "认证失败" in friendly_error(TrackerAuthError("用户名或密码错误"))
+    assert "无法连接" in friendly_error(TrackerNetworkError())
+    assert "无法连接" in friendly_error(httpx.ConnectError("boom"))
+    assert "格式异常" in friendly_error(TrackerParseError())
+    assert "未知错误" in friendly_error(ValueError("x"))
 
 
 def _http_status_error(code: int) -> "httpx.HTTPStatusError":
@@ -395,25 +395,25 @@ def _http_status_error(code: int) -> "httpx.HTTPStatusError":
 
 def test_friendly_error_distinguishes_status_codes() -> None:
     """5xx（含 Cloudflare 521）是站点故障，绝不能提示用户去检查凭据。"""
-    from movieclaw_api.services.verification import _friendly_error
+    from movieclaw_api.services.verification import friendly_error
 
-    msg_521 = _friendly_error(_http_status_error(521))
+    msg_521 = friendly_error(_http_status_error(521))
     assert "站点服务器暂时不可用" in msg_521
     assert "凭据" not in msg_521
     assert "认证" not in msg_521
 
-    assert "凭据" in _friendly_error(_http_status_error(401))
-    assert "凭据" in _friendly_error(_http_status_error(403))
-    assert "限流" in _friendly_error(_http_status_error(429))
+    assert "凭据" in friendly_error(_http_status_error(401))
+    assert "凭据" in friendly_error(_http_status_error(403))
+    assert "限流" in friendly_error(_http_status_error(429))
     # 其他 4xx 保持通用提示
-    assert "异常状态码" in _friendly_error(_http_status_error(418))
+    assert "异常状态码" in friendly_error(_http_status_error(418))
 
 
 def test_transient_error_classification() -> None:
     """瞬时/非瞬时分流：决定同步失败时「退避重试」还是「作废会话重认证」。"""
     import httpx
 
-    from movieclaw_api.services.verification import _is_transient_error
+    from movieclaw_api.services.verification import is_transient_error
     from movieclaw_tracker.exceptions import (
         TrackerAuthError,
         TrackerNetworkError,
@@ -421,18 +421,18 @@ def test_transient_error_classification() -> None:
     )
 
     # 瞬时：网络不可达、超时、5xx、429——等待即可自愈，不应作废认证会话
-    assert _is_transient_error(TrackerNetworkError())
-    assert _is_transient_error(httpx.ConnectError("boom"))
-    assert _is_transient_error(httpx.ReadTimeout("slow"))
-    assert _is_transient_error(_http_status_error(521))
-    assert _is_transient_error(_http_status_error(503))
-    assert _is_transient_error(_http_status_error(429))
+    assert is_transient_error(TrackerNetworkError())
+    assert is_transient_error(httpx.ConnectError("boom"))
+    assert is_transient_error(httpx.ReadTimeout("slow"))
+    assert is_transient_error(_http_status_error(521))
+    assert is_transient_error(_http_status_error(503))
+    assert is_transient_error(_http_status_error(429))
 
     # 非瞬时：认证/解析/其余 4xx——可能凭据失效，需作废会话重建
-    assert not _is_transient_error(TrackerAuthError())
-    assert not _is_transient_error(TrackerParseError())
-    assert not _is_transient_error(_http_status_error(403))
-    assert not _is_transient_error(ValueError("x"))
+    assert not is_transient_error(TrackerAuthError())
+    assert not is_transient_error(TrackerParseError())
+    assert not is_transient_error(_http_status_error(403))
+    assert not is_transient_error(ValueError("x"))
 
 
 # ---------------------------------------------------------------------------

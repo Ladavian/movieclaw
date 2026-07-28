@@ -65,6 +65,30 @@ class LibraryFileRepository:
         result = await self._session.execute(stmt.order_by(LibraryFile.file_path))
         return list(result.scalars().all())
 
+    async def list_missing(
+        self, library_id: int, *, media_item_id: int | None = None
+    ) -> list[LibraryFile]:
+        """缺失清单：文件已不在磁盘（missing_since 非空）的台账行。"""
+        stmt = select(LibraryFile).where(
+            LibraryFile.library_id == library_id,
+            LibraryFile.missing_since.is_not(None),  # type: ignore[union-attr]
+        )
+        if media_item_id is not None:
+            stmt = stmt.where(LibraryFile.media_item_id == media_item_id)
+        result = await self._session.execute(stmt)
+        return list(result.scalars().all())
+
+    async def delete_missing(
+        self, library_id: int, *, media_item_id: int | None = None
+    ) -> int:
+        """删除缺失记录（只删台账，绝不动磁盘），返回删除条数。"""
+        rows = await self.list_missing(library_id, media_item_id=media_item_id)
+        for row in rows:
+            await self._session.delete(row)
+        if rows:
+            await self._session.commit()
+        return len(rows)
+
     async def find_by_size(self, library_id: int, size_bytes: int) -> list[LibraryFile]:
         """同库同尺寸的台账行——改名归并的候选池（尺寸是改名/移动的不变量）。"""
         result = await self._session.execute(
@@ -89,6 +113,35 @@ class LibraryFileRepository:
             .distinct()
         )
         return {(row[0], row[1]) for row in result.all()}
+
+    async def owned_units_many(
+        self, media_item_ids: list[int]
+    ) -> dict[int, set[tuple[int, int]]]:
+        """批量版 owned_units（海报墙等列表页一次查完避免 N+1）。
+
+        口径与 owned_units 完全一致：**跨库**统计（同一部剧的集可能分散在
+        多个媒体库，任一库在位就算拥有）、missing 的文件不算。列表页的
+        缺集提示与订阅生成工单必须同口径，否则会出现「海报卡提示补齐缺集，
+        点开订阅弹窗却说整季已在库」的自相矛盾。
+        """
+        if not media_item_ids:
+            return {}
+        result = await self._session.execute(
+            select(
+                LibraryFile.media_item_id,
+                LibraryFile.season_number,
+                LibraryFile.episode_number,
+            )
+            .where(
+                LibraryFile.media_item_id.in_(media_item_ids),  # type: ignore[attr-defined]
+                LibraryFile.missing_since.is_(None),  # type: ignore[union-attr]
+            )
+            .distinct()
+        )
+        owned: dict[int, set[tuple[int, int]]] = {}
+        for media_item_id, season_number, episode_number in result.all():
+            owned.setdefault(media_item_id, set()).add((season_number, episode_number))
+        return owned
 
     # -- 写入 --------------------------------------------------------------
 

@@ -1,7 +1,7 @@
 """监听导入规则的接口：源目录 → 目标库 搬运配置的 CRUD。
 
 媒体库之上的独立功能（详见 services.import_watch_config 与
-services.library_ingest 模块头）：媒体库只有一套目录体系；把外部目录里
+services.library.ingest 模块头）：媒体库只有一套目录体系；把外部目录里
 下载完成的内容搬进库，由这里配置的规则驱动。
 """
 
@@ -16,7 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from movieclaw_api.schemas.response import ApiResponse, ok
 from movieclaw_api.services.import_watch_config import ImportWatchConfigService
-from movieclaw_api.services.library_config import LibraryConfigService
+from movieclaw_api.services.library.config import LibraryConfigService
 from movieclaw_db.engine import get_session
 from movieclaw_db.models import ImportWatch
 

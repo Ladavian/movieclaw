@@ -70,7 +70,7 @@ class Subscription(TimestampMixin, table=True):
 
     # -- 入库目标 -----------------------------------------------------------
     # NULL = 用该 kind 的默认库；库被删除时外键 SET NULL，自动回落默认。
-    # 投递 save_path 由库主根推导（services.library_config.derive_save_path）。
+    # 投递 save_path 由库主根推导（services.library.config.derive_save_path）。
     library_id: int | None = Field(
         default=None,
         sa_column=Column(

@@ -230,7 +230,7 @@ class SubscriptionService:
         if library_id is not None:
             await self._validate_library(kind.value, library_id)
         else:
-            from movieclaw_api.services.library_routing import route_for_item
+            from movieclaw_api.services.library.routing import route_for_item
 
             decision = await route_for_item(self._session, kind.value, item)
             if decision.library is not None:
@@ -616,7 +616,7 @@ class SubscriptionService:
         agent 工具等）只要走本服务的写方法，就自动获得"创建即搜"语义，
         不依赖调用方自觉。延迟导入避免与搜索管线形成环。
         """
-        from movieclaw_api.services.wanted_search import kick_search_soon
+        from movieclaw_api.services.subscription.wanted_search import kick_search_soon
 
         kick_search_soon()
 

@@ -6,7 +6,7 @@
 - 订阅按 info_hash 认领的条目沿用订阅**定格**的库（不重新路由）；
 - 识别失败的 auto 条目落账无归属库（幂等退避不受影响）；
 - auto 规则校验：kind 必填、每 kind 至多一条、无可路由库拒绝创建；
-- resolve_dispatch_dir：库专属规则优先，同 kind auto 规则兜底。
+- resolve_dispatch_rule：库专属规则优先，同 kind auto 规则兜底。
 """
 
 from __future__ import annotations
@@ -17,12 +17,12 @@ import pytest
 import pytest_asyncio
 from sqlmodel import select
 
-import movieclaw_api.services.library_ingest as ingest_mod
+import movieclaw_api.services.library.ingest as ingest_mod
 from movieclaw_api.core.config import get_settings
 from movieclaw_api.exceptions import BadRequestException
 from movieclaw_api.services.import_watch_config import (
     ImportWatchConfigService,
-    resolve_dispatch_dir,
+    resolve_dispatch_rule,
 )
 from movieclaw_db.engine import dispose_db, get_database, init_db
 from movieclaw_db.migrations import run_migrations
@@ -276,7 +276,7 @@ async def test_auto_rule_validation(db, tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_resolve_dispatch_dir_prefers_library_rule_then_auto(db, tmp_path):
+async def test_resolve_dispatch_rule_prefers_library_rule_then_auto(db, tmp_path):
     """投递目录：库专属规则 → 同 kind auto 规则 → None。"""
     tv_root, anime_root = tmp_path / "tv", tmp_path / "anime"
     tv_id = await _make_library(db, name="剧集库", root=tv_root)
@@ -292,8 +292,10 @@ async def test_resolve_dispatch_dir_prefers_library_rule_then_auto(db, tmp_path)
             source_path=str(auto_watch), strategy="copy", library_id=None, kind="tv"
         )
         # 剧集库有专属规则：优先
-        assert await resolve_dispatch_dir(session, tv_id, kind="tv") == str(own_watch)
+        rule = await resolve_dispatch_rule(session, tv_id, kind="tv")
+        assert rule is not None and rule.source_path == str(own_watch)
         # 动漫库没有专属规则：落同 kind 的 auto 目录（混合下载目录闭环）
-        assert await resolve_dispatch_dir(session, anime_id, kind="tv") == str(auto_watch)
+        rule = await resolve_dispatch_rule(session, anime_id, kind="tv")
+        assert rule is not None and rule.source_path == str(auto_watch)
         # 没有任何规则可用
-        assert await resolve_dispatch_dir(session, None, kind="movie") is None
+        assert await resolve_dispatch_rule(session, None, kind="movie") is None

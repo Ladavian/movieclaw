@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from movieclaw_db.models.site_credential import AuthType, SiteCredential
+from movieclaw_db.repositories.credential_repo import CredentialRepository
 from movieclaw_tracker import (
     ApiKeyAuthProvider,
     AuthProvider,
@@ -42,16 +43,17 @@ def build_auth_provider(credential: SiteCredential) -> AuthProvider:
     调用站点功能时，都通过它把用户填的授权信息还原成可执行的认证策略。
 
     调用前应确保必填字段已齐全（由 SiteConfigService 在写入时保证）。
+    敏感字段落库为密文，此处经 CredentialRepository 的解密方法还原明文。
     """
     auth_type = credential.auth_type
     if auth_type == AuthType.COOKIE:
-        return CookieAuthProvider(credential.cookie or "")
+        return CookieAuthProvider(CredentialRepository.decrypted_cookie(credential) or "")
     if auth_type == AuthType.APIKEY:
-        return ApiKeyAuthProvider(credential.api_key or "")
+        return ApiKeyAuthProvider(CredentialRepository.decrypted_api_key(credential) or "")
     if auth_type == AuthType.CREDENTIAL:
         return CredentialAuthProvider(
             username=credential.username or "",
-            password=credential.password or "",
+            password=CredentialRepository.decrypted_password(credential) or "",
         )
     # 理论上不会到这里（auth_type 是受约束的枚举），做防御式兜底
     raise ValueError(f"不支持的授权类型：{auth_type}")
