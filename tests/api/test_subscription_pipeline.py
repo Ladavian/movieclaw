@@ -23,6 +23,7 @@ from movieclaw_api.services.subscription_matching import evaluate_and_dispatch
 from movieclaw_api.services.torrent_matcher import process_new_torrents
 from movieclaw_db.engine import dispose_db, get_database, init_db
 from movieclaw_db.migrations import run_migrations
+from movieclaw_api.settings.store import init_setting_store, reset_setting_store
 from movieclaw_db.models import (
     SiteTorrent,
     SubscriptionActivity,
@@ -92,7 +93,10 @@ async def db(tmp_path, monkeypatch):
     get_settings.cache_clear()
     init_db(get_settings().database_url, echo=False)
     await run_migrations()
+    # 被动匹配水位走配置内核，测试环境同样要初始化配置存储
+    init_setting_store()
     yield get_database()
+    reset_setting_store()
     await dispose_db()
     get_settings.cache_clear()
 
