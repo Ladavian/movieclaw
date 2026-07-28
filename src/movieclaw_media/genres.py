@@ -99,14 +99,16 @@ def country_label(code: str) -> str:
 
 
 # 区域预设组：配置界面的一键勾选捷径，保存时展开为国家码列表。
-# 白名单模型表达不了"其他"——收不进任何声明库的作品自然落该类型默认库，
-# 默认库就是"其他"的承接者（docs/design/library-routing.md 1.1）
+# 分组粒度对齐 PT 用户常见的分库习惯（大陆剧库/港台库/美剧库…）；
+# 捷径不必覆盖所有国家——新加坡/加拿大/澳大利亚/新西兰归不进任何组，
+# 界面上仍可逐个勾选。白名单模型表达不了"其他"——收不进任何声明库的
+# 作品自然落该类型默认库，默认库就是"其他"的承接者
+# （docs/design/library-routing.md 1.1）
 REGION_PRESETS: list[dict] = [
-    {"key": "chinese", "label": "华语", "countries": ["CN", "HK", "TW", "SG"]},
+    {"key": "mainland", "label": "大陆", "countries": ["CN"]},
+    {"key": "hk_tw", "label": "港台", "countries": ["HK", "TW"]},
     {"key": "jp_kr", "label": "日韩", "countries": ["JP", "KR"]},
-    {
-        "key": "western",
-        "label": "欧美",
-        "countries": ["US", "GB", "FR", "DE", "IT", "ES", "CA", "AU", "NZ", "IE"],
-    },
+    {"key": "us", "label": "美国", "countries": ["US"]},
+    {"key": "europe", "label": "欧洲", "countries": ["GB", "FR", "DE", "IT", "ES", "IE"]},
+    {"key": "minor_lang", "label": "小语种", "countries": ["IN", "TH", "RU"]},
 ]
