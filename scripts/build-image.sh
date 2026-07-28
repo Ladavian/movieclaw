@@ -39,6 +39,9 @@ if [[ "${CN_MIRROR:-0}" == "1" ]]; then
     BUILD_ARGS+=(
         --build-arg "PIP_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple"
         --build-arg "NPM_REGISTRY=https://registry.npmmirror.com"
+        # apt 也要换源：ffmpeg 的依赖链很长，直连 deb.debian.org 经代理时
+        # 常在半路 400/超时，整个构建就废在最后一层
+        --build-arg "APT_MIRROR=mirrors.tuna.tsinghua.edu.cn"
     )
 fi
 

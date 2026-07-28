@@ -25,20 +25,32 @@
 # ---------------------------------------------------------------------------
 # 前端产物是纯 JS（images.unoptimized 已去掉 sharp 原生依赖），跨架构通用，
 # 因此固定在构建机原生架构上跑，交叉构建时不经过 QEMU 模拟（快一个数量级）。
-FROM --platform=$BUILDPLATFORM node:22-bookworm-slim AS web-builder
+FROM --platform=$BUILDPLATFORM node:22-bookworm-slim AS node-deps
 ARG NPM_REGISTRY=https://registry.npmjs.org
 ENV NEXT_TELEMETRY_DISABLED=1
 RUN npm install -g pnpm@10
 WORKDIR /build
-
 # 源码要在 install 之前就位：extension 的 postinstall（wxt prepare）依赖 entrypoints/ 源码
 COPY pnpm-workspace.yaml pnpm-lock.yaml package.json ./
 COPY apps ./apps
 RUN pnpm config set registry "$NPM_REGISTRY" && pnpm install --frozen-lockfile
-# 构建浏览器扩展并放进 web 静态目录（设置页「浏览器插件」提供下载）
+
+# 浏览器扩展单独成阶段（设置页「浏览器插件」提供下载）。
+# 必须与前端构建隔离：两者都用 vite 系工具链，在同一工作目录里先后执行时，
+# 扩展构建留下的产物会让随后的 next build 静默挂死（日志停在 "Creating an
+# optimized production build"、CPU 掉到 0）。分阶段后各自从干净的 node-deps
+# 出发，只把最终的 zip 交给前端，互不干扰。
+FROM node-deps AS ext-builder
 RUN pnpm ext:zip \
-    && mkdir -p apps/web/public/extension \
-    && cp "$(ls -t apps/extension/.output/*-chrome.zip | head -1)" apps/web/public/extension/movieclaw-extension.zip
+    && mkdir -p /out \
+    && cp "$(ls -t apps/extension/.output/*-chrome.zip | head -1)" /out/movieclaw-extension.zip
+
+FROM node-deps AS web-builder
+# 限制静态生成并发 + 给 Node 明确堆上限：Docker 虚拟机通常核多内存少，
+# 放任 Next 按核数开 worker 会把内存吃干（见 next.config.ts）
+ENV NEXT_BUILD_CPUS=2 \
+    NODE_OPTIONS=--max-old-space-size=4096
+COPY --from=ext-builder /out/movieclaw-extension.zip apps/web/public/extension/movieclaw-extension.zip
 RUN pnpm web:build
 
 # ---------------------------------------------------------------------------
@@ -58,7 +70,11 @@ RUN python -c "import tomllib; deps = tomllib.load(open('pyproject.toml', 'rb'))
 # 模型文件与架构无关，同样跑在构建机原生架构上
 FROM --platform=$BUILDPLATFORM debian:bookworm-slim AS ner-model
 ARG NER_MODEL_BASE=https://github.com/yipengfei329/movieclaw/releases/download/torrent-ner-v1
-RUN apt-get update \
+ARG APT_MIRROR=""
+RUN if [ -n "$APT_MIRROR" ]; then \
+        sed -i "s|deb.debian.org|$APT_MIRROR|g" /etc/apt/sources.list.d/debian.sources; \
+    fi \
+    && apt-get update \
     && apt-get install -y --no-install-recommends curl ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 RUN mkdir -p /model \
@@ -82,7 +98,11 @@ FROM python:3.12-slim-bookworm
 #   而非种子名，缺了它整个「视频/音频/字幕规格」区块都是空的。装全套 ffmpeg
 #   约 160MB（ffprobe 在 Debian 里不单独成包，且 libavdevice 硬依赖 SDL 那串），
 #   这是为「开箱即用」付的确定成本——降级路径虽然存在，但不该是默认体验
-RUN apt-get update \
+ARG APT_MIRROR=""
+RUN if [ -n "$APT_MIRROR" ]; then \
+        sed -i "s|deb.debian.org|$APT_MIRROR|g" /etc/apt/sources.list.d/debian.sources; \
+    fi \
+    && apt-get update \
     && apt-get install -y --no-install-recommends libstdc++6 ca-certificates ffmpeg \
     && rm -rf /var/lib/apt/lists/*
 

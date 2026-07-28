@@ -17,6 +17,13 @@ const nextConfig: NextConfig = {
   // 关闭后 standalone 产物不再依赖 sharp 原生模块，前端构建产物跨 CPU 架构通用
   // （Docker 交叉构建时前端可在宿主架构原生编译，不必走 QEMU 模拟）。
   images: { unoptimized: true },
+  // 构建并发上限（仅 Docker 构建设置此变量）：Next 默认按 CPU 核数开静态生成
+  // worker，而 Docker 虚拟机往往是「核多内存少」（如 12 核 / 8G）。页面数量
+  // 长上来后 worker 一起吃内存，构建会静默挂死——日志停在 "Creating an
+  // optimized production build"、CPU 掉到接近 0。限并发是这个现象的根治手段。
+  ...(process.env.NEXT_BUILD_CPUS
+    ? { experimental: { cpus: Number(process.env.NEXT_BUILD_CPUS) } }
+    : {}),
   reactStrictMode: true,
   typedRoutes: true,
   // 关闭左下角 Next.js 开发指示器（dev tools 浮动按钮）
