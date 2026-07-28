@@ -47,6 +47,25 @@ def to_domain_config(row: LlmProvider, api_key: str) -> LlmProviderConfig:
     )
 
 
+async def resolve_provider_endpoint(session: AsyncSession) -> tuple[str, str]:
+    """解析当前供应商的 API 端点与明文密钥，返回 ``(base_url, api_key)``。
+
+    端点取值：显式配置 → 预设默认；两者皆空抛 BadRequest。
+    这是端点/密钥解析的唯一判据来源——网络连通性测试（routes/network）
+    复用本函数，不允许在别处再实现一遍取值顺序。
+    """
+    from movieclaw_api.exceptions import BadRequestException
+
+    repo = LlmProviderRepository(session)
+    row = await repo.get()
+    if row is None:
+        raise BadRequestException("尚未配置 AI 模型供应商，无法测试")
+    base = row.base_url or (get_preset(row.provider_type).base_url or "")
+    if not base:
+        raise BadRequestException("该供应商未配置 API 端点地址")
+    return base, repo.decrypted_api_key(row) or ""
+
+
 class LlmConfigService:
     """LLM 供应商配置的业务服务。绑定一个数据库会话。"""
 
