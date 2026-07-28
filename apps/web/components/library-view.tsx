@@ -1142,7 +1142,8 @@ export function LibraryFormDialog({
           )}
 
           {/* 收藏范围（可选）：声明"本库收什么"，订阅与监听导入按它自动选库。
-              区域按预设组一键勾选（存储是展开后的国家码）；两个维度间是"且" */}
+              区域逐国勾选（条件本就是 any_of，预设组降级为一键整组勾选的快捷键）；
+              两个维度间是"且" */}
           {tab === "scope" && (
             <>
           <p className="text-[12px] leading-relaxed text-[var(--text-muted)]">
@@ -1157,7 +1158,35 @@ export function LibraryFormDialog({
             <>
               <div>
                 <label className={labelClass}>区域（勾选任一即匹配）</label>
+                {/* 逐个国家勾选是真正的选项（可任意组合，如只收日本）；
+                    已选中但不在内置映射里的码补进列表，保证选了就能看见、能取消 */}
                 <div className="flex flex-wrap gap-1.5">
+                  {[
+                    ...Object.entries(routingOptions.country_names),
+                    ...matchRegions
+                      .filter((c) => !(c in routingOptions.country_names))
+                      .map((c): [string, string] => [c, c]),
+                  ].map(([code, name]) => (
+                    <button
+                      key={code}
+                      type="button"
+                      data-active={matchRegions.includes(code)}
+                      onClick={() =>
+                        setMatchRegions((prev) =>
+                          prev.includes(code)
+                            ? prev.filter((c) => c !== code)
+                            : [...prev, code],
+                        )
+                      }
+                      className="glass-row nav-item !w-auto px-3 py-1.5 text-xs font-medium"
+                    >
+                      {name}
+                    </button>
+                  ))}
+                </div>
+                {/* 预设组保留为快捷键：一键选中/取消整组，避免「欧美」要点十下 */}
+                <div className="mt-2 flex flex-wrap items-center gap-1.5">
+                  <span className="text-[11px] text-[var(--text-faint)]">快捷组合</span>
                   {routingOptions.region_presets.map((preset) => {
                     const active = preset.countries.every((c) => matchRegions.includes(c));
                     return (
@@ -1175,7 +1204,7 @@ export function LibraryFormDialog({
                               : [...new Set([...prev, ...preset.countries])],
                           )
                         }
-                        className="glass-row nav-item !w-auto px-3 py-1.5 text-xs font-medium"
+                        className="glass-row nav-item !w-auto px-2.5 py-1 text-[11px] font-medium"
                       >
                         {preset.label}
                       </button>
