@@ -465,7 +465,7 @@ async def resolve_identity_review(
     payload: ReviewResolvePayload,
     session: AsyncSession = Depends(get_session),
 ) -> ApiResponse[dict]:
-    """对复核清单里的文件拍板（实现见 services/library_claim.resolve_review）。"""
+    """对复核清单里的文件拍板（实现见 services/library/claim.resolve_review）。"""
 
     resolved, title = await library_claim.resolve_review(
         session, payload.file_ids, accept=payload.accept
@@ -1453,7 +1453,7 @@ async def claim_files_batch(
     session: AsyncSession = Depends(get_session),
 ) -> ApiResponse[dict]:
     """一次认领一整组（通常是一部剧的几十集），与单个认领共用
-    services/library_claim.claim_files（季集号沿用文件名解析结果）。"""
+    services/library/claim.claim_files（季集号沿用文件名解析结果）。"""
 
     item, claimed = await library_claim.claim_files(
         session, payload.file_ids, tmdb_id=payload.tmdb_id
