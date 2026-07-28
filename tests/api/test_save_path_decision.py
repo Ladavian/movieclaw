@@ -6,7 +6,6 @@
 """
 from __future__ import annotations
 
-import pytest
 import pytest_asyncio
 
 from movieclaw_api.core.config import get_settings
