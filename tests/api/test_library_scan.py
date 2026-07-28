@@ -644,7 +644,7 @@ async def test_asset_phase_honors_stop_request(db, tmp_path, monkeypatch) -> Non
     assert len(calls) == 1, "喊停之后不该再给下一个条目补资产"
     # 文件都已入账，停的只是图片下载——不该被记成"扫描没扫完"
     assert summary.cancelled is False
-    assert library_id not in scan_mod._stop_requests  # 标志随扫描收尾清干净
+    assert not scan_mod._scan_tasks.stop_requested(library_id)  # 标志随扫描收尾清干净
 
 
 async def test_reidentify_is_not_disguised_as_scanning(db, tmp_path, monkeypatch) -> None:
@@ -676,7 +676,7 @@ async def test_reidentify_is_not_disguised_as_scanning(db, tmp_path, monkeypatch
         observed.append(state.phase)
         # 重识别期间请求停止：必须被拒绝，且不留下任何痕迹
         assert scan_mod.request_stop_scan(library_id) is False
-        assert library_id not in scan_mod._stop_requests
+        assert not scan_mod._scan_tasks.stop_requested(library_id)
         return await original_identify(*args, **kwargs)
 
     monkeypatch.setattr(scan_mod, "_identify", watching_identify)
@@ -898,11 +898,11 @@ async def test_scan_stop_request_cancels_early(db, tmp_path) -> None:
     assert request_stop_scan(library.id) is False  # 没在扫
 
     # 预置停止标志：扫描循环在第一个文件前即检查到并提前收尾
-    scan_mod._stop_requests.add(library.id)
+    scan_mod._scan_tasks._stops.add(library.id)
     summary = await scan_library(library.id)
     assert summary.cancelled is True
     assert summary.scanned == 0  # 一个文件都没处理
-    assert library.id not in scan_mod._stop_requests  # 收尾时清除标志
+    assert not scan_mod._scan_tasks.stop_requested(library.id)  # 收尾时清除标志
 
     # 停止不破坏增量语义：再扫一次照常完成
     summary2 = await scan_library(library.id)

@@ -37,6 +37,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
 
 from movieclaw_api.core.config import get_settings
+from movieclaw_api.services.task_state import TaskState
 from movieclaw_db.engine import get_database
 from movieclaw_db.models import (
     ActivityType,
@@ -214,27 +215,24 @@ class RefreshState:
     stopping: bool = False
 
 
-# 进程内状态三件套，与扫描同模式：单飞集合 / 实时状态 / 停止请求
-_library_refreshing: set[int] = set()
-_refresh_states: dict[int, RefreshState] = {}
-_refresh_stop: set[int] = set()
+# 进程内状态三件套（单飞 / 实时状态 / 停止请求），容器统一为 TaskState
+_refresh_tasks: TaskState[RefreshState] = TaskState()
 
 
 def is_library_refreshing(library_id: int) -> bool:
-    return library_id in _library_refreshing
+    return _refresh_tasks.running(library_id)
 
 
 def library_refresh_state(library_id: int) -> RefreshState | None:
     """进行中整库刷新的实时状态；没在刷返回 None。"""
-    return _refresh_states.get(library_id)
+    return _refresh_tasks.state_of(library_id)
 
 
 def request_stop_library_refresh(library_id: int) -> bool:
     """请求停止整库刷新；该库没在刷返回 False。"""
-    if library_id not in _library_refreshing:
+    if not _refresh_tasks.request_stop(library_id):
         return False
-    _refresh_stop.add(library_id)
-    state = _refresh_states.get(library_id)
+    state = _refresh_tasks.state_of(library_id)
     if state is not None:
         state.stopping = True
     return True
@@ -251,11 +249,9 @@ async def refresh_library_metadata(library_id: int) -> None:
     正在处理的每部片和它当前的阶段。并发 3 路，刮削幂等，中途停止再启动
     只是重复请求不是重复数据。
     """
-    if library_id in _library_refreshing:
-        return
-    _library_refreshing.add(library_id)
     state = RefreshState()
-    _refresh_states[library_id] = state
+    if not _refresh_tasks.try_start(library_id, state):
+        return
     try:
         db = get_database()
         async with db.session() as session:
@@ -278,7 +274,7 @@ async def refresh_library_metadata(library_id: int) -> None:
                     item_id, title = queue.get_nowait()
                 except asyncio.QueueEmpty:
                     return
-                if library_id in _refresh_stop:
+                if _refresh_tasks.stop_requested(library_id):
                     return
                 state.active[item_id] = (title, "排队中")
                 try:
@@ -296,7 +292,7 @@ async def refresh_library_metadata(library_id: int) -> None:
                     state.processed += 1
 
         await asyncio.gather(*(_worker() for _ in range(_REFRESH_CONCURRENCY)))
-        if library_id in _refresh_stop:
+        if _refresh_tasks.stop_requested(library_id):
             logger.info(
                 "媒体库 #%s 整库元数据刷新被手动停止（已处理 %d / 共 %d）",
                 library_id,
@@ -313,9 +309,7 @@ async def refresh_library_metadata(library_id: int) -> None:
     except Exception:  # noqa: BLE001 -- 后台任务兜底
         logger.exception("媒体库 #%s 整库元数据刷新时发生未知错误", library_id)
     finally:
-        _library_refreshing.discard(library_id)
-        _refresh_stop.discard(library_id)
-        _refresh_states.pop(library_id, None)
+        _refresh_tasks.finish(library_id)
 
 
 # ---------------------------------------------------------------------------

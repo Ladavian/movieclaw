@@ -289,18 +289,18 @@ async def test_scan_and_organize_are_mutually_exclusive(db, tmp_path):
         library = await _make_library(session, kind=MediaKind.MOVIE, root=root)
         library_id = library.id
 
-    scan_mod._jobs[library_id] = scan_mod.ScanState(phase=scan_mod.ScanPhase.INGESTING)
+    scan_mod._scan_tasks.try_start(library_id, scan_mod.ScanState(phase=scan_mod.ScanPhase.INGESTING))
     try:
         summary = await organize_library(library_id)
         assert any("扫描" in e for e in summary.errors)
         assert summary.renamed == 0
     finally:
-        scan_mod._jobs.pop(library_id, None)
+        scan_mod._scan_tasks.finish(library_id)
 
-    organize_mod._organizing.add(library_id)
+    organize_mod._organize_tasks.try_start(library_id, (0, 0))
     try:
         scan_summary = await scan_library(library_id)
         assert any("整理" in e for e in scan_summary.errors)
         assert scan_summary.scanned == 0
     finally:
-        organize_mod._organizing.discard(library_id)
+        organize_mod._organize_tasks.finish(library_id)

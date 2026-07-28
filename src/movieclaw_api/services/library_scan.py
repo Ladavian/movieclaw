@@ -57,6 +57,7 @@ from movieclaw_api.services.library_resolve import (
 from movieclaw_api.services.media_discover import get_tmdb_client
 from movieclaw_api.services.media_library import MediaLibraryService
 from movieclaw_api.services.media_probe import probe_media
+from movieclaw_api.services.task_state import TaskState
 from movieclaw_db.engine import get_database
 from movieclaw_db.models import DownloadHint, FileSource, Library, LibraryFile, MediaItem, utcnow
 from movieclaw_db.models.library_file import IdentitySource, UnidentifiedCode
@@ -165,18 +166,13 @@ class ScanState:
     total: int = 0  # 0 表示分母未知（遍历阶段），前端画不确定态转圈
 
 
-# 进行中的扫描类任务：库 id → 实时状态。**同时**承担三个角色：库级互斥锁
-# （在册即有任务在跑）、阶段标识、进度来源。三者合一是刻意的——早先"互斥
-# 用 set、进度用另一个 dict"的写法必须靠人肉维持两者同生共死，任何一条
-# 提前退出的路径都会让「在扫描」与「有进度」对不上，接口于是开始说谎
-_jobs: dict[int, ScanState] = {}
-# 用户请求停止的库：扫描循环在每个文件/条目之间检查，命中即提前收尾
-_stop_requests: set[int] = set()
+# 进行中的扫描类任务（TaskState：库级互斥锁 + 阶段/进度 + 停止请求 +
+# 最近一次结论四合一）。状态与互斥同源是刻意的——早先"互斥用 set、进度用
+# 另一个 dict"的写法必须靠人肉维持两者同生共死，任何一条提前退出的路径
+# 都会让「在扫描」与「有进度」对不上，接口于是开始说谎
+_scan_tasks: TaskState[ScanState] = TaskState()
 # 暂缓补扫任务：每库至多一个（写入结束后没有事件叫醒扫描，靠它到点补扫）
 _rescan_tasks: dict[int, asyncio.Task] = {}
-# 每库最近一次扫描的结论（进程内即可：给前端"扫描完成了什么"的反馈——
-# 扫描常常毫秒级结束，没有这份记录用户会以为点了没反应）
-_last_scans: dict[int, tuple] = {}
 
 
 @dataclass
@@ -212,12 +208,12 @@ def is_scanning(library_id: int) -> bool:
     具体在做什么由 ``scan_progress(library_id).phase`` 区分：调用方要对
     用户描述状态时**必须**读阶段，不能一律说成"正在扫描"。
     """
-    return library_id in _jobs
+    return _scan_tasks.running(library_id)
 
 
 def busy_phase(library_id: int) -> ScanPhase | None:
     """该库进行中任务的阶段；没有任务在跑返回 None（接口提示文案用）。"""
-    state = _jobs.get(library_id)
+    state = _scan_tasks.state_of(library_id)
     return state.phase if state is not None else None
 
 
@@ -232,11 +228,10 @@ def request_stop_scan(library_id: int) -> bool:
     重识别阶段返回 False 而不是"假装受理"：它不看这个标志，受理了既停
     不下来，标志还会残留到下一次真扫描、让那次刚开始就被取消。
     """
-    state = _jobs.get(library_id)
+    state = _scan_tasks.state_of(library_id)
     if state is None or state.phase not in _STOPPABLE_PHASES:
         return False
-    _stop_requests.add(library_id)
-    return True
+    return _scan_tasks.request_stop(library_id)
 
 
 def _arm_rescan(library_id: int, delay: float) -> None:
@@ -258,7 +253,7 @@ async def _rescan_later(library_id: int, delay: float) -> None:
 
 def last_scan(library_id: int) -> tuple | None:
     """最近一次扫描的 (完成时间, ScanSummary)；该库从未扫描过则为 None。"""
-    return _last_scans.get(library_id)
+    return _scan_tasks.last(library_id)  # type: ignore[return-value]
 
 
 def scan_progress(library_id: int) -> ScanState | None:
@@ -266,7 +261,7 @@ def scan_progress(library_id: int) -> ScanState | None:
 
     与 ``is_scanning`` 同一份数据，不存在"在扫描却没有进度"的中间态。
     """
-    return _jobs.get(library_id)
+    return _scan_tasks.state_of(library_id)
 
 
 async def scan_library(library_id: int) -> ScanSummary:
@@ -274,7 +269,7 @@ async def scan_library(library_id: int) -> ScanSummary:
     from movieclaw_api.services.library_organize import is_organizing
 
     summary = ScanSummary(library_id=library_id)
-    running = _jobs.get(library_id)
+    running = _scan_tasks.state_of(library_id)
     if running is not None:
         summary.errors.append(f"该库已有任务在进行中（{PHASE_LABELS[running.phase]}）")
         return summary
@@ -288,7 +283,7 @@ async def scan_library(library_id: int) -> ScanSummary:
     # 状态先立起来再干活：从这一行到 finally 之间的任何路径，"在跑"与
     # "跑到哪了"都由同一个对象回答，接口不可能取到半截状态
     state = ScanState(phase=ScanPhase.WALKING)
-    _jobs[library_id] = state
+    _scan_tasks.try_start(library_id, state)
     try:
         return await _scan(library_id, summary, state)
     except Exception:  # noqa: BLE001 -- 后台任务兜底
@@ -296,9 +291,7 @@ async def scan_library(library_id: int) -> ScanSummary:
         summary.errors.append("扫描中断：发生未知错误（详见后端日志）")
         return summary
     finally:
-        _jobs.pop(library_id, None)
-        _stop_requests.discard(library_id)
-        _last_scans[library_id] = (utcnow(), summary)
+        _scan_tasks.finish(library_id, result=(utcnow(), summary))
         # 暂缓过文件的扫描要自己安排补扫：写入结束后不会再有事件叫醒我们
         # （手动停止的不自动补扫——用户的意图是"别扫了"）
         if summary.deferred and not summary.cancelled:
@@ -361,7 +354,7 @@ async def _scan(library_id: int, summary: ScanSummary, state: ScanState) -> Scan
                     known,
                 )
             # 用户请求停止：提前收尾。已入账的保留，剩余文件下次扫描继续
-            if library_id in _stop_requests:
+            if _scan_tasks.stop_requested(library_id):
                 summary.cancelled = True
                 logger.info(
                     "媒体库 #%s 扫描被手动停止（已处理 %d / 共 %d）",
@@ -553,13 +546,13 @@ async def _scan(library_id: int, summary: ScanSummary, state: ScanState) -> Scan
                     return
                 # 停止请求在这里同样生效：文件都已入账，缺的图片由任一后续
                 # 刷新入口自愈，没有理由让用户点了停止还得干等
-                if library_id in _stop_requests:
+                if _scan_tasks.stop_requested(library_id):
                     return
                 await ensure_assets(item_id)
                 state.processed += 1
 
         await asyncio.gather(*(_asset_worker() for _ in range(_ASSET_CONCURRENCY)))
-        if library_id in _stop_requests:
+        if _scan_tasks.stop_requested(library_id):
             logger.info(
                 "媒体库 #%s 图片资产补齐被手动停止（已完成 %d / 共 %d，缺的图片下次刷新自愈）",
                 library_id,
@@ -884,7 +877,7 @@ async def _probe_backfill(
 
     def _tick() -> bool:
         state.processed += 1
-        return library_id not in _stop_requests
+        return not _scan_tasks.stop_requested(library_id)
 
     summary.probed = await backfill_streams(session, rows, limit=None, on_probed=_tick)
     logger.info(
@@ -892,7 +885,7 @@ async def _probe_backfill(
         library_id,
         summary.probed,
         len(rows),
-        "（被手动停止，剩余的下次扫描继续）" if library_id in _stop_requests else "",
+        "（被手动停止，剩余的下次扫描继续）" if _scan_tasks.stop_requested(library_id) else "",
     )
 
 
@@ -1443,7 +1436,7 @@ async def reidentify_item(library_id: int, media_item_id: int) -> ReidentifySumm
     summary = ReidentifySummary(library_id=library_id, media_item_id=media_item_id)
     from movieclaw_api.services.library_organize import is_organizing
 
-    running = _jobs.get(library_id)
+    running = _scan_tasks.state_of(library_id)
     if running is not None:
         summary.errors.append(f"该库{PHASE_LABELS[running.phase]}，请等当前任务完成后再重新识别")
         return summary
@@ -1454,7 +1447,7 @@ async def reidentify_item(library_id: int, media_item_id: int) -> ReidentifySumm
     # 锁，但阶段标成 REIDENTIFYING——接口据此如实说"正在重新识别"，不会
     # 冒充扫描（也因此不会给出一个按了没用的"停止扫描"入口）
     state = ScanState(phase=ScanPhase.REIDENTIFYING)
-    _jobs[library_id] = state
+    _scan_tasks.try_start(library_id, state)
     try:
         return await _reidentify(library_id, media_item_id, summary, state)
     except Exception:  # noqa: BLE001 -- 面向用户的操作，兜底转成可读错误
@@ -1462,7 +1455,7 @@ async def reidentify_item(library_id: int, media_item_id: int) -> ReidentifySumm
         summary.errors.append("重新识别中断：发生未知错误（详见后端日志）")
         return summary
     finally:
-        _jobs.pop(library_id, None)
+        _scan_tasks.finish(library_id)
 
 
 async def _reidentify(

@@ -53,6 +53,7 @@ from sqlmodel import select
 
 from movieclaw_api.services.library_config import sanitize_folder_name
 from movieclaw_api.services.library_import import VIDEO_EXTS, entry_base_name
+from movieclaw_api.services.task_state import TaskState
 from movieclaw_db.engine import get_database
 from movieclaw_db.models import Library, LibraryFile, MediaItem, utcnow
 from movieclaw_db.repositories.library_file_repo import LibraryFileRepository
@@ -64,26 +65,22 @@ logger = logging.getLogger("movieclaw_api.library_organize")
 # 同目录且文件名以"主文件名."开头即视为附属，如 foo.zh.srt / foo.nfo）
 _SIDECAR_SKIP_EXTS = VIDEO_EXTS | {".iso"}  # 同名不同容器的视频是独立版本，不是附属
 
-# 同一时间每个库只允许一个整理在跑（进程内互斥，与 library_scan 同模式）
-_organizing: set[int] = set()
-# 整理进行中的实时进度 (已完成, 总数)：前端轮询后画进度
-_progress: dict[int, tuple[int, int]] = {}
-# 每库最近一次整理的结论（给前端"整理完成了什么"的反馈）
-_last: dict[int, tuple] = {}
+# 每库单飞互斥 + 实时进度 (已完成, 总数) + 最近一次结论，容器统一为 TaskState
+_organize_tasks: TaskState[tuple[int, int]] = TaskState()
 
 
 def is_organizing(library_id: int) -> bool:
-    return library_id in _organizing
+    return _organize_tasks.running(library_id)
 
 
 def organize_progress(library_id: int) -> tuple[int, int] | None:
     """进行中整理的 (已完成, 总数)；没有整理在跑则为 None。"""
-    return _progress.get(library_id)
+    return _organize_tasks.state_of(library_id)
 
 
 def last_organize(library_id: int) -> tuple | None:
     """最近一次整理的 (完成时间, OrganizeSummary)；从未整理过则为 None。"""
-    return _last.get(library_id)
+    return _organize_tasks.last(library_id)  # type: ignore[return-value]
 
 
 # ---------------------------------------------------------------------------
@@ -361,14 +358,13 @@ async def organize_library(library_id: int) -> OrganizeSummary:
     from movieclaw_api.services.library_scan import is_scanning
 
     summary = OrganizeSummary(library_id=library_id)
-    if library_id in _organizing:
+    if is_organizing(library_id):
         summary.errors.append("该库已有整理在进行中")
         return summary
     if is_scanning(library_id):
         summary.errors.append("该库正在扫描中，请等待扫描完成后再整理")
         return summary
-    _organizing.add(library_id)
-    _progress[library_id] = (0, 0)
+    _organize_tasks.try_start(library_id, (0, 0))
     try:
         return await _organize(library_id, summary)
     except Exception:  # noqa: BLE001 -- 后台任务兜底
@@ -376,9 +372,7 @@ async def organize_library(library_id: int) -> OrganizeSummary:
         summary.errors.append("整理中断：发生未知错误（详见后端日志）")
         return summary
     finally:
-        _organizing.discard(library_id)
-        _progress.pop(library_id, None)
-        _last[library_id] = (utcnow(), summary)
+        _organize_tasks.finish(library_id, result=(utcnow(), summary))
 
 
 async def _organize(library_id: int, summary: OrganizeSummary) -> OrganizeSummary:
@@ -394,7 +388,7 @@ async def _organize(library_id: int, summary: OrganizeSummary) -> OrganizeSummar
         repo = LibraryFileRepository(session)
         roots = [r.rstrip("/") for r in library.root_paths]
 
-        _progress[library_id] = (0, len(plan.renames))
+        _organize_tasks.update(library_id, (0, len(plan.renames)))
         dirty_parents: set[Path] = set()
         for done, action in enumerate(plan.renames, start=1):
             try:
@@ -403,7 +397,7 @@ async def _organize(library_id: int, summary: OrganizeSummary) -> OrganizeSummar
                 )
             except _MoveError as exc:
                 summary.errors.append(str(exc))
-                _progress[library_id] = (done, len(plan.renames))
+                _organize_tasks.update(library_id, (done, len(plan.renames)))
                 continue
             # 改名成功立即随迁台账：中途失败不会留下账实不符的批量烂摊子
             container = Path(action.target_path).suffix.lstrip(".").lower() or None
@@ -418,7 +412,7 @@ async def _organize(library_id: int, summary: OrganizeSummary) -> OrganizeSummar
                     summary.sidecars_renamed += 1
                 except _MoveError as exc:
                     summary.errors.append(f"附属文件改名失败：{exc}")
-            _progress[library_id] = (done, len(plan.renames))
+            _organize_tasks.update(library_id, (done, len(plan.renames)))
 
         # 只清理被本次整理搬空的目录（及其变空的祖先）：非空即停、绝不删文件，
         # 与整理无关的空目录一概不碰
