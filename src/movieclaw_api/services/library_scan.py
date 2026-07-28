@@ -740,7 +740,7 @@ async def _ingest_file(
     if item_id is not None:
         # 库存对账：单元在库成立即关闭对应的订阅工单（订阅止于投递，
         # 完成状态由库存推导；文件回归同样适用）
-        from movieclaw_api.services.wanted_fulfillment import close_fulfilled_wanted
+        from movieclaw_api.services.subscription import close_fulfilled_wanted
 
         await close_fulfilled_wanted(session, item_id)
 
@@ -1542,7 +1542,7 @@ async def _reidentify(
             new_item = await session.get(MediaItem, new_id)
             summary.new_title = new_item.title if new_item is not None else None
             # 库存对账：单元归属的新条目若有订阅工单，在库成立即关闭
-            from movieclaw_api.services.wanted_fulfillment import close_fulfilled_wanted
+            from movieclaw_api.services.subscription import close_fulfilled_wanted
 
             await close_fulfilled_wanted(session, new_id)
         elif new_ids:

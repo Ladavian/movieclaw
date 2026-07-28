@@ -21,7 +21,7 @@ from movieclaw_api.services import media_discover
 from movieclaw_api.services.library_config import LibraryConfigService
 from movieclaw_api.services.library_scan import RESOLVER_VERSION
 from movieclaw_api.services.media_library import MediaLibraryService
-from movieclaw_api.services.wanted_fulfillment import close_fulfilled_wanted
+from movieclaw_api.services.subscription import close_fulfilled_wanted
 from movieclaw_db.models import LibraryFile, MediaItem, utcnow
 from movieclaw_db.models.library_file import IdentitySource
 from movieclaw_db.repositories.library_file_repo import LibraryFileRepository

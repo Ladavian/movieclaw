@@ -427,7 +427,7 @@ async def test_write_paths_kick_instant_search(db, monkeypatch) -> None:
     回归背景：触发曾散落在 HTTP 路由层，媒体库"缺失重下"入口漏加，
     电影订阅创建后只能干等定时 tick。
     """
-    from movieclaw_api.services import wanted_search
+    from movieclaw_api.services.subscription import wanted_search
 
     kicks: list[int] = []
     monkeypatch.setattr(wanted_search, "kick_search_soon", lambda: kicks.append(1))

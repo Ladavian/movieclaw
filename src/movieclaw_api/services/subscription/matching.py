@@ -239,7 +239,7 @@ async def evaluate_and_dispatch(
     ``source`` 是可读中文（"被动匹配"/"主动搜索"），进日志与活动 payload。
     """
     # 循环导入规避：投递层引用本模块的常量
-    from movieclaw_api.services.download_dispatch import dispatch
+    from movieclaw_api.services.subscription.dispatch import dispatch
 
     summary = MatchSummary(torrents_seen=len(torrents))
     contexts = await load_match_context(session)

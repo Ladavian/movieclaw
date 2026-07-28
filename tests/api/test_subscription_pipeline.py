@@ -15,11 +15,11 @@ import pytest_asyncio
 from sqlmodel import select
 
 from movieclaw_api.core.config import get_settings
-from movieclaw_api.services.download_dispatch import dispatch
 from movieclaw_api.services.media_library import MediaLibraryService
 from movieclaw_api.services.rule_sets import RuleSetService
 from movieclaw_api.services.subscription import SubscriptionService
-from movieclaw_api.services.subscription_matching import evaluate_and_dispatch
+from movieclaw_api.services.subscription.dispatch import dispatch
+from movieclaw_api.services.subscription.matching import evaluate_and_dispatch
 from movieclaw_api.services.torrent_matcher import process_new_torrents
 from movieclaw_api.settings.store import init_setting_store, reset_setting_store
 from movieclaw_db.engine import dispose_db, get_database, init_db
@@ -418,7 +418,7 @@ def _fake_search(monkeypatch, *, sites_ok: int, hits: list, calls: list | None =
 
 async def test_search_failure_short_retry_without_attempt(db, monkeypatch) -> None:
     """搜索本身失败：短冷却重试、不计退避档，活动如实解释。"""
-    from movieclaw_api.services.wanted_search import search_wanted
+    from movieclaw_api.services.subscription.wanted_search import search_wanted
 
     _fake_search(monkeypatch, sites_ok=0, hits=[])
     async with db.session() as session:
@@ -437,7 +437,7 @@ async def test_search_failure_short_retry_without_attempt(db, monkeypatch) -> No
 
 async def test_search_no_result_backs_off_with_attempt(db, monkeypatch) -> None:
     """搜索成功但无结果：计一次尝试、进退避曲线首档；且按订阅类型带分类过滤。"""
-    from movieclaw_api.services.wanted_search import search_wanted
+    from movieclaw_api.services.subscription.wanted_search import search_wanted
     from movieclaw_tracker.models import TorrentCategory
 
     calls: list = []
@@ -465,7 +465,7 @@ async def test_search_no_result_backs_off_with_attempt(db, monkeypatch) -> None:
 async def test_search_hit_persists_and_dispatches(db, monkeypatch) -> None:
     """搜索命中：结果落库（source=SEARCH）→ 共享管道投递 → 活动记全链路数字。"""
     from movieclaw_api.schemas.search import TorrentHit
-    from movieclaw_api.services.wanted_search import search_wanted
+    from movieclaw_api.services.subscription.wanted_search import search_wanted
 
     hit = TorrentHit(
         site_id="testsite",

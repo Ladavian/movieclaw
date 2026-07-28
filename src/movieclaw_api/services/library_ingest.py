@@ -519,7 +519,7 @@ async def _ingest_entry(
 
         await asyncio.to_thread(write_entry_nfo, Path(dest_dir), item)
         # 库存对账：新入库的单元关闭对应的订阅工单（订阅止于投递）
-        from movieclaw_api.services.wanted_fulfillment import close_fulfilled_wanted
+        from movieclaw_api.services.subscription import close_fulfilled_wanted
 
         await close_fulfilled_wanted(session, item.id)
         # 一次入库刮削的资产补齐：图片资产 + 媒体目录镜像（完整 NFO/海报/

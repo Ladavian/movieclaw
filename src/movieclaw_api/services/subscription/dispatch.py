@@ -44,8 +44,8 @@ async def dispatch(
     source: str,
 ) -> bool:
     """把候选投递给下载器，满足给定的一批工单。返回是否有实际投递发生。"""
-    from movieclaw_api.services.subscription import recompute_subscription_status
-    from movieclaw_api.services.subscription_matching import (
+    from movieclaw_api.services.subscription.core import recompute_subscription_status
+    from movieclaw_api.services.subscription.matching import (
         DISPATCH_RETRY_DELAY,
         units_text,
     )

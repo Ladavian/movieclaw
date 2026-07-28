@@ -12,7 +12,7 @@ import pytest
 import pytest_asyncio
 
 from movieclaw_api.core.config import get_settings
-from movieclaw_api.services.subscription_health import pipeline_health
+from movieclaw_api.services.subscription.health import pipeline_health
 from movieclaw_db.engine import dispose_db, get_database, init_db
 from movieclaw_db.migrations import run_migrations
 from movieclaw_db.models import ImportWatch
@@ -128,7 +128,7 @@ async def test_configured_but_broken_is_not_setup_state(db, tmp_path) -> None:
 @pytest.mark.asyncio
 async def test_preview_rejects_auto_dir_without_libraries(db, tmp_path) -> None:
     """零媒体库 + auto 监听规则：种子投得出去但无库可入——预检不得报可行。"""
-    from movieclaw_api.services.download_dispatch import preview_dispatch_route
+    from movieclaw_api.services.subscription.dispatch import preview_dispatch_route
 
     watch = tmp_path / "auto"
     watch.mkdir()

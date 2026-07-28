@@ -17,7 +17,7 @@ from datetime import timedelta
 from sqlmodel import select
 
 from movieclaw_api.services.media_scrape import scrape_media_item
-from movieclaw_api.services.subscription_matching import REFRESH_PER_TICK
+from movieclaw_api.services.subscription import REFRESH_PER_TICK
 from movieclaw_db.engine import get_database
 from movieclaw_db.models import MediaItem, utcnow
 from movieclaw_db.models.scheduled_task import TriggerType

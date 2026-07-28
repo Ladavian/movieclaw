@@ -151,7 +151,7 @@ async def dispatch_preview(
     """订阅弹窗选库时调用：与真实投递同源的三级兜底 + 映射守门判定，
     配置有问题（映射不覆盖/无下载器/无库根）在订阅那一刻就亮出来；
     未手选库时返回收藏范围路由结论（预选库 + 中文理由徽标）。"""
-    from movieclaw_api.services.download_dispatch import preview_dispatch_route
+    from movieclaw_api.services.subscription import preview_dispatch_route
 
     preview = await preview_dispatch_route(
         session, kind=kind, library_id=library_id, tmdb_id=tmdb_id
@@ -169,7 +169,7 @@ async def pipeline_health_check(
 ) -> ApiResponse[PipelineHealthView]:
     """订阅设定页与订阅列表警示横幅的数据源。判定与真实投递/搬运同一批
     原语（兜底顺序、映射覆盖、同盘检测），不存在体检与执行的口径漂移。"""
-    from movieclaw_api.services.subscription_health import pipeline_health
+    from movieclaw_api.services.subscription import pipeline_health
 
     return ok(PipelineHealthView(**await pipeline_health(session)))
 

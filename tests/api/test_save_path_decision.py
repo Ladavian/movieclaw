@@ -9,10 +9,10 @@ from __future__ import annotations
 import pytest_asyncio
 
 from movieclaw_api.core.config import get_settings
-from movieclaw_api.services.download_dispatch import preview_dispatch_route
 from movieclaw_api.services.import_watch_config import ImportWatchConfigService
 from movieclaw_api.services.library_routing import resolve_save_path
-from movieclaw_api.services.subscription_health import pipeline_health
+from movieclaw_api.services.subscription.dispatch import preview_dispatch_route
+from movieclaw_api.services.subscription.health import pipeline_health
 from movieclaw_db.engine import dispose_db, get_database, init_db
 from movieclaw_db.migrations import run_migrations
 from movieclaw_db.repositories.library_repo import LibraryRepository

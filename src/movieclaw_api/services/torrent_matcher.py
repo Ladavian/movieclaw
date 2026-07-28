@@ -19,7 +19,7 @@ from pydantic import Field
 from sqlalchemy import func
 from sqlmodel import select
 
-from movieclaw_api.services.subscription_matching import (
+from movieclaw_api.services.subscription import (
     MATCH_BATCH_SIZE,
     evaluate_and_dispatch,
     load_match_context,

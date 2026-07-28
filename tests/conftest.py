@@ -63,7 +63,7 @@ def _mute_instant_search_kick(monkeypatch):
     需要验证"踢了没踢"的测试可再次 monkeypatch 覆盖本桩。
     """
     monkeypatch.setattr(
-        "movieclaw_api.services.wanted_search.kick_search_soon", lambda: None
+        "movieclaw_api.services.subscription.wanted_search.kick_search_soon", lambda: None
     )
 
 

@@ -18,7 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
 
 from movieclaw_api.schemas.search import TorrentHit
-from movieclaw_api.services.subscription_matching import (
+from movieclaw_api.services.subscription.matching import (
     SEARCH_FAILURE_RETRY,
     SEARCH_GROUPS_PER_TICK,
     SEARCH_TICK_SECONDS,

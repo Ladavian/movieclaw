@@ -64,7 +64,7 @@ async def close_fulfilled_wanted(session: AsyncSession, media_item_id: int) -> i
 
     # 时间线与派生状态：逐订阅补记（对账可能一次关闭多个订阅的工单）
     from movieclaw_api.services.subscription import recompute_subscription_status
-    from movieclaw_api.services.subscription_matching import units_text
+    from movieclaw_api.services.subscription.matching import units_text
 
     item = await session.get(MediaItem, media_item_id)
     repo = SubscriptionRepository(session)

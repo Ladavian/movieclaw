@@ -121,6 +121,8 @@ def build_lifespan(settings: Settings):
                 media_refresh,
                 torrent_matcher,
                 torrent_sync,  # noqa: F401  触发种子同步任务注册
+            )
+            from movieclaw_api.services.subscription import (  # noqa: F401  缺口搜索任务注册
                 wanted_search,
             )
 
