@@ -48,6 +48,9 @@ async def claim_files(
     """
     rows = [row for fid in file_ids if (row := await session.get(LibraryFile, fid))]
     if not rows:
+        # 单个认领报出具体 id（便于排障），整组认领用集合措辞
+        if len(file_ids) == 1:
+            raise NotFoundException(f"台账记录不存在：id={file_ids[0]}")
         raise NotFoundException("这些台账记录都不存在（可能已被认领或忽略）")
     library_ids = {row.library_id for row in rows}
     if len(library_ids) > 1:
