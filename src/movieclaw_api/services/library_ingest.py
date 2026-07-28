@@ -69,11 +69,11 @@ from movieclaw_api.services.library_config import derive_save_path
 from movieclaw_api.services.library_import import (
     IN_PROGRESS_MARKERS,
     VIDEO_EXTS,
-    _entry_base_name,
+    entry_base_name,
     season_from_dir,
 )
 from movieclaw_api.services.library_resolve import verify_resolve
-from movieclaw_api.services.library_scan import _guess_evidence
+from movieclaw_api.services.library_scan import guess_evidence
 from movieclaw_api.services.media_discover import get_tmdb_client
 from movieclaw_api.services.media_library import MediaLibraryService
 from movieclaw_api.services.media_probe import ffprobe_available, probe_media
@@ -445,7 +445,7 @@ async def _ingest_entry(
 
     # 发布信息以条目名为准（比单集文件名完整），与入库管线的种子名口径一致
     release_attrs = enrich(entry.name if entry.is_dir() else entry.stem)
-    base = _entry_base_name(item)
+    base = entry_base_name(item)
     repo = LibraryFileRepository(session)
     assert dest_library.id is not None and item.id is not None
 
@@ -573,7 +573,7 @@ async def _identify(
     session, kind: MediaKind, watch_root: Path, main: Path, spec
 ) -> MediaItem | None:
     """识别条目身份：条目名/文件名解析 → TMDB 证据验证收敛（扫描器同链）。"""
-    evidence = _guess_evidence(kind, watch_root, main)
+    evidence = guess_evidence(kind, watch_root, main)
     if evidence is None:
         return None
     evidence.duration_seconds = spec.duration_seconds if spec else None

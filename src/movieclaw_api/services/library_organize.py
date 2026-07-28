@@ -52,7 +52,7 @@ from pathlib import Path
 from sqlmodel import select
 
 from movieclaw_api.services.library_config import sanitize_folder_name
-from movieclaw_api.services.library_import import VIDEO_EXTS, _entry_base_name
+from movieclaw_api.services.library_import import VIDEO_EXTS, entry_base_name
 from movieclaw_db.engine import get_database
 from movieclaw_db.models import Library, LibraryFile, MediaItem, utcnow
 from movieclaw_db.repositories.library_file_repo import LibraryFileRepository
@@ -189,7 +189,7 @@ def _build_plan_sync(
                 SkipEntry(row.file_path, "解析不出集号，无法生成规范文件名（可在待识别里修正季集）")
             )
             continue
-        base = _entry_base_name(item)
+        base = entry_base_name(item)
         ext = src.suffix.lower()
         if kind is MediaKind.MOVIE:
             target = Path(root) / base / f"{base}{ext}"

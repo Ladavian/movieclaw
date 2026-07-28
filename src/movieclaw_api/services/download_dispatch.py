@@ -47,7 +47,7 @@ async def dispatch(
     from movieclaw_api.services.subscription import recompute_subscription_status
     from movieclaw_api.services.subscription_matching import (
         DISPATCH_RETRY_DELAY,
-        _units_text,
+        units_text,
     )
 
     claimed = await _claim(session, wanted_rows)
@@ -57,7 +57,7 @@ async def dispatch(
     repo = SubscriptionRepository(session)
     assert subscription.id is not None
     dry_run = get_settings().subscription_dispatch_dry_run
-    units_text = _units_text(claimed)
+    units_label = units_text(claimed)
     spec_text = _describe(candidate)
 
     # 入库目标：订阅指定的库（缺省该类型默认库）→ 投递目录三级兜底走全仓
@@ -110,7 +110,7 @@ async def dispatch(
                     wanted_item_id=claimed[0].id,
                     type=ActivityType.DISPATCH_FAILED,
                     message=(
-                        f"{units_text}投递失败：{reason}；已退回队列，"
+                        f"{units_label}投递失败：{reason}；已退回队列，"
                         f"约 {int(DISPATCH_RETRY_DELAY.total_seconds() // 60)} 分钟后重试"
                     ),
                     payload={
@@ -124,7 +124,7 @@ async def dispatch(
                 "投递失败（%s）：《%s》%s ← %s/%s：%s",
                 source,
                 item.title,
-                units_text,
+                units_label,
                 candidate.site_id,
                 candidate.torrent_id,
                 reason,
@@ -147,7 +147,7 @@ async def dispatch(
         mode,
         source,
         item.title,
-        units_text,
+        units_label,
         candidate.site_id,
         candidate.title[:80],
         spec_text,
@@ -158,7 +158,7 @@ async def dispatch(
             wanted_item_id=claimed[0].id,
             type=ActivityType.GRABBED,
             message=(
-                f"已投递{units_text}：来自 {candidate.site_id} 的"
+                f"已投递{units_label}：来自 {candidate.site_id} 的"
                 f"「{candidate.title[:60]}」（{spec_text}）"
                 + target_text
                 + ("——模拟投递，未真实提交下载器" if dry_run else "")

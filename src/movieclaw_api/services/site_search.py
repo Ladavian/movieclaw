@@ -11,7 +11,7 @@
 --------------------
 单站失败（认证过期 / 网络异常 / 站点改版解析失败）**绝不能拖垮整次搜索**。每个站点
 的搜索都包在 ``_search_one`` 的 try/except 里，失败降级为「该站 0 条 + 可读中文原因」，
-其它站点照常返回。错误文案复用 ``verification._friendly_error``，与站点验证的报错口径一致。
+其它站点照常返回。错误文案复用 ``verification.friendly_error``，与站点验证的报错口径一致。
 
 站点实例一律通过 ``SiteAccessManager`` 复用（已认证、连接池共享），调用方**不 close**。
 """
@@ -36,7 +36,7 @@ from movieclaw_api.schemas.search import (
     TorrentHit,
 )
 from movieclaw_api.services.site_access import get_site_access
-from movieclaw_api.services.verification import _friendly_error
+from movieclaw_api.services.verification import friendly_error
 from movieclaw_db.engine import get_database
 from movieclaw_db.models.site_credential import ConfigStatus, SiteCredential
 from movieclaw_db.repositories.credential_repo import CredentialRepository
@@ -99,7 +99,7 @@ async def _search_one(
             site_id=site_id, site_name=name, count=len(hits), elapsed_ms=elapsed()
         )
     except Exception as exc:  # noqa: BLE001 —— 单站失败必须隔离，不能拖垮整次搜索
-        reason = _friendly_error(exc)
+        reason = friendly_error(exc)
         logger.warning("站点 %s 搜索失败：%s", site_id, reason)
         return [], SiteSearchStatus(
             site_id=site_id, site_name=name, count=0, error=reason, elapsed_ms=elapsed()

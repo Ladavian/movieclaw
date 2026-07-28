@@ -1091,7 +1091,7 @@ async def _identify(
         return _Identified(None, conflict, code=UnidentifiedCode.KIND_MISMATCH)
 
     # 本地证据先算出来：既是步骤②的输入，也是步骤①校验钉死身份的标尺
-    evidence = _guess_evidence(kind, root, file)
+    evidence = guess_evidence(kind, root, file)
 
     # ① 显式精确身份：路径 tmdbid 标记（就近优先）→ NFO
     rejected_pin: str | None = None
@@ -1332,7 +1332,7 @@ def _entry_nfo(kind: MediaKind, root: Path, file: Path) -> NfoIdentity | None:
     return fallback
 
 
-def _guess_evidence(kind: MediaKind, root: Path, file: Path) -> LocalEvidence | None:
+def guess_evidence(kind: MediaKind, root: Path, file: Path) -> LocalEvidence | None:
     """收集本地识别证据：条目名/年份 + 剧集的季集号（供收敛验证器佐证）。
 
     条目名：剧集优先用"剧集目录名"（比文件名干净），电影优先用文件名；

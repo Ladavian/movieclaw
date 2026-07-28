@@ -333,14 +333,14 @@ async def _log_rejection(
             and activity.payload.get("torrent_id") == candidate.torrent_id
         ):
             return  # 已经解释过这个候选为什么被拒，不重复刷屏
-    units_text = _units_text(covered)
+    units_label = units_text(covered)
     await repo.add_activity(
         SubscriptionActivity(
             subscription_id=subscription_id,
             wanted_item_id=covered[0].id,
             type=ActivityType.MATCH_REJECTED,
             message=(
-                f"{units_text}有候选被拒：{verdict.reason_text}"
+                f"{units_label}有候选被拒：{verdict.reason_text}"
                 f"——来自 {candidate.site_id} 的「{candidate.title[:60]}」"
             ),
             payload={
@@ -354,7 +354,7 @@ async def _log_rejection(
     )
 
 
-def _units_text(rows: list[WantedItem]) -> str:
+def units_text(rows: list[WantedItem]) -> str:
     """工单列表 → 可读单元描述："正片" / "S02E01" / "S02E01 等 8 集"。"""
     first = rows[0]
     if first.season_number == 0 and first.episode_number == 0:

@@ -13,7 +13,7 @@
   （取片名证据）、待识别分组、条目真实删除三处必须是同一套约定，各写
   各的会出事（实测隐患：删除按"库根直接子目录"算条目目录，遇到
   ``剧集/大陆/风筝 (2017)/`` 这种分类分组层会把整个「大陆」目录删掉）；
-- ``_entry_base_name``：条目级规范名 ``标题 (年份)``——库目录名与
+- ``entry_base_name``：条目级规范名 ``标题 (年份)``——库目录名与
   规范文件名的公共前缀，与 ``derive_save_path`` 的目录名一致。
 """
 
@@ -111,7 +111,7 @@ def entry_dir_of(roots: list[Path], file: Path) -> Path | None:
     return None
 
 
-def _entry_base_name(item: MediaItem) -> str:
+def entry_base_name(item: MediaItem) -> str:
     """条目级规范名：``标题 (年份)``（中文优先，与库目录名一致）。"""
     base = sanitize_folder_name(item.title)
     return f"{base} ({item.year})" if item.year is not None else base

@@ -21,7 +21,7 @@ from movieclaw_tracker.exceptions import (
 logger = logging.getLogger("movieclaw_api.verification")
 
 
-def _friendly_error(exc: Exception) -> str:
+def friendly_error(exc: Exception) -> str:
     """把底层异常归类成非开发者也能看懂的中文原因。
 
     记录到 last_error 展示给用户，因此措辞尽量给出"可操作的下一步"。
@@ -49,7 +49,7 @@ def _friendly_error(exc: Exception) -> str:
     return f"验证时发生未知错误（{type(exc).__name__}）：{exc}"
 
 
-def _is_transient_error(exc: Exception) -> bool:
+def is_transient_error(exc: Exception) -> bool:
     """判断失败是否为「瞬时故障」——站点/网络暂时不可用，等待即可自愈。
 
     这是失败降级策略的分流依据（见 torrent_sync）：
@@ -121,7 +121,7 @@ async def verify_site(site_id: str) -> None:
             else:
                 error = "认证成功但无法获取用户资料，请检查账号状态"
     except Exception as exc:  # noqa: BLE001 -- 背景任务需吞掉所有异常并记录原因
-        error = _friendly_error(exc)
+        error = friendly_error(exc)
         # 日志里保留完整堆栈便于开发者排查，落库的 last_error 则是友好中文
         logger.warning("站点验证失败：site=%s，原因：%s", site_id, error, exc_info=True)
     finally:

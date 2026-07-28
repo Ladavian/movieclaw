@@ -27,7 +27,7 @@ from movieclaw_api.services.site_access import (
     get_site_access,
     invalidate_site_access,
 )
-from movieclaw_api.services.verification import _friendly_error, _is_transient_error
+from movieclaw_api.services.verification import friendly_error, is_transient_error
 from movieclaw_db.engine import get_database
 from movieclaw_db.models.base import utcnow
 from movieclaw_db.models.scheduled_task import TriggerType
@@ -284,8 +284,8 @@ async def _sync_one_site(cred: SiteCredential) -> None:
             "（首刷建立基线）" if is_first_sync else "",
         )
     except Exception as exc:  # noqa: BLE001 -- 背景任务吞掉异常并记录可读原因
-        error = _friendly_error(exc)
-        transient = _is_transient_error(exc)
+        error = friendly_error(exc)
+        transient = is_transient_error(exc)
         logger.warning("站点 %s 同步失败：%s", site_id, error, exc_info=True)
         if not transient:
             # 非瞬时失败（认证/解析类）可能是会话过期：作废共享缓存，下一个 tick
