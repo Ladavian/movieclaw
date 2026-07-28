@@ -38,6 +38,21 @@ async def _reset_stale_verifying() -> None:
             logger.info("已重置卡在验证中的 LLM 供应商配置为待验证")
 
 
+async def _encrypt_plaintext_credentials() -> None:
+    """把加密内核上线前落库的明文站点凭据一次性转为密文（幂等）。
+
+    须在 init_secret_box 之后调用。读取侧对明文有无前缀兼容，本步骤只是
+    让静态数据尽快转密文，失败不应阻断启动。
+    """
+    try:
+        async with get_database().session() as session:
+            count = await CredentialRepository(session).encrypt_plaintext_secrets()
+        if count:
+            logger.info("已将 %d 条存量明文站点凭据加密落库", count)
+    except Exception:
+        logger.exception("存量站点凭据加密迁移失败，将在下次启动时重试")
+
+
 def build_lifespan(settings: Settings):
     """构造 FastAPI 生命周期管理器。
 
@@ -79,6 +94,8 @@ def build_lifespan(settings: Settings):
         init_site_access()
         # 重启自愈：清理上次遗留的"验证中"状态
         await _reset_stale_verifying()
+        # 存量明文凭据一次性加密（幂等，须在 init_secret_box 之后）
+        await _encrypt_plaintext_credentials()
         # Agent 运行注册表必须与当前事件循环同生共死：它持有后台 task 和
         # asyncio.Condition，不能跨 FastAPI 生命周期复用。
         init_agent_run_registry()
