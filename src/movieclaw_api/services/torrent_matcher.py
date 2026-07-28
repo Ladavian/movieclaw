@@ -59,11 +59,26 @@ async def process_new_torrents() -> None:
         logger.exception("被动匹配执行失败，等待下一轮触发")
 
 
+async def _read_watermark() -> int | None:
+    """读取水位；记录损坏（脏 JSON / 非法值）时按首次运行处理（自愈）。
+
+    SettingStore 对结构不合法的行会抛 ValueError（含 JSONDecodeError 与
+    pydantic ValidationError），这里不能让它穿透——否则被动匹配会每个
+    tick 报错直到手工修库。降级为 None 后，本轮会重新初始化水位并覆盖
+    脏行，恢复旧实现的自愈语义。
+    """
+    try:
+        return (await get_setting_store().get(MatchWatermark)).last_id
+    except ValueError:
+        logger.warning("被动匹配水位记录损坏，按首次运行处理")
+        return None
+
+
 async def _process_locked() -> None:
     db = get_database()
     store = get_setting_store()
     while True:
-        watermark = (await store.get(MatchWatermark)).last_id
+        watermark = await _read_watermark()
         async with db.session() as session:
             if watermark is None:
                 # 首次运行：水位落到当前最大 id，历史缓存不参与匹配（见模块注释）

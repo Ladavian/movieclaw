@@ -199,6 +199,31 @@ async def test_watermark_skips_history_then_follows_new_torrents(db) -> None:
         assert len(grabbed) == 1
 
 
+async def test_corrupt_watermark_self_heals(db) -> None:
+    """水位记录损坏（脏 JSON）时按首次运行自愈，而不是每 tick 永久报错。"""
+    from sqlalchemy import text
+
+    from movieclaw_api.services.torrent_matcher import MatchWatermark
+    from movieclaw_api.settings.store import get_setting_store
+
+    async with db.session() as session:
+        await session.execute(
+            text(
+                "INSERT INTO app_setting (namespace, value_json, created_at, updated_at)"
+                " VALUES ('subscription.match_watermark', 'not-json',"
+                " CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)"
+            )
+        )
+        await session.commit()
+        await _insert_torrent(session, "t1", "Test Show S01 2160p WEB-DL", _S1_PACK_ATTRS)
+
+    await process_new_torrents()  # 不抛异常：脏行按首次运行处理并被覆盖
+
+    get_setting_store().invalidate()  # 绕开缓存，从库里读回验证脏行已被修复
+    watermark = await get_setting_store().get(MatchWatermark)
+    assert watermark.last_id is not None and watermark.last_id >= 1
+
+
 async def test_dispatch_derives_save_path_from_library(db) -> None:
     """投递目录三级兜底之②：库无监听规则时回落库推导条目目录（原地入库），
     GRABBED 活动的 message 与 payload 都带完整路径——dry-run 同样可见（L1.3）。"""
