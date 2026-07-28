@@ -74,13 +74,17 @@ async def dispatch(
         derive_save_path,
     )
 
+    # library_id 常态下已在创建时定格（收藏范围路由，library-routing 2.1）；
+    # NULL 仅剩老订阅/定格库被删的回落——带上 item 让回落也走路由而非裸默认库
     library = await LibraryConfigService(session).resolve_for_subscription(
-        subscription.library_id, subscription.kind
+        subscription.library_id, subscription.kind, item=item
     )
     save_path = derive_save_path(library, title=item.title, year=item.year) if library else None
     from movieclaw_api.services.import_watch_config import resolve_dispatch_dir
 
-    rule_dir = await resolve_dispatch_dir(session, library.id if library else None)
+    rule_dir = await resolve_dispatch_dir(
+        session, library.id if library else None, kind=subscription.kind
+    )
     dispatch_dir = rule_dir or save_path
     # entry_level = 投递目录就是库内条目目录（②）：可以安全锚定副标题线索，
     # 帮扫描器收敛拼音命名的种子内容（监听目录/默认目录锚线索会波及无关内容）
@@ -184,7 +188,7 @@ async def dispatch(
 
 
 async def preview_dispatch_route(
-    session: AsyncSession, *, kind: str, library_id: int | None
+    session: AsyncSession, *, kind: str, library_id: int | None, tmdb_id: int | None = None
 ) -> dict:
     """预演一次投递的路由结论（订阅弹窗/下载弹窗的预检数据源）。
 
@@ -193,8 +197,13 @@ async def preview_dispatch_route(
     只读不投，返回结构化结论让前端在**订阅那一刻**就把问题亮给用户，
     而不是等投递失败/落点告警才发现。
 
+    ``library_id`` 缺省且给了 ``tmdb_id`` 时按收藏范围路由选库，并返回
+    路由结论（route_matched/route_reason）供前端预选与展示理由——规则
+    只决定默认值，用户在弹窗里改库即显式指定，下次预检不再带路由徽标。
+
     返回字段：mode（watch/inplace/downloader_default）、path（movieclaw
-    视角的投递基底目录）、library_name、downloader_name、ok、warning
+    视角的投递基底目录）、library_id/library_name、downloader_name、
+    route_matched/route_reason（走了路由才有）、ok、warning
     （不 ok 时的中文指引）。
     """
     from movieclaw_api.services.import_watch_config import resolve_dispatch_dir
@@ -203,8 +212,18 @@ async def preview_dispatch_route(
     from movieclaw_db.models.downloader_client import DownloaderClient
     from movieclaw_db.models.site_credential import ConfigStatus
 
-    library = await LibraryConfigService(session).resolve_for_subscription(library_id, kind)
-    rule_dir = await resolve_dispatch_dir(session, library.id if library else None)
+    route_matched: bool | None = None
+    route_reason: str | None = None
+    if library_id is None and tmdb_id is not None:
+        from movieclaw_api.services.library_routing import route_for_tmdb
+
+        decision = await route_for_tmdb(session, kind, tmdb_id)
+        library = decision.library
+        route_matched = decision.matched
+        route_reason = decision.reason
+    else:
+        library = await LibraryConfigService(session).resolve_for_subscription(library_id, kind)
+    rule_dir = await resolve_dispatch_dir(session, library.id if library else None, kind=kind)
     root = library.primary_root if library else None
     base = rule_dir or root
 
@@ -228,6 +247,14 @@ async def preview_dispatch_route(
         warning = (
             "没有可用的媒体库（或库未配置根路径），下载会落到下载器默认目录且不会自动入库"
         )
+    elif library is None:
+        # 无库但存在同类型 auto 监听规则：种子有目录可投，但完成后无库可
+        # 路由、无法入库——不能因为"投得出去"就报可行
+        ok = False
+        warning = (
+            "没有可用的媒体库——种子会投到监听导入目录，但下载完成后无法自动入库；"
+            "请先到「媒体库」创建"
+        )
     elif downloader.path_mappings and not mapping_covers(base, downloader.path_mappings):
         ok = False
         warning = (
@@ -237,8 +264,11 @@ async def preview_dispatch_route(
     return {
         "mode": mode,
         "path": base,
+        "library_id": library.id if library else None,
         "library_name": library.name if library else None,
         "downloader_name": downloader.name if downloader else None,
+        "route_matched": route_matched,
+        "route_reason": route_reason,
         "ok": ok,
         "warning": warning,
     }

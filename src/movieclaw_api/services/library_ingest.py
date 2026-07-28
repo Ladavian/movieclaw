@@ -64,6 +64,7 @@ from pathlib import Path
 
 from sqlmodel import select
 
+from movieclaw_api.services.import_watch_config import rule_target_label
 from movieclaw_api.services.library_config import derive_save_path
 from movieclaw_api.services.library_import import (
     IN_PROGRESS_MARKERS,
@@ -186,13 +187,14 @@ def _snapshot(entry: Path) -> _EntrySnapshot:
 # ---------------------------------------------------------------------------
 
 
-async def _load_rules() -> list[tuple[ImportWatch, Library]]:
-    """全部监听导入规则及其目标库（目标库已被删除的规则由外键级联清掉）。"""
+async def _load_rules() -> list[tuple[ImportWatch, Library | None]]:
+    """全部监听导入规则及其目标库；auto 规则（library_id=NULL）的库为 None
+    （识别出作品后按收藏范围路由）。指定库被删除的规则由外键级联清掉。"""
     db = get_database()
     async with db.session() as session:
         result = await session.execute(
             select(ImportWatch, Library)
-            .join(Library, ImportWatch.library_id == Library.id)  # type: ignore[arg-type]
+            .outerjoin(Library, ImportWatch.library_id == Library.id)  # type: ignore[arg-type]
             .order_by(ImportWatch.id)
         )
         return [(rule, library) for rule, library in result.all()]
@@ -220,14 +222,22 @@ async def ingest_tick() -> None:
         if rule.source_path in watched:
             continue  # watchdog 在实时盯着：事件路径负责，不重复主动扫
         try:
-            await _sweep_dir(library, rule.source_path, rule.strategy)
+            await _sweep_dir(rule, library)
         except Exception:  # noqa: BLE001 -- 单目录失败不拖垮整轮
-            logger.exception("监听导入巡检失败（→「%s」）：%s", library.name, rule.source_path)
+            logger.exception(
+                "监听导入巡检失败（→ %s）：%s",
+                rule_target_label(rule, library.name if library else None),
+                rule.source_path,
+            )
 
 
-async def _sweep_dir(library: Library, watch_root: str, strategy: str) -> None:
-    """巡检一个监听目录：顶层每个文件/目录是一个条目（一次下载的产物）。"""
-    root = Path(watch_root)
+async def _sweep_dir(rule: ImportWatch, library: Library | None) -> None:
+    """巡检一个监听目录：顶层每个文件/目录是一个条目（一次下载的产物）。
+
+    ``library`` 为 None 即自动路由规则——目标库在识别出作品后按收藏范围
+    决定（_ingest_entry 内），kind 先验取自规则本身。
+    """
+    root = Path(rule.source_path)
     if not root.is_dir():
         return  # 目录未就绪（挂载中/配置超前）：不告警刷屏，下轮再看
     async with _sweep_lock:
@@ -235,12 +245,12 @@ async def _sweep_dir(library: Library, watch_root: str, strategy: str) -> None:
         try:
             entries = sorted(e for e in root.iterdir() if not e.name.startswith("."))
         except OSError as exc:
-            logger.warning("读取监听目录失败（%s）：%s", watch_root, exc)
+            logger.warning("读取监听目录失败（%s）：%s", rule.source_path, exc)
             return
         seen = {str(e) for e in entries}
         for entry in entries:
             try:
-                await _process_entry(library, root, entry, strategy, briefs)
+                await _process_entry(rule, library, root, entry, briefs)
             except Exception:  # noqa: BLE001 -- 单条目失败不断整轮
                 logger.exception("处理监听条目失败：%s", entry)
         # 条目从监听目录消失（用户删源）后清掉它的静默观察，防字典无界增长
@@ -303,7 +313,7 @@ def _torrent_verdict(matches: list) -> str | None:
 
 
 async def _process_entry(
-    library: Library, watch_root: Path, entry: Path, strategy: str, briefs: list | None
+    rule: ImportWatch, library: Library | None, watch_root: Path, entry: Path, briefs: list | None
 ) -> None:
     path_str = str(entry)
     snap = await asyncio.to_thread(_snapshot, entry)
@@ -341,9 +351,7 @@ async def _process_entry(
                 return
 
         matched_hashes = [b.info_hash for b in matches if b.info_hash]
-        await _ingest_entry(
-            session, library, watch_root, entry, strategy, snap, record, matched_hashes
-        )
+        await _ingest_entry(session, rule, library, watch_root, entry, snap, record, matched_hashes)
 
 
 # ---------------------------------------------------------------------------
@@ -353,17 +361,22 @@ async def _process_entry(
 
 async def _ingest_entry(
     session,
-    library: Library,
+    rule: ImportWatch,
+    library: Library | None,
     watch_root: Path,
     entry: Path,
-    strategy: str,
     snap: _EntrySnapshot,
     record: IngestEntry | None,
     matched_hashes: list[str] | None = None,
 ) -> None:
+    strategy = rule.strategy
+    # 目标库：指定库规则即入参；auto 规则在识别出作品后才决定（见下），
+    # conclude 闭包读的是当下的 dest_library——选定目标前失败的条目落账无归属库
+    dest_library: Library | None = library
+
     async def conclude(status: IngestStatus, message: str, imported: int = 0) -> None:
         await _save_record(
-            session, library, str(entry), snap.fingerprint, record, status, message, imported
+            session, dest_library, str(entry), snap.fingerprint, record, status, message, imported
         )
 
     if snap.has_disc:
@@ -375,7 +388,8 @@ async def _ingest_entry(
         await conclude(IngestStatus.SKIPPED, "条目中没有视频文件，已跳过")
         return
 
-    kind = MediaKind(library.kind)
+    # kind 先验：指定库取库类型；auto 规则取规则声明（识别链按 movie/tv 分叉）
+    kind = MediaKind(library.kind if library is not None else rule.kind)
     main = max(snap.videos, key=lambda f: f.stat().st_size)
     spec = await asyncio.to_thread(probe_media, main)
     if spec is None and ffprobe_available():
@@ -387,7 +401,8 @@ async def _ingest_entry(
 
     # 身份优先级：订阅工单认领（info_hash 命中在途投递 → 继承投递时锚定的
     # 精确身份，零猜测）→ 名称解析识别链（第三方下载的兜底）
-    item = await _wanted_identity(session, matched_hashes or [])
+    item, pinned_library_id = await _wanted_identity(session, matched_hashes or [])
+    claimed = item is not None
     if item is None:
         item = await _identify(session, kind, watch_root, main, spec)
     if item is None:
@@ -398,16 +413,41 @@ async def _ingest_entry(
         )
         return
 
-    dest_dir = derive_save_path(library, title=item.title, year=item.year)
+    # auto 规则：识别后决定目标库（docs/design/library-routing.md 2.3）。
+    # 订阅认领的内容沿用创建时定格的库——粘性 + 尊重用户在订阅上的手选，
+    # 不重新路由；识别链身份才走收藏范围路由（route 内含默认库兜底）
+    route_note: str | None = None
+    if dest_library is None:
+        if claimed and pinned_library_id is not None:
+            dest_library = await session.get(Library, pinned_library_id)
+            if dest_library is not None:
+                route_note = f"入库到订阅指定的「{dest_library.name}」"
+        if dest_library is None:
+            from movieclaw_api.services.library_routing import route_for_item
+
+            decision = await route_for_item(session, kind.value, item)
+            dest_library = decision.library
+            route_note = decision.reason
+        if dest_library is None:
+            await conclude(
+                IngestStatus.FAILED,
+                f"没有可用的{'电影' if kind is MediaKind.MOVIE else '剧集'}媒体库，"
+                "无法自动路由入库；请先到「媒体库」创建",
+            )
+            return
+
+    dest_dir = derive_save_path(dest_library, title=item.title, year=item.year)
     if dest_dir is None:
-        await conclude(IngestStatus.FAILED, f"媒体库「{library.name}」没有配置根路径，无法入库")
+        await conclude(
+            IngestStatus.FAILED, f"媒体库「{dest_library.name}」没有配置根路径，无法入库"
+        )
         return
 
     # 发布信息以条目名为准（比单集文件名完整），与入库管线的种子名口径一致
     release_attrs = enrich(entry.name if entry.is_dir() else entry.stem)
     base = _entry_base_name(item)
     repo = LibraryFileRepository(session)
-    assert library.id is not None and item.id is not None
+    assert dest_library.id is not None and item.id is not None
 
     files = [main] if kind is MediaKind.MOVIE else list(snap.videos)
     notes: list[str] = []
@@ -451,7 +491,7 @@ async def _ingest_entry(
             continue  # 同一内容已在库（重复处理/增量重扫），静默幂等
         await repo.upsert_by_path(
             LibraryFile(
-                library_id=library.id,
+                library_id=dest_library.id,
                 media_item_id=item.id,
                 season_number=season,
                 episode_number=episode,
@@ -491,7 +531,10 @@ async def _ingest_entry(
 
     verb = "硬链接" if strategy == "hardlink" else "复制"
     if imported:
-        message = f"已识别为《{item.title}》，{verb} {imported} 个文件到 {dest_dir}"
+        message = f"已识别为《{item.title}》"
+        if route_note:
+            message += f"，{route_note}"
+        message += f"，{verb} {imported} 个文件到 {dest_dir}"
         if notes:
             message += "；" + "；".join(notes)
         await conclude(IngestStatus.IMPORTED, message, imported)
@@ -502,22 +545,28 @@ async def _ingest_entry(
         await conclude(IngestStatus.IMPORTED, f"《{item.title}》的内容已全部在库，无需搬运")
 
 
-async def _wanted_identity(session, info_hashes: list[str]) -> MediaItem | None:
-    """按 info_hash 反查订阅工单，继承投递时锚定的精确身份；查不到返回 None。"""
+async def _wanted_identity(session, info_hashes: list[str]) -> tuple[MediaItem | None, int | None]:
+    """按 info_hash 反查订阅工单，继承投递时锚定的精确身份。
+
+    返回 (条目, 订阅定格的 library_id)——auto 规则用后者沿用订阅的入库目标
+    （粘性：不对认领内容重新路由）；查不到返回 (None, None)。
+    """
     if not info_hashes:
-        return None
+        return None, None
     from movieclaw_db.models import Subscription, WantedItem
 
     result = await session.execute(
-        select(MediaItem)
+        select(MediaItem, Subscription.library_id)
         .join(Subscription, MediaItem.id == Subscription.media_item_id)  # type: ignore[arg-type]
         .join(WantedItem, WantedItem.subscription_id == Subscription.id)  # type: ignore[arg-type]
         .where(WantedItem.info_hash.in_(info_hashes))  # type: ignore[union-attr]
     )
-    item = result.scalars().first()
-    if item is not None:
-        logger.info("条目按 info_hash 认领了订阅身份：《%s》", item.title)
-    return item
+    row = result.first()
+    if row is None:
+        return None, None
+    item, library_id = row
+    logger.info("条目按 info_hash 认领了订阅身份：《%s》", item.title)
+    return item, library_id
 
 
 async def _identify(
@@ -626,7 +675,7 @@ def _transfer(src: Path, dst: Path, strategy: str, version_label: str) -> Path |
 
 async def _save_record(
     session,
-    library: Library,
+    library: Library | None,
     entry_path: str,
     fingerprint: str,
     record: IngestEntry | None,
@@ -637,7 +686,7 @@ async def _save_record(
     now = utcnow()
     if record is None:
         record = IngestEntry(
-            library_id=library.id,  # type: ignore[arg-type]
+            library_id=library.id if library is not None else None,
             entry_path=entry_path,
             fingerprint=fingerprint,
             status=status,
@@ -653,6 +702,8 @@ async def _save_record(
         record.imported_count += imported
         record.attempted_at = now
         record.updated_at = now
+        if library is not None:
+            record.library_id = library.id  # auto 条目此前失败无归属，路由成功后补上
     await session.commit()
     _stability.pop(entry_path, None)
     if status is IngestStatus.FAILED:
@@ -805,14 +856,14 @@ class IngestWatcher:
         async with db.session() as session:
             result = await session.execute(
                 select(ImportWatch, Library)
-                .join(Library, ImportWatch.library_id == Library.id)  # type: ignore[arg-type]
+                .outerjoin(Library, ImportWatch.library_id == Library.id)  # type: ignore[arg-type]
                 .where(ImportWatch.source_path == source_path)
             )
             pair = result.first()
         if pair is None:
             return  # 规则已删除（refresh_watches 稍后会拆掉监听）
         rule, library = pair
-        await _sweep_dir(library, source_path, rule.strategy)
+        await _sweep_dir(rule, library)
         self._arm_recheck(source_path)
 
     def _arm_recheck(self, source_path: str) -> None:

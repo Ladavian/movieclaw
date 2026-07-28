@@ -5,6 +5,7 @@
  */
 import type { ComponentType, SVGProps } from "react";
 import {
+  BookmarkIcon,
   DownloadIcon,
   FilmIcon,
   FolderIcon,
@@ -118,9 +119,11 @@ export const settingsSectionGroups: SettingsSectionGroup[] = [
     ],
   },
   {
-    // 组内按资源接入链路排序：站点（含插件 Cookie 同步）→ 下载器 → 监听入库
+    // 组内按资源接入链路排序：订阅（消费整条链路，含链路体检）→
+    // 站点（含插件 Cookie 同步）→ 下载器 → 监听入库
     label: "资源与下载",
     items: [
+      { id: "subscription", label: "订阅", description: "订阅链路体检与规则组", icon: BookmarkIcon },
       { id: "sites", label: "资源站点", description: "PT 站点接入、鉴权与插件 Cookie 同步", icon: ServerIcon },
       { id: "downloaders", label: "下载器", description: "qBittorrent / Transmission 接入", icon: DownloadIcon },
       { id: "import-watch", label: "监听导入", description: "监听下载目录，完成后自动整理入库", icon: FolderIcon },

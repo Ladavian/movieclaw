@@ -171,8 +171,16 @@ class DispatchPreviewView(BaseModel):
         description="投递路由：监听导入目录 / 直接下载进库 / 下载器默认目录"
     )
     path: str | None = Field(default=None, description="movieclaw 视角的投递基底目录")
+    library_id: int | None = Field(default=None, description="解析出的目标库（前端预选用）")
     library_name: str | None = None
     downloader_name: str | None = None
+    route_matched: bool | None = Field(
+        default=None,
+        description="收藏范围路由结论：true=命中声明库 / false=默认库兜底；未走路由为 null",
+    )
+    route_reason: str | None = Field(
+        default=None, description="路由理由（中文整句，弹窗徽标直接展示）"
+    )
     ok: bool = Field(description="按当前配置投递能否顺利入库")
     warning: str | None = Field(default=None, description="不 ok 时的中文指引")
 
@@ -347,6 +355,55 @@ class ActivityView(BaseModel):
 class RuleSetPayload(BaseModel):
     name: str
     spec: dict = Field(default_factory=dict, description="RuleSetSpec 形态的 JSON")
+
+
+class HealthCheckView(BaseModel):
+    """订阅链路体检里的一段检查结论。"""
+
+    key: str = Field(
+        description="downloader / dispatch_dir / mapping / transfer_disk / watch_active"
+    )
+    label: str = Field(description="段落名（如「下载器」「路径映射」）")
+    status: Literal["ok", "warn", "error"] = Field(
+        description="ok=正常 / warn=能转但降级 / error=会失败，必须修"
+    )
+    detail: str = Field(description="中文事实陈述，直接展示")
+    fix_section: str | None = Field(
+        default=None,
+        description="修复去处：设置分区 id（sites/downloaders/import-watch）或 libraries",
+    )
+
+
+class LibraryPipelineView(BaseModel):
+    """一个库的完整入库链路结论。"""
+
+    library_id: int
+    library_name: str
+    kind: str
+    is_default: bool
+    mode: Literal["watch", "inplace", "downloader_default"]
+    path: str | None = Field(default=None, description="投递基底目录（movieclaw 视角）")
+    library_root: str | None = Field(default=None, description="库主根（入库节点的落点）")
+    status: Literal["ok", "warn", "error"] = Field(description="全链路最坏状态")
+    checks: list[HealthCheckView]
+
+
+class PipelineHealthView(BaseModel):
+    """订阅链路体检的整体结论（订阅设定页与订阅列表警示横幅共用）。"""
+
+    status: Literal["ok", "warn", "error"] = Field(
+        description="整体状态：库链路 + 全局段（站点/下载器）的最坏值"
+    )
+    error_count: int = Field(description="链路有 error 的库数")
+    warn_count: int
+    site_check: HealthCheckView = Field(description="资源搜索段（全局，链路第一环）")
+    downloader_ok: bool = Field(description="是否有可用的默认下载器")
+    sites_configured: bool = Field(
+        description="是否配置过站点（无论当前可用与否）——开局清单只看它，"
+        "配置过但失效的老用户看到的是体检红项而非新手清单"
+    )
+    downloaders_configured: bool = Field(description="是否配置过下载器（同上语义）")
+    libraries: list[LibraryPipelineView]
 
 
 class RuleSetView(BaseModel):

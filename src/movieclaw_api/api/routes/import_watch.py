@@ -24,43 +24,62 @@ router = APIRouter(prefix="/import-watch", tags=["import-watch"])
 
 
 class ImportWatchPayload(BaseModel):
-    """创建/更新监听导入规则的请求体。"""
+    """创建/更新监听导入规则的请求体。
+
+    目标二选一：``library_id`` 指定库；为 null 即**自动路由**（识别出作品后
+    按各库收藏范围选库），此时 ``kind`` 必填（识别链需要 movie/tv 先验）。
+    """
 
     source_path: str = Field(description="源目录（绝对路径，不得与任何库根路径重叠）")
     strategy: Literal["hardlink", "copy"] = Field(
         description="搬运策略：hardlink（零占用需与目标库主根同盘）/ copy（可跨盘）"
     )
-    library_id: int = Field(description="目标媒体库")
+    library_id: int | None = Field(
+        default=None, description="目标媒体库；null=自动路由（按收藏范围选库）"
+    )
+    kind: Literal["movie", "tv"] | None = Field(
+        default=None, description="自动路由的媒体类型；指定库时忽略"
+    )
 
 
 class ImportWatchView(BaseModel):
-    """一条监听导入规则（带目标库展示信息）。"""
+    """一条监听导入规则（带目标展示信息）。"""
 
     id: int
     source_path: str
     strategy: Literal["hardlink", "copy"]
-    library_id: int
-    library_name: str
+    library_id: int | None = Field(default=None, description="null=自动路由")
+    library_name: str | None = None
+    kind: Literal["movie", "tv"] | None = Field(
+        default=None, description="自动路由的媒体类型（指定库时为 null）"
+    )
+    target_label: str = Field(description="目标展示名：库名或「自动路由（电影/剧集）」")
     created_at: datetime
 
     @classmethod
-    def from_model(cls, row: ImportWatch, *, library_name: str) -> ImportWatchView:
+    def from_model(cls, row: ImportWatch, *, library_name: str | None) -> ImportWatchView:
         created = row.created_at
         if created.tzinfo is None:
             created = created.replace(tzinfo=UTC)
+        if row.library_id is not None:
+            label = library_name or "?"
+        else:
+            label = f"自动路由（{'电影' if row.kind == 'movie' else '剧集'}）"
         return cls(
             id=row.id,  # type: ignore[arg-type]
             source_path=row.source_path,
             strategy=row.strategy,  # type: ignore[arg-type]
             library_id=row.library_id,
             library_name=library_name,
+            kind=row.kind,  # type: ignore[arg-type]
+            target_label=label,
             created_at=created,
         )
 
 
 async def _views(session: AsyncSession, rows: list[ImportWatch]) -> list[ImportWatchView]:
     names = {lib.id: lib.name for lib in await LibraryConfigService(session).list_all()}
-    return [ImportWatchView.from_model(r, library_name=names.get(r.library_id, "?")) for r in rows]
+    return [ImportWatchView.from_model(r, library_name=names.get(r.library_id)) for r in rows]
 
 
 @router.get(
@@ -89,6 +108,7 @@ async def create_rule(
         source_path=payload.source_path,
         strategy=payload.strategy,
         library_id=payload.library_id,
+        kind=payload.kind,
     )
     views = await _views(session, [row])
     return ok(views[0], message=f"已创建监听导入规则：{row.source_path}")
@@ -110,6 +130,7 @@ async def update_rule(
         source_path=payload.source_path,
         strategy=payload.strategy,
         library_id=payload.library_id,
+        kind=payload.kind,
     )
     views = await _views(session, [row])
     return ok(views[0], message="已更新")

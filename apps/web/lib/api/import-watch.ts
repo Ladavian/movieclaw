@@ -22,16 +22,22 @@ export interface ImportWatchRule {
   source_path: string;
   /** 搬运策略：硬链接（零占用需与目标库主根同盘）/ 复制（可跨盘） */
   strategy: "hardlink" | "copy";
-  library_id: number;
-  library_name: string;
+  /** 目标库；null=自动路由（识别出作品后按各库收藏范围选库） */
+  library_id: number | null;
+  library_name: string | null;
+  /** 自动路由的媒体类型（指定库时为 null） */
+  kind: "movie" | "tv" | null;
+  /** 目标展示名：库名或「自动路由（电影/剧集）」 */
+  target_label: string;
   created_at: string;
 }
 
-/** 创建/更新规则的请求体。 */
+/** 创建/更新规则的请求体。library_id 为 null 即自动路由，此时 kind 必填。 */
 export interface ImportWatchPayload {
   source_path: string;
   strategy: "hardlink" | "copy";
-  library_id: number;
+  library_id: number | null;
+  kind?: "movie" | "tv" | null;
 }
 
 /** 列出全部监听导入规则。 */

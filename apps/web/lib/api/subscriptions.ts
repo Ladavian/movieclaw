@@ -141,24 +141,86 @@ export interface DispatchPreview {
   mode: "watch" | "inplace" | "downloader_default";
   /** movieclaw 视角的投递基底目录 */
   path: string | null;
+  /** 解析出的目标库（未选库时=收藏范围路由的结论，弹窗据此预选） */
+  library_id: number | null;
   library_name: string | null;
   downloader_name: string | null;
+  /** 收藏范围路由结论：true=命中声明库 / false=默认库兜底；未走路由为 null */
+  route_matched: boolean | null;
+  /** 路由理由（中文整句，徽标直接展示） */
+  route_reason: string | null;
   /** 按当前配置投递能否顺利入库 */
   ok: boolean;
   /** 不 ok 时的中文指引 */
   warning: string | null;
 }
 
-/** 投递路由预检：订阅弹窗选库时调用，预演下载会落到哪、能否自动入库。 */
+/**
+ * 投递路由预检：订阅弹窗选库时调用，预演下载会落到哪、能否自动入库。
+ * `libraryId` 为 null 且带 `tmdbId` 时由后端按收藏范围路由选库并返回理由。
+ */
 export function getDispatchPreview(
   kind: string,
   libraryId: number | null,
+  tmdbId?: number | null,
 ): Promise<DispatchPreview> {
   const params = new URLSearchParams({ kind });
   if (libraryId !== null) params.set("library_id", String(libraryId));
+  if (tmdbId != null) params.set("tmdb_id", String(tmdbId));
   return unwrap(
     request<ApiEnvelope<DispatchPreview>>(`/subscriptions/dispatch-preview?${params}`),
   );
+}
+
+/** 订阅链路体检里的一段检查结论。 */
+export interface PipelineCheck {
+  key: string;
+  /** 段落名（「下载器」「路径映射」「硬链接同盘」…） */
+  label: string;
+  /** ok=正常 / warn=能转但降级 / error=会失败，必须修 */
+  status: "ok" | "warn" | "error";
+  /** 中文事实陈述，直接展示 */
+  detail: string;
+  /** 修复去处：设置分区 id（downloaders/import-watch）或 libraries（媒体库页） */
+  fix_section: string | null;
+}
+
+/** 一个库的完整入库链路结论。 */
+export interface LibraryPipeline {
+  library_id: number;
+  library_name: string;
+  kind: "movie" | "tv";
+  is_default: boolean;
+  /** watch=投监听目录 / inplace=直下库根 / downloader_default=下载器默认目录 */
+  mode: "watch" | "inplace" | "downloader_default";
+  path: string | null;
+  /** 库主根（入库节点的落点展示） */
+  library_root: string | null;
+  status: "ok" | "warn" | "error";
+  checks: PipelineCheck[];
+}
+
+/** 订阅链路体检整体结论（订阅设定页与订阅列表警示横幅共用）。 */
+export interface PipelineHealth {
+  /** 整体状态：库链路 + 全局段（站点/下载器）的最坏值 */
+  status: "ok" | "warn" | "error";
+  /** 链路有 error 的库数 */
+  error_count: number;
+  warn_count: number;
+  /** 资源搜索段（全局，链路第一环） */
+  site_check: PipelineCheck;
+  /** 是否有可用的默认下载器 */
+  downloader_ok: boolean;
+  /** 是否配置过站点（无论当前可用与否）——开局清单只看它 */
+  sites_configured: boolean;
+  /** 是否配置过下载器（同上语义） */
+  downloaders_configured: boolean;
+  libraries: LibraryPipeline[];
+}
+
+/** 订阅链路体检：逐库预演「投递 → 转移 → 入库」，与真实投递同源判定。 */
+export function getPipelineHealth(init?: RequestInit): Promise<PipelineHealth> {
+  return unwrap(request<ApiEnvelope<PipelineHealth>>("/subscriptions/pipeline-health", init));
 }
 
 /** 订阅预检：建档条目并返回季集结构（打开订阅弹层时调用，幂等）。 */

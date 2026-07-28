@@ -263,6 +263,26 @@ async def list_libraries(
     )
 
 
+@router.get(
+    "/routing-options",
+    response_model=ApiResponse[dict],
+    summary="收藏范围的可选项（类型 chips 与区域预设，配置界面数据源）",
+)
+async def routing_options() -> ApiResponse[dict]:
+    """genre ID↔中文名与区域预设的唯一真相源在后端（movieclaw_media.genres），
+    前端不自带常量表——两处各维护一份迟早漂移。"""
+    from movieclaw_media.genres import COUNTRY_NAMES, MOVIE_GENRES, REGION_PRESETS, TV_GENRES
+
+    return ok(
+        {
+            "movie_genres": [{"id": k, "label": v} for k, v in MOVIE_GENRES.items()],
+            "tv_genres": [{"id": k, "label": v} for k, v in TV_GENRES.items()],
+            "region_presets": REGION_PRESETS,
+            "country_names": COUNTRY_NAMES,
+        }
+    )
+
+
 async def _group_by_entry_dir(
     session: AsyncSession, rows: list[LibraryFile]
 ) -> list[UnidentifiedGroupView]:
@@ -510,7 +530,12 @@ async def create_library(
     session: AsyncSession = Depends(get_session),
 ) -> ApiResponse[LibraryView]:
     service = LibraryConfigService(session)
-    row = await service.create(name=payload.name, kind=payload.kind, root_paths=payload.root_paths)
+    row = await service.create(
+        name=payload.name,
+        kind=payload.kind,
+        root_paths=payload.root_paths,
+        match_rules=payload.match_rules,
+    )
     # 建库即扫描：根路径下的存量文件立刻开始识别入账，不用用户再手动点一次
     assert row.id is not None
     background_tasks.add_task(scan_library, row.id)
@@ -549,7 +574,12 @@ async def update_library(
     before = await service.get(library_id)
     _assert_not_busy(before.name, library_id)
     roots_changed = list(before.root_paths) != [p.strip() for p in payload.root_paths if p.strip()]
-    row = await service.update(library_id, name=payload.name, root_paths=payload.root_paths)
+    row = await service.update(
+        library_id,
+        name=payload.name,
+        root_paths=payload.root_paths,
+        match_rules=payload.match_rules,
+    )
     # 根路径变了就自动补扫：新目录的存量立刻入账，移除目录下的文件标记 missing
     if roots_changed:
         background_tasks.add_task(scan_library, library_id)

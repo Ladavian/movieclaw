@@ -54,12 +54,20 @@ class LibraryRepository:
 
     # -- 写入 --------------------------------------------------------------
 
-    async def create(self, *, name: str, kind: str, root_paths: list[str]) -> Library:
+    async def create(
+        self,
+        *,
+        name: str,
+        kind: str,
+        root_paths: list[str],
+        match_rules: list | None = None,
+    ) -> Library:
         """新增一个库。该 kind 尚无默认库时，新库自动成为默认。"""
         row = Library(
             name=name,
             kind=kind,
             root_paths=list(root_paths),
+            match_rules=list(match_rules or []),
             is_default=await self.get_default(kind) is None,
         )
         self._session.add(row)
@@ -67,13 +75,21 @@ class LibraryRepository:
         await self._session.refresh(row)
         return row
 
-    async def update(self, library_id: int, *, name: str, root_paths: list[str]) -> Library | None:
-        """更新名称与根路径（kind 创建后不可改）；不存在返回 None。"""
+    async def update(
+        self,
+        library_id: int,
+        *,
+        name: str,
+        root_paths: list[str],
+        match_rules: list | None = None,
+    ) -> Library | None:
+        """更新名称/根路径/收藏范围（kind 创建后不可改）；不存在返回 None。"""
         row = await self.get(library_id)
         if row is None:
             return None
         row.name = name
         row.root_paths = list(root_paths)
+        row.match_rules = list(match_rules or [])
         row.updated_at = utcnow()
         await self._session.commit()
         await self._session.refresh(row)

@@ -9,6 +9,7 @@ from movieclaw_api.schemas.subscription import (
     ActivityView,
     DispatchPreviewView,
     MediaBrief,
+    PipelineHealthView,
     PreparePayload,
     PrepareView,
     ResolveCandidateView,
@@ -143,15 +144,36 @@ async def create_subscription(
 )
 async def dispatch_preview(
     kind: str = Query(description="movie / tv"),
-    library_id: int | None = Query(default=None, description="目标库；缺省该类型默认库"),
+    library_id: int | None = Query(default=None, description="目标库；缺省走收藏范围路由"),
+    tmdb_id: int | None = Query(
+        default=None, description="TMDB 条目 ID；缺省库时据此按收藏范围路由选库"
+    ),
     session: AsyncSession = Depends(get_session),
 ) -> ApiResponse[DispatchPreviewView]:
     """订阅弹窗选库时调用：与真实投递同源的三级兜底 + 映射守门判定，
-    配置有问题（映射不覆盖/无下载器/无库根）在订阅那一刻就亮出来。"""
+    配置有问题（映射不覆盖/无下载器/无库根）在订阅那一刻就亮出来；
+    未手选库时返回收藏范围路由结论（预选库 + 中文理由徽标）。"""
     from movieclaw_api.services.download_dispatch import preview_dispatch_route
 
-    preview = await preview_dispatch_route(session, kind=kind, library_id=library_id)
+    preview = await preview_dispatch_route(
+        session, kind=kind, library_id=library_id, tmdb_id=tmdb_id
+    )
     return ok(DispatchPreviewView(**preview))
+
+
+@router.get(
+    "/pipeline-health",
+    response_model=ApiResponse[PipelineHealthView],
+    summary="订阅链路体检：逐库预演「投递 → 转移 → 入库」，联合约束一次亮清",
+)
+async def pipeline_health_check(
+    session: AsyncSession = Depends(get_session),
+) -> ApiResponse[PipelineHealthView]:
+    """订阅设定页与订阅列表警示横幅的数据源。判定与真实投递/搬运同一批
+    原语（兜底顺序、映射覆盖、同盘检测），不存在体检与执行的口径漂移。"""
+    from movieclaw_api.services.subscription_health import pipeline_health
+
+    return ok(PipelineHealthView(**await pipeline_health(session)))
 
 
 @router.get(

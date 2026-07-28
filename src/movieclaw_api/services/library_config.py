@@ -73,16 +73,23 @@ class LibraryConfigService:
             raise NotFoundException(f"媒体库不存在：id={library_id}")
         return row
 
-    async def resolve_for_subscription(self, library_id: int | None, kind: str) -> Library | None:
-        """解析订阅/投递实际使用的库：显式指定优先，否则该类型的默认库。
+    async def resolve_for_subscription(
+        self, library_id: int | None, kind: str, *, item=None
+    ) -> Library | None:
+        """解析订阅/投递实际使用的库：显式指定 → 收藏范围路由 → 该类型默认库。
 
-        显式指定的库已被删除（外键 SET NULL 前的竞态）或类型没有任何库时
-        返回 None——调用方回落到下载器默认目录，不阻断投递。
+        ``library_id`` 为 NULL（老订阅/定格库已被删除）且给了 ``item`` 时按
+        收藏范围路由（route 内含默认库兜底）；不给 item 维持默认库语义。
+        类型没有任何库时返回 None——调用方回落到下载器默认目录，不阻断投递。
         """
         if library_id is not None:
             row = await self._repo.get(library_id)
             if row is not None:
                 return row
+        if item is not None:
+            from movieclaw_api.services.library_routing import route_for_item
+
+            return (await route_for_item(self._session, kind, item)).library
         return await self._repo.get_default(kind)
 
     # -- 写入 --------------------------------------------------------------
@@ -141,22 +148,46 @@ class LibraryConfigService:
         if ingest_watcher is not None:
             await ingest_watcher.refresh_watches()
 
-    async def create(self, *, name: str, kind: MediaKind, root_paths: list[str]) -> Library:
+    async def create(
+        self,
+        *,
+        name: str,
+        kind: MediaKind,
+        root_paths: list[str],
+        match_rules: list | None = None,
+    ) -> Library:
         """新增一个库。该类型尚无默认库时自动成为默认。"""
+        from movieclaw_api.services.library_routing import validate_match_rules
+
         roots = self._validate(name=name, root_paths=root_paths)
+        rules = validate_match_rules(match_rules)
         await self._assert_roots_clear_of_import_watch(roots)
         await self._assert_name_available(name)
-        row = await self._repo.create(name=name.strip(), kind=kind.value, root_paths=roots)
+        row = await self._repo.create(
+            name=name.strip(), kind=kind.value, root_paths=roots, match_rules=rules
+        )
         await self._refresh_watcher()
         return row
 
-    async def update(self, library_id: int, *, name: str, root_paths: list[str]) -> Library:
-        """更新名称与根路径。kind 创建后不可改（订阅按类型挂库）。"""
+    async def update(
+        self,
+        library_id: int,
+        *,
+        name: str,
+        root_paths: list[str],
+        match_rules: list | None = None,
+    ) -> Library:
+        """更新名称/根路径/收藏范围。kind 创建后不可改（订阅按类型挂库）。"""
         await self.get(library_id)
+        from movieclaw_api.services.library_routing import validate_match_rules
+
         roots = self._validate(name=name, root_paths=root_paths)
+        rules = validate_match_rules(match_rules)
         await self._assert_roots_clear_of_import_watch(roots)
         await self._assert_name_available(name, exclude_id=library_id)
-        updated = await self._repo.update(library_id, name=name.strip(), root_paths=roots)
+        updated = await self._repo.update(
+            library_id, name=name.strip(), root_paths=roots, match_rules=rules
+        )
         assert updated is not None  # get() 已确认存在
         await self._refresh_watcher()
         return updated

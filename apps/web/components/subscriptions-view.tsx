@@ -3,10 +3,11 @@
 import { useCallback, useEffect, useState } from "react";
 
 import type { Route } from "next";
+import Link from "next/link";
 
 import { PosterCardVisual, type PosterVisualItem } from "@/components/poster-card";
 import { useSubscribeEntry } from "@/components/subscribe-entry";
-import type { Subscription } from "@/lib/api/subscriptions";
+import { getPipelineHealth, type Subscription } from "@/lib/api/subscriptions";
 import { cachedImageUrl } from "@/lib/image-proxy";
 import {
   subscriptionProgressNote,
@@ -29,10 +30,18 @@ export function SubscriptionsView() {
   const [mediaType, setMediaType] = useState<"movie" | "tv">("movie");
   const { subscriptions, refresh } = useSubscribeEntry();
   const [failed, setFailed] = useState(false);
+  // 链路体检整体为 error 时顶部亮警示横幅（提醒推到用户在的地方，
+  // 全景与修复入口在 设置 → 订阅）。拉取失败静默——横幅只是提示层
+  const [healthIssue, setHealthIssue] = useState<{ libraryErrors: number } | null>(null);
 
   const reload = useCallback(() => {
     setFailed(false);
     void refresh().then((ok) => setFailed(!ok));
+    void getPipelineHealth()
+      .then((h) =>
+        setHealthIssue(h.status === "error" ? { libraryErrors: h.error_count } : null),
+      )
+      .catch(() => setHealthIssue(null));
   }, [refresh]);
 
   useEffect(() => {
@@ -56,6 +65,20 @@ export function SubscriptionsView() {
 
         <MediaTypeSwitcher value={mediaType} onChange={setMediaType} />
       </div>
+
+      {/* 链路警示横幅：只在体检整体为 error 时出现——订阅不会丢（工单退避
+          重试），但在修好之前无法自动下载入库。点击进订阅设定看全景与修复 */}
+      {healthIssue && (
+        <Link
+          href={"/settings/subscription" as Route}
+          className="mx-6 mt-4 block rounded-xl border border-amber-400/25 bg-amber-500/10 px-4 py-3 text-[12.5px] leading-relaxed text-amber-200 transition hover:bg-amber-500/15 max-md:mx-4"
+        >
+          {healthIssue.libraryErrors > 0
+            ? `${healthIssue.libraryErrors} 个媒体库的入库链路有问题，相关订阅暂时无法自动下载入库（已下达的任务会自动重试）`
+            : "订阅链路尚未就绪（缺少可用的资源站点或下载器），订阅暂时只能记录意愿"}
+          ——点击查看体检详情与修复入口 →
+        </Link>
+      )}
 
       {subscriptions === null && !failed && (
         <div className="mt-16 flex items-center justify-center gap-2.5 text-[13px] text-[var(--text-muted)]">

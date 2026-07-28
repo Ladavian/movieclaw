@@ -223,8 +223,19 @@ class SubscriptionService:
         else:
             await self._rule_sets.get(rule_set_id)  # 不存在则抛 404
         assert rule_set_id is not None
+        # 入库目标：显式指定优先；否则按收藏范围路由并**创建时定格**——粘性
+        # 的实现（docs/design/library-routing.md 2.1）：之后每次投递读定格值，
+        # 规则中途变更不影响既有订阅，一部剧不会裂在两个库
+        route_note: str | None = None
         if library_id is not None:
             await self._validate_library(kind.value, library_id)
+        else:
+            from movieclaw_api.services.library_routing import route_for_item
+
+            decision = await route_for_item(self._session, kind.value, item)
+            if decision.library is not None:
+                library_id = decision.library.id
+                route_note = decision.reason
 
         subscription = await self._repo.save(
             Subscription(
@@ -250,6 +261,8 @@ class SubscriptionService:
         created_message = self._created_message(item, kind, selected, follow_future, rows)
         if skipped_owned:
             created_message += f"；库里已有 {len(skipped_owned)} 个单元，无需重复下载"
+        if route_note:
+            created_message += f"；{route_note}"
         await self._log(
             subscription,
             ActivityType.CREATED,
@@ -259,6 +272,7 @@ class SubscriptionService:
                 "follow_future": follow_future,
                 "wanted_total": len(rows),
                 "owned_skipped": len(skipped_owned),
+                "library_id": library_id,
             },
         )
         await self._recompute_status(subscription, item)
