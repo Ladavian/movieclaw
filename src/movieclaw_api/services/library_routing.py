@@ -183,6 +183,80 @@ async def route_for_tmdb(session: AsyncSession, kind: str, tmdb_id: int) -> Rout
     return await route_for_item(session, kind, item)
 
 
+@dataclass(frozen=True)
+class SavePathDecision:
+    """「投递目录三级兜底」的统一结论（全仓唯一实现，四个消费方共用）。
+
+    真实投递（download_dispatch）、订阅弹窗预检（preview_dispatch_route）、
+    链路体检（subscription_health）、手动下载（routes/downloaders）对
+    mode/path 的推导必须走 ``resolve_save_path``，不允许各自再算一遍——
+    否则迟早出现"体检说好、投递却挂"的口径漂移。
+    """
+
+    mode: str
+    """watch=投监听导入目录；inplace=直接下载进库；downloader_default=下载器默认目录。"""
+
+    path: str | None
+    """投递基底目录（movieclaw 视角）；None 表示落下载器默认目录。"""
+
+    entry_level: bool
+    """path 是否为库内**条目级**目录——只有条目级目录才允许锚定下载线索
+    （锚到监听目录/库主根会波及目录下所有无关内容）。"""
+
+    entry_dir: str | None
+    """库推导的条目目录 ``主根/标题 (年份)``（给了 title 才有），供展示
+    "完成后将整理入库到 …"的文案；watch 模式下与 path 不同。"""
+
+    rule: object | None
+    """命中的监听导入规则（ImportWatch | None），体检的转移段检查需要它。"""
+
+
+async def resolve_save_path(
+    session: AsyncSession,
+    library: Library | None,
+    *,
+    kind: str,
+    title: str | None = None,
+    year: int | None = None,
+) -> SavePathDecision:
+    """投递目录三级兜底的唯一入口。
+
+    ① 库有监听导入规则（库为 None 时找该 kind 的 auto 规则）→ 规则源目录
+       （分离布局：下载区继续做种，完成后监听导入按 info_hash 认领硬链/复制进库）；
+    ② 无规则且给了 title → 库推导的条目目录（原地入库：直接下载进库根，
+       库扫描实时入账）；未给 title（预检/体检场景）→ 库主根；
+    ③ 没有可用库/库无根路径 → None（下载器默认目录，不会自动入库）。
+    """
+    from movieclaw_api.services.import_watch_config import resolve_dispatch_rule
+    from movieclaw_api.services.library_config import derive_save_path
+
+    rule = await resolve_dispatch_rule(session, library.id if library else None, kind=kind)
+    entry_dir = (
+        derive_save_path(library, title=title, year=year) if library and title else None
+    )
+    if rule is not None:
+        return SavePathDecision(
+            mode="watch", path=rule.source_path, entry_level=False, entry_dir=entry_dir, rule=rule
+        )
+    if library is not None and title:
+        # 给了 title 就只认条目目录：库没根路径时不回落主根（主根同样是 None）
+        return SavePathDecision(
+            mode="inplace" if entry_dir else "downloader_default",
+            path=entry_dir,
+            entry_level=entry_dir is not None,
+            entry_dir=entry_dir,
+            rule=None,
+        )
+    root = library.primary_root if library else None
+    return SavePathDecision(
+        mode="inplace" if root else "downloader_default",
+        path=root,
+        entry_level=False,
+        entry_dir=entry_dir,
+        rule=None,
+    )
+
+
 def validate_match_rules(raw: list | None) -> list[dict]:
     """收藏范围条件的写入侧校验（library_config 保存时调用）。
 

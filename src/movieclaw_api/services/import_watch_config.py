@@ -276,14 +276,6 @@ async def resolve_dispatch_rule(
     return None
 
 
-async def resolve_dispatch_dir(
-    session: AsyncSession, library_id: int | None, *, kind: str | None = None
-) -> str | None:
-    """投递目录（resolve_dispatch_rule 的便捷形态：只要源目录）。"""
-    rule = await resolve_dispatch_rule(session, library_id, kind=kind)
-    return rule.source_path if rule else None
-
-
 async def _refresh_watcher() -> None:
     """规则变更后重建监听（监听器未启动时为 no-op）。"""
     from movieclaw_api.services.library_ingest import get_ingest_watcher

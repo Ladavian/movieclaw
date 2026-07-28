@@ -60,41 +60,34 @@ async def dispatch(
     units_text = _units_text(claimed)
     spec_text = _describe(candidate)
 
-    # 入库目标：订阅指定的库（缺省该类型默认库）→ 条目目录 = 主根/标题 (年份)。
-    # 投递目录三级兜底（与手动下载同构，保证订阅的下载永远有入库归宿）：
-    # ① 库有监听导入规则 → 规则源目录（分离布局：下载区继续做种，完成后
-    #    监听导入按 info_hash 认领身份硬链/复制进库）；
-    # ② 无规则 → 库推导的条目目录（原地入库：直接下载进库根，库扫描实时
-    #    入账，扫描的完整性检测保证半成品不入账）；
-    # ③ 没有可用库/库无根路径 → 下载器默认目录（不会自动入库，文案写实）。
+    # 入库目标：订阅指定的库（缺省该类型默认库）→ 投递目录三级兜底走全仓
+    # 唯一实现 resolve_save_path（口径与预检/体检/手动下载同源）。
     # 完成后的搬运/入账仍由监听导入或库扫描接管，工单由库存对账关闭——
     # 订阅不亲自跟踪下载，但投递必须把种子送到那两个机制看得见的地方。
-    from movieclaw_api.services.library_config import (
-        LibraryConfigService,
-        derive_save_path,
-    )
+    from movieclaw_api.services.library_config import LibraryConfigService
+    from movieclaw_api.services.library_routing import resolve_save_path
 
     # library_id 常态下已在创建时定格（收藏范围路由，library-routing 2.1）；
     # NULL 仅剩老订阅/定格库被删的回落——带上 item 让回落也走路由而非裸默认库
     library = await LibraryConfigService(session).resolve_for_subscription(
         subscription.library_id, subscription.kind, item=item
     )
-    save_path = derive_save_path(library, title=item.title, year=item.year) if library else None
-    from movieclaw_api.services.import_watch_config import resolve_dispatch_dir
-
-    rule_dir = await resolve_dispatch_dir(
-        session, library.id if library else None, kind=subscription.kind
+    decision = await resolve_save_path(
+        session, library, kind=subscription.kind, title=item.title, year=item.year
     )
-    dispatch_dir = rule_dir or save_path
-    # entry_level = 投递目录就是库内条目目录（②）：可以安全锚定副标题线索，
+    dispatch_dir = decision.path
+    # entry_level = 投递目录就是库内条目目录：可以安全锚定副标题线索，
     # 帮扫描器收敛拼音命名的种子内容（监听目录/默认目录锚线索会波及无关内容）
-    entry_level = rule_dir is None and save_path is not None
-    if library is not None and rule_dir is not None:
+    entry_level = decision.entry_level
+    if library is not None and decision.mode == "watch":
         target_text = (
-            f"；已投递到监听导入目录，下载完成后将整理入库到「{library.name}」：{save_path}"
+            f"；已投递到监听导入目录，下载完成后将整理入库到「{library.name}」："
+            f"{decision.entry_dir}"
         )
-    elif library is not None and save_path is not None:
-        target_text = f"；将直接下载到「{library.name}」库内目录：{save_path}，完成后自动入账"
+    elif library is not None and decision.mode == "inplace":
+        target_text = (
+            f"；将直接下载到「{library.name}」库内目录：{decision.path}，完成后自动入账"
+        )
     elif library is not None:
         target_text = f"；媒体库「{library.name}」未配置根路径，将落至下载器默认目录，不会自动入库"
     else:
@@ -178,7 +171,7 @@ async def dispatch(
                 "dry_run": dry_run,
                 "units": [[w.season_number, w.episode_number] for w in claimed],
                 "library_id": library.id if library else None,
-                "save_path": save_path,
+                "save_path": decision.entry_dir,
                 "dispatch_dir": dispatch_dir,
             },
         )
@@ -206,8 +199,8 @@ async def preview_dispatch_route(
     route_matched/route_reason（走了路由才有）、ok、warning
     （不 ok 时的中文指引）。
     """
-    from movieclaw_api.services.import_watch_config import resolve_dispatch_dir
     from movieclaw_api.services.library_config import LibraryConfigService
+    from movieclaw_api.services.library_routing import resolve_save_path
     from movieclaw_api.services.torrent_submit import mapping_covers
     from movieclaw_db.models.downloader_client import DownloaderClient
     from movieclaw_db.models.site_credential import ConfigStatus
@@ -217,15 +210,15 @@ async def preview_dispatch_route(
     if library_id is None and tmdb_id is not None:
         from movieclaw_api.services.library_routing import route_for_tmdb
 
-        decision = await route_for_tmdb(session, kind, tmdb_id)
-        library = decision.library
-        route_matched = decision.matched
-        route_reason = decision.reason
+        route_decision = await route_for_tmdb(session, kind, tmdb_id)
+        library = route_decision.library
+        route_matched = route_decision.matched
+        route_reason = route_decision.reason
     else:
         library = await LibraryConfigService(session).resolve_for_subscription(library_id, kind)
-    rule_dir = await resolve_dispatch_dir(session, library.id if library else None, kind=kind)
-    root = library.primary_root if library else None
-    base = rule_dir or root
+    # 投递目录口径与真实投递同源（预检不给 title：条目目录到投递时才推导）
+    decision = await resolve_save_path(session, library, kind=kind)
+    base = decision.path
 
     result = await session.execute(
         select(DownloaderClient).where(
@@ -236,7 +229,7 @@ async def preview_dispatch_route(
     )
     downloader = result.scalars().first()
 
-    mode = "watch" if rule_dir else ("inplace" if root else "downloader_default")
+    mode = decision.mode
     ok = True
     warning: str | None = None
     if downloader is None:
