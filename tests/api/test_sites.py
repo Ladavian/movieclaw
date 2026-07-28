@@ -366,7 +366,7 @@ async def test_sync_stats_view_handles_count_without_cursor(db) -> None:
 # ---------------------------------------------------------------------------
 
 
-def testfriendly_error_categorizes_common_failures() -> None:
+def test_friendly_error_categorizes_common_failures() -> None:
     import httpx
 
     from movieclaw_api.services.verification import friendly_error
@@ -393,7 +393,7 @@ def _http_status_error(code: int) -> "httpx.HTTPStatusError":
     )
 
 
-def testfriendly_error_distinguishes_status_codes() -> None:
+def test_friendly_error_distinguishes_status_codes() -> None:
     """5xx（含 Cloudflare 521）是站点故障，绝不能提示用户去检查凭据。"""
     from movieclaw_api.services.verification import friendly_error
 
