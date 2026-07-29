@@ -304,8 +304,9 @@ def test_list_candidates_ordering_matches_auto_pick() -> None:
     assert {i["file_path"] for i in backdrops} == {"/b-clean.jpg", "/b-text.jpg"}
 
 
-async def test_fetch_profile_uses_picked_images() -> None:
-    """选图策略接进档案拉取：images 里挑出的图取代 TMDB 的默认字段。"""
+async def test_fetch_profile_poster_default_backdrop_picked() -> None:
+    """海报以 TMDB 默认为准（与发现页看到的一致，订阅前后不跳变）；
+    背景仍从候选里按无文字策略重选。"""
     detail = {
         **_MOVIE_DETAIL,
         "poster_path": "/default-poster.jpg",
@@ -317,8 +318,22 @@ async def test_fetch_profile_uses_picked_images() -> None:
     }
     client = _client({"/3/movie/693134": detail})
     profile = await fetch_media_profile(client, MediaKind.MOVIE, 693134)
-    assert profile.poster_path == "/picked-poster.jpg"
+    assert profile.poster_path == "/default-poster.jpg"
     assert profile.backdrop_path == "/picked-backdrop.jpg"
+
+
+async def test_fetch_profile_poster_falls_back_to_pick() -> None:
+    """TMDB 默认海报缺失时才走选图策略从候选里兜底。"""
+    detail = {
+        **_MOVIE_DETAIL,
+        "poster_path": None,
+        "images": {
+            "posters": [_img("/picked-poster.jpg", lang="zh", width=1000, avg=7.0, count=50)],
+        },
+    }
+    client = _client({"/3/movie/693134": detail})
+    profile = await fetch_media_profile(client, MediaKind.MOVIE, 693134)
+    assert profile.poster_path == "/picked-poster.jpg"
 
 
 async def test_fetch_profile_falls_back_to_default_images() -> None:

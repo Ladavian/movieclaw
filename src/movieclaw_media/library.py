@@ -206,7 +206,9 @@ async def fetch_media_profile(
         year=_parse_year(release_date),
         aliases=_build_aliases(data, title, original_title),
         status=data.get("status") or None,
-        poster_path=pick_poster(data, language) or data.get("poster_path"),
+        # 海报与发现页同源：优先 TMDB 默认 poster_path（发现页列表接口给的就是
+        # 这张），订阅建档后展示不跳变；默认缺失时才用选图策略从候选里兜底
+        poster_path=data.get("poster_path") or pick_poster(data, language),
         backdrop_path=pick_backdrop(data) or data.get("backdrop_path"),
         seasons=seasons,
         overview=overview,
@@ -231,10 +233,12 @@ async def fetch_media_profile(
 # 选图策略（docs/design/metadata.md 6.3）
 # ---------------------------------------------------------------------------
 #
-# TMDB 详情里的 backdrop_path/poster_path 是"按投票排序的第一张"，直接用有
-# 两个通病：① 票王常是**烧了片名文字的横图**（海报化背景），铺全屏做沉浸
-# 背景很脏；② 少量投票就能把一张低分辨率图顶上去。这里从 images 全量候选
-# 里按明确规则重选，规则本身是纯函数，便于单测与后续调参。
+# TMDB 详情里的 backdrop_path 是"按投票排序的第一张"，直接用有两个通病：
+# ① 票王常是**烧了片名文字的横图**（海报化背景），铺全屏做沉浸背景很脏；
+# ② 少量投票就能把一张低分辨率图顶上去。背景从 images 全量候选里按明确规则
+# 重选；**海报相反，以 TMDB 默认为准**——发现页展示的就是默认海报，建档再
+# 重选会导致"订阅前后海报跳变"（用户反馈），pick_poster 仅在默认缺失时兜底，
+# 并为换图弹层提供候选排序。规则本身是纯函数，便于单测与后续调参。
 
 # 背景图的分辨率门槛：低于 1080p 宽度的图铺满视口会糊
 _MIN_BACKDROP_WIDTH = 1920
@@ -280,6 +284,10 @@ def pick_poster(data: dict, language: str) -> str | None:
 
     与背景相反，海报**要**文字——中文版海报（含中文片名）比英文原版更
     符合中文用户的预期。当前语言没有海报时退回全部候选。
+
+    注意：建档/刷新的海报以 TMDB 默认 poster_path 为准（与发现页看到的
+    一致，见 fetch_media_profile），本函数只做两件事——默认缺失时的兜底，
+    以及换图弹层的候选排序（用户仍能一键选到中文版）。
     """
     images = (data.get("images") or {}).get("posters") or []
     if not images:
