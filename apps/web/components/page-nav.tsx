@@ -29,9 +29,13 @@ const REVEAL_END = 82;
  * 顶栏控件的统一形状：圆形深色玻璃键。返回键与页面操作（⋯）并排在同一行，
  * 必须是同一副长相，否则一边圆一边胶囊会像两套控件凑在一起。
  * 页面侧的操作按钮（见 library-detail-view 的 ⋯ 菜单）复用这个类名。
+ *
+ * 尺寸分两档：移动端 44px（iOS HIG 的最小可点目标，导航栏图标键的原生比例，
+ * 触屏上 36px 的键会显得局促难点）；桌面端保持 36px（鼠标精度高，44px 反而笨重）。
+ * 图标同比例缩放（约为键径的一半），改动时两档要一起看。
  */
 export const PAGE_NAV_BUTTON_CLASS =
-  "grid size-9 shrink-0 place-items-center rounded-full border border-white/[0.09] bg-black/30 text-white/85 backdrop-blur-md transition hover:bg-black/50 hover:text-white active:scale-[0.94]";
+  "grid size-9 shrink-0 place-items-center rounded-full border border-white/[0.09] bg-black/30 text-white/85 backdrop-blur-md transition hover:bg-black/50 hover:text-white active:scale-[0.94] max-md:size-11";
 
 /**
  * 找到本组件所在的滚动容器（全站页面都是「外壳固定 + 内层 overflow-y-auto」，
@@ -155,12 +159,12 @@ export function PageNav({
               aria-label="打开侧边栏"
               className={backClass}
             >
-              <MenuIcon className="size-[18px]" />
+              <MenuIcon className="size-[18px] max-md:size-[22px]" />
             </button>
           )}
           {parent ? (
             <Link href={parent.href as Route} aria-label={backLabel} title={backLabel} className={backClass}>
-              <ChevronLeftIcon className="size-[18px]" />
+              <ChevronLeftIcon className="size-[18px] max-md:size-[22px]" />
             </Link>
           ) : (
             <button
@@ -170,7 +174,7 @@ export function PageNav({
               title={backLabel}
               className={backClass}
             >
-              <ChevronLeftIcon className="size-[18px]" />
+              <ChevronLeftIcon className="size-[18px] max-md:size-[22px]" />
             </button>
           )}
         </div>

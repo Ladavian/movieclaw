@@ -612,7 +612,7 @@ function LibraryActionsMenu({
           // 长在顶栏里，与返回键并排：共用顶栏控件形状，不再是页面里的胶囊按钮
           className={`${PAGE_NAV_BUTTON_CLASS} relative data-[state=open]:bg-black/55 data-[state=open]:text-white`}
         >
-          <MoreIcon className="size-[18px]" />
+          <MoreIcon className="size-[18px] max-md:size-[22px]" />
           {/* 收起的长任务在跑：触发按钮点一个小点，不至于被菜单藏住 */}
           {running && (
             <span className="absolute right-1 top-1 size-1.5 animate-pulse rounded-full bg-[#7dd3fc]" />

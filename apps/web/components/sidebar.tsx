@@ -258,9 +258,11 @@ function CollapseToggle({ collapsed, onClick }: { collapsed: boolean; onClick: (
       onClick={onClick}
       aria-label={label}
       title={label}
-      className="glass-row !size-8 shrink-0 justify-center !p-0"
+      // 移动端 44px：这颗键在抽屉里就是「收起抽屉」，iOS HIG 的最小可点目标；
+      // 桌面保持 32px 紧凑图标键
+      className="glass-row !size-8 shrink-0 justify-center !p-0 max-md:!size-11"
     >
-      <PanelLeftIcon className="size-[18px]" />
+      <PanelLeftIcon className="size-[18px] max-md:size-[22px]" />
     </button>
   );
 }

@@ -495,7 +495,7 @@ function ItemActionsMenu({
           aria-label="更多操作"
           className={`${PAGE_NAV_BUTTON_CLASS} relative data-[state=open]:bg-black/55 data-[state=open]:text-white`}
         >
-          <MoreIcon className="size-[18px]" />
+          <MoreIcon className="size-[18px] max-md:size-[22px]" />
           {/* 任务在跑时给触发键点一个小点：菜单收起后也知道后台还在忙 */}
           {running && (
             <span className="absolute right-1 top-1 size-1.5 animate-pulse rounded-full bg-[#7dd3fc]" />
