@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 
@@ -77,6 +77,21 @@ export function DownloaderConfigSection() {
   useEffect(() => {
     void load();
   }, [load]);
+
+  // 体检修复卡跳转带来的映射建议（?suggest_mapping=/xx）：自动展开默认
+  // 下载器的编辑表单并预填一条映射的本机侧，用户只需补下载器视角的路径
+  const [suggestMapping, setSuggestMapping] = useState<string | null>(null);
+  useEffect(() => {
+    const suggested = new URLSearchParams(window.location.search).get("suggest_mapping");
+    if (suggested) setSuggestMapping(suggested);
+  }, []);
+  const suggestConsumed = useRef(false);
+  useEffect(() => {
+    if (!suggestMapping || loading || suggestConsumed.current || downloaders.length === 0) return;
+    suggestConsumed.current = true;
+    const target = downloaders.find((d) => d.is_default) ?? downloaders[0];
+    setEditing(target.id);
+  }, [suggestMapping, loading, downloaders]);
 
   // 有下载器处于 pending/verifying 时轮询刷新，直到全部落定
   const hasInProgress = downloaders.some((d) => IN_PROGRESS.includes(d.status));
@@ -181,6 +196,7 @@ export function DownloaderConfigSection() {
             <DownloaderCard
               key={downloader.id}
               downloader={downloader}
+              suggestMapping={suggestMapping}
               expanded={editing === downloader.id}
               onToggleForm={(open) => setEditing(open ? downloader.id : null)}
               onChanged={upsert}
@@ -204,6 +220,8 @@ export function DownloaderConfigSection() {
 
 interface DownloaderCardProps {
   downloader: ConfiguredDownloader;
+  /** 体检跳转建议预填的映射本机侧路径（无建议时为 null） */
+  suggestMapping: string | null;
   expanded: boolean;
   onToggleForm: (open: boolean) => void;
   onChanged: (downloader: ConfiguredDownloader) => void;
@@ -215,6 +233,7 @@ interface DownloaderCardProps {
 
 function DownloaderCard({
   downloader,
+  suggestMapping,
   expanded,
   onToggleForm,
   onChanged,
@@ -336,6 +355,7 @@ function DownloaderCard({
         <div className="border-t border-white/[0.06] p-4">
           <DownloaderForm
             downloader={downloader}
+            suggestMapping={suggestMapping}
             onSubmit={async (payload) => {
               onChanged(await updateDownloader(downloader.id, payload));
               onToggleForm(false);
@@ -440,12 +460,32 @@ function DownloaderActionsMenu({
 interface DownloaderFormProps {
   /** 编辑对象；null 表示新增 */
   downloader: ConfiguredDownloader | null;
+  /** 体检跳转建议预填的映射本机侧路径（无建议时不传） */
+  suggestMapping?: string | null;
   onSubmit: (payload: DownloaderPayload) => Promise<void>;
   onCancel: () => void;
   onError: (message: string) => void;
 }
 
-function DownloaderForm({ downloader, onSubmit, onCancel, onError }: DownloaderFormProps) {
+/** 已有映射按前缀已覆盖建议路径时不再追加，避免预填出冗余行。 */
+function withSuggestedMapping(existing: PathMapping[], suggest: string | null): PathMapping[] {
+  if (!suggest) return existing;
+  const norm = (p: string) => p.trim().replace(/\/+$/, "") || "/";
+  const target = norm(suggest);
+  const covered = existing.some((m) => {
+    const local = norm(m.local);
+    return local !== "/" && (target === local || target.startsWith(local + "/"));
+  });
+  return covered ? existing : [...existing, { local: suggest, remote: "" }];
+}
+
+function DownloaderForm({
+  downloader,
+  suggestMapping = null,
+  onSubmit,
+  onCancel,
+  onError,
+}: DownloaderFormProps) {
   const [busy, setBusy] = useState(false);
   const [clientType, setClientType] = useState<DownloaderClientType>(
     downloader?.client_type ?? "qbittorrent",
@@ -456,10 +496,15 @@ function DownloaderForm({ downloader, onSubmit, onCancel, onError }: DownloaderF
   // 出于安全后端不回传密码，编辑时留空需重新填写（未开鉴权则保持留空）
   const [password, setPassword] = useState("");
   const [savePath, setSavePath] = useState(downloader?.save_path ?? "");
-  // 路径映射：跨容器部署时 movieclaw 与下载器看同一块盘的两个名字
-  const [mappings, setMappings] = useState<PathMapping[]>(downloader?.path_mappings ?? []);
-  // 已有映射的编辑态默认展开，否则折叠（绝大多数部署用不到）
-  const [mappingsOpen, setMappingsOpen] = useState((downloader?.path_mappings?.length ?? 0) > 0);
+  // 路径映射：跨容器部署时 movieclaw 与下载器看同一块盘的两个名字。
+  // 体检跳转带建议时预填一行本机侧（右侧留给用户按下载器视角补齐）
+  const [mappings, setMappings] = useState<PathMapping[]>(
+    withSuggestedMapping(downloader?.path_mappings ?? [], suggestMapping),
+  );
+  // 已有映射的编辑态或带预填建议时默认展开，否则折叠（绝大多数部署用不到）
+  const [mappingsOpen, setMappingsOpen] = useState(
+    (downloader?.path_mappings?.length ?? 0) > 0 || suggestMapping !== null,
+  );
   // 目录弹窗当前服务的字段："save" = 默认保存目录，数字 = 第 N 条映射的左列
   const [pickerTarget, setPickerTarget] = useState<"save" | number | null>(null);
 
@@ -643,6 +688,12 @@ function DownloaderForm({ downloader, onSubmit, onCancel, onError }: DownloaderF
               否则会拒绝投递以防下载进下载器容器内的孤立路径；下载器能以相同路径直达的目录，
               添加一条两边相同的映射即可。
             </p>
+            {suggestMapping && (
+              <p className="rounded-lg bg-[var(--accent-soft)] px-3 py-2 text-[11.5px] leading-relaxed text-[var(--accent)]">
+                已按体检建议预填映射的本机侧 {suggestMapping}——右侧填下载器视角的对应路径；
+                下载器可直达同名路径时，点中间的 → 把左侧复制过去即可。
+              </p>
+            )}
             {mappings.map((mapping, index) => (
               <div key={index} className="flex items-center gap-2">
                 <button

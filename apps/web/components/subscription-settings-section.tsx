@@ -10,9 +10,11 @@ import {
   getPipelineHealth,
   listRuleSets,
   type DispatchPreview,
+  type FixOption,
   type LibraryPipeline,
   type PipelineCheck,
   type PipelineHealth,
+  type PipelineIssue,
   type RuleSet,
 } from "@/lib/api/subscriptions";
 
@@ -55,6 +57,14 @@ function fixTarget(section: string | null): { href: string; label: string } | nu
   if (section === "import-watch") return { href: "/settings/import-watch", label: "去监听导入" };
   if (section === "libraries") return { href: "/library", label: "去媒体库" };
   return null;
+}
+
+/** 修复选项 → 带预填参数的跳转地址（目标设置页读取参数自动填表单）。 */
+function fixOptionHref(option: FixOption): string | null {
+  const target = fixTarget(option.fix_section);
+  if (!target) return null;
+  if (!option.fix_params) return target.href;
+  return `${target.href}?${new URLSearchParams(option.fix_params)}`;
 }
 
 function worst(statuses: Status[]): Status {
@@ -105,6 +115,9 @@ function PipelineHealthPanel() {
     health !== null &&
     (!health.sites_configured || !health.downloaders_configured || health.libraries.length === 0);
 
+  // 已聚合成修复卡的检查项 key：库卡片默认不再重复其红项文字（状态点保留）
+  const issueKeys = new Set((health?.issues ?? []).map((i) => i.key));
+
   return (
     <section>
       <div className="mb-2 flex items-center justify-between">
@@ -143,10 +156,17 @@ function PipelineHealthPanel() {
 
       {health !== null && !setupNeeded && (
         <div className="space-y-3">
+          {/* 修复卡置顶：按根因聚合，「需要处理 N 件事」——一个根因一张卡，
+              不随受影响的库数膨胀；库卡片里对应的红项文字随之隐藏（状态点保留） */}
+          {health.issues.length > 0 && <IssueCardList issues={health.issues} />}
           {/* 公共段：资源搜索 + 下载器（所有库共享，不逐库重复） */}
-          <SharedSegmentsRow health={health} />
+          <SharedSegmentsRow health={health} hiddenKeys={issueKeys} />
           {health.libraries.map((pipeline) => (
-            <LibraryPipelineCard key={pipeline.library_id} pipeline={pipeline} />
+            <LibraryPipelineCard
+              key={pipeline.library_id}
+              pipeline={pipeline}
+              hiddenKeys={issueKeys}
+            />
           ))}
         </div>
       )}
@@ -224,6 +244,94 @@ function SetupChecklist({ health }: { health: PipelineHealth }) {
   );
 }
 
+/**
+ * 修复卡列表：「需要处理 N 件事」。
+ * 一张卡 = 一个根因，卡内列出受影响的库与结构化的修复选项（多选项时
+ * 由用户按自己的部署取舍，每个选项讲清做什么/为什么/跳到哪）。
+ */
+function IssueCardList({ issues }: { issues: PipelineIssue[] }) {
+  return (
+    <div className="space-y-2.5">
+      <p className="text-[13px] font-medium text-white/90">
+        需要处理 {issues.length} 件事（下方库卡片的红黄点都来自这里）：
+      </p>
+      {issues.map((issue) => (
+        <IssueCard key={issue.key + issue.title} issue={issue} />
+      ))}
+    </div>
+  );
+}
+
+function IssueCard({ issue }: { issue: PipelineIssue }) {
+  const isError = issue.status === "error";
+  return (
+    <div
+      className={`rounded-xl border p-4 ${
+        isError ? "border-[#ff6b6b]/30 bg-[#ff6b6b]/[0.06]" : "border-amber-400/25 bg-amber-500/[0.06]"
+      }`}
+    >
+      <div className="flex items-start gap-2.5">
+        <span className={`mt-[5px] size-2 shrink-0 rounded-full ${STATUS_META[issue.status].dot}`} />
+        <div className="min-w-0 flex-1">
+          <p className="text-[13.5px] font-semibold text-white/95">{issue.title}</p>
+          {issue.affected_libraries.length > 0 && (
+            <p className="mt-1 text-[11.5px] text-[var(--text-faint)]">
+              影响 {issue.affected_libraries.length} 个库：{issue.affected_libraries.join("、")}
+            </p>
+          )}
+          <p className="mt-1.5 text-[12.5px] leading-relaxed text-[var(--text-muted)]">
+            {issue.detail}
+          </p>
+        </div>
+      </div>
+      {issue.options.length > 0 && (
+        <div
+          className={`mt-3 grid gap-2.5 ${issue.options.length > 1 ? "md:grid-cols-2" : ""}`}
+        >
+          {issue.options.map((option, i) => (
+            <FixOptionBlock
+              key={option.title}
+              option={option}
+              ordinal={issue.options.length > 1 ? i + 1 : null}
+            />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** 修复卡里的一个选项块：做什么 / 为什么 / 带预填参数的跳转。 */
+function FixOptionBlock({ option, ordinal }: { option: FixOption; ordinal: number | null }) {
+  const href = fixOptionHref(option);
+  return (
+    <div className="flex flex-col rounded-lg bg-white/[0.04] p-3">
+      <p className="text-[12.5px] font-semibold text-white/90">
+        {ordinal !== null && (
+          <span className="mr-1.5 inline-flex size-4.5 items-center justify-center rounded-full bg-white/10 text-[10.5px] text-white/70">
+            {ordinal}
+          </span>
+        )}
+        {option.title}
+      </p>
+      {option.why && (
+        <p className="mt-1.5 text-[11.5px] leading-relaxed text-[var(--text-faint)]">{option.why}</p>
+      )}
+      <p className="mt-1.5 flex-1 text-[12px] leading-relaxed text-[var(--text-muted)]">
+        {option.steps}
+      </p>
+      {href && (
+        <Link
+          href={href as never}
+          className="btn-glass mt-2.5 self-start px-3 py-1.5 text-[12px] font-medium"
+        >
+          {option.fix_label} →
+        </Link>
+      )}
+    </div>
+  );
+}
+
 /** 流水线上的一个节点（步骤条渲染单元）。 */
 interface FlowNode {
   key: string;
@@ -268,7 +376,14 @@ function FlowStepper({ nodes }: { nodes: FlowNode[] }) {
 }
 
 /** 公共段（资源搜索 + 下载器）：所有库共享，单独一行不逐库重复。 */
-function SharedSegmentsRow({ health }: { health: PipelineHealth }) {
+function SharedSegmentsRow({
+  health,
+  hiddenKeys,
+}: {
+  health: PipelineHealth;
+  /** 已被修复卡聚合的检查项 key：红项文字不再重复（状态点保留） */
+  hiddenKeys: Set<string>;
+}) {
   const downloaderCheck = health.libraries[0]?.checks.find((c) => c.key === "downloader");
   const nodes: FlowNode[] = [
     {
@@ -286,7 +401,9 @@ function SharedSegmentsRow({ health }: { health: PipelineHealth }) {
       checks: downloaderCheck ? [downloaderCheck] : [],
     },
   ];
-  const problems = nodes.flatMap((n) => n.checks).filter((c) => c.status !== "ok");
+  const problems = nodes
+    .flatMap((n) => n.checks)
+    .filter((c) => c.status !== "ok" && !hiddenKeys.has(c.key));
   return (
     <div className="rounded-xl border border-white/[0.08] bg-white/[0.04] px-4 py-3">
       <div className="flex items-center gap-3">
@@ -300,8 +417,15 @@ function SharedSegmentsRow({ health }: { health: PipelineHealth }) {
   );
 }
 
-/** 一个库的流水线卡片：步骤条 + 红黄项详情（全绿则只有一行）。 */
-function LibraryPipelineCard({ pipeline }: { pipeline: LibraryPipeline }) {
+/** 一个库的流水线卡片：步骤条 + 叙事 + 红黄项详情（已聚合的红项让位给修复卡）。 */
+function LibraryPipelineCard({
+  pipeline,
+  hiddenKeys,
+}: {
+  pipeline: LibraryPipeline;
+  /** 已被修复卡聚合的检查项 key：红项文字不再逐库重复（状态点保留） */
+  hiddenKeys: Set<string>;
+}) {
   const [showAll, setShowAll] = useState(false);
 
   const byKey = (keys: string[]) => pipeline.checks.filter((c) => keys.includes(c.key));
@@ -337,8 +461,8 @@ function LibraryPipelineCard({ pipeline }: { pipeline: LibraryPipeline }) {
     checks: [],
   });
 
-  // 卡片下方默认只列红黄项；「查看全部」展开每一段的事实陈述
-  const problems = pipeline.checks.filter((c) => c.status !== "ok");
+  // 卡片下方默认只列**未被修复卡聚合**的红黄项；「查看全部」仍展开全部事实
+  const problems = pipeline.checks.filter((c) => c.status !== "ok" && !hiddenKeys.has(c.key));
   const listed = showAll ? pipeline.checks.filter((c) => c.key !== "downloader") : problems;
   const meta = STATUS_META[pipeline.status];
 
@@ -359,6 +483,12 @@ function LibraryPipelineCard({ pipeline }: { pipeline: LibraryPipeline }) {
             {pipeline.library_name}
           </p>
           <FlowStepper nodes={nodes} />
+          {/* 正向叙事：订阅命中本库会发生什么——全绿时的可预期，不用去玩模拟一单 */}
+          {pipeline.narrative && (
+            <p className="mt-1.5 text-[11.5px] leading-relaxed text-[var(--text-faint)]">
+              {pipeline.narrative}
+            </p>
+          )}
         </div>
         <div className="flex shrink-0 flex-col items-end gap-1">
           <span className={`text-[12px] font-medium ${meta.text}`}>{meta.label}</span>
