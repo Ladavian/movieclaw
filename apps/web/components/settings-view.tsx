@@ -115,7 +115,7 @@ export function SettingsPanel({ active }: SettingsPanelProps) {
     // 无外框、无玻璃卡片：内容直接铺在全屏深色蒙版（.page-scrim）之上，
     // 背景透明，让蒙版透上来。沉浸式深色底，不再有圆角/描边/透出雪原的大卡片。
     // 头部与内容同列（同一 max-w 容器内），避免「标题贴左上、内容居中」的割裂感。
-    <div className="scroll-thin h-full overflow-y-auto">
+    <div className="scroll-thin scroll-safe h-full overflow-y-auto">
       {/* 日志分区放宽到 4xl：日志行信息密度高，窄容器折行太碎 */}
       <div
         className={`mx-auto w-full px-6 pb-20 pt-12 max-md:px-4 max-md:pb-12 max-md:pt-6 ${

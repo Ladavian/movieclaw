@@ -51,7 +51,7 @@ export function SubscriptionsView() {
   const visible = (subscriptions ?? []).filter((s) => s.media.kind === mediaType);
 
   return (
-    <div className="scroll-thin flex-1 overflow-y-auto pb-10">
+    <div className="scroll-thin scroll-safe flex-1 overflow-y-auto pb-10">
       <div className="flex items-start justify-between gap-4 px-6 pt-2 max-md:flex-col max-md:items-stretch max-md:gap-3 max-md:px-4">
         <div>
           <h2 className="text-on-image text-[26px] font-bold leading-tight tracking-[-0.02em] text-white max-md:text-[21px]">

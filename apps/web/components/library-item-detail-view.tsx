@@ -244,7 +244,7 @@ export function LibraryItemDetailView({
   return (
     // rounded-2xl + overflow 裁切：内容渐变到底部是近实色的深色板，方角
     // 会与全站"浮起圆角卡片"的形状语言冲突——按侧栏同规格圆角收尾
-    <div className="scroll-thin h-full overflow-y-auto rounded-2xl">
+    <div className="scroll-thin scroll-safe h-full overflow-y-auto rounded-2xl">
       {/* —— 顶部：不再有任何 hero 卡片图层——全站背景此刻就是本片剧照
           （沉浸覆盖 + 本页豁免全局蒙版，见 app-shell 的 isHome），大图
           直出、零边界。顶栏首屏只有一颗圆形返回键浮在剧照上（吸顶蒙版

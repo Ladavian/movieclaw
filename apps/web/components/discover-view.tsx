@@ -143,7 +143,7 @@ export function DiscoverView({
     );
   }
   return (
-    <div className="scroll-thin flex-1 overflow-y-auto pb-10">
+    <div className="scroll-thin scroll-safe flex-1 overflow-y-auto pb-10">
       {toolbar}
       {page.hero.length > 0 && (
         <div className="px-6 max-md:px-4">

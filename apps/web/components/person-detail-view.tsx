@@ -76,7 +76,7 @@ export function PersonDetailView({ tmdbPersonId }: { tmdbPersonId: number | stri
   const directed = person.credits.filter((c) => c.department === "director");
 
   return (
-    <div className="scroll-thin h-full overflow-y-auto pb-12">
+    <div className="scroll-thin scroll-safe h-full overflow-y-auto pb-12">
       {/* 来路交给浏览器后退：进人物页的入口是各处演职员条，来路不固定，
           写死「返回媒体库」会把用户带到他没来过的地方。
           不补负边距——本页的横向内边距在各分区上，滚动容器自身没有 px，

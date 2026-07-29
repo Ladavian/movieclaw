@@ -102,7 +102,7 @@ export function Top250View() {
   };
 
   return (
-    <div className="scroll-thin flex-1 overflow-y-auto px-6 pb-12 max-md:px-4">
+    <div className="scroll-thin scroll-safe flex-1 overflow-y-auto px-6 pb-12 max-md:px-4">
       {/* 顶栏：返回发现电影（保留豆瓣数据源视角）+ 吸顶榜单名；
           容器已有 px-6，用 -mx-6 让吸顶蒙版铺满整宽 */}
       <PageNav
