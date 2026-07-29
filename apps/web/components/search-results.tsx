@@ -813,7 +813,7 @@ export function SearchResults({ query, onResearch }: SearchResultsProps) {
       </header>
 
       {/* 主体：结果随 site_result 事件渐进出现，首批结果到达前保持骨架屏 */}
-      <div className="scroll-thin relative z-0 min-h-0 flex-1 overflow-y-auto px-6 pb-6 max-md:px-4">
+      <div className="scroll-thin scroll-safe relative z-0 min-h-0 flex-1 overflow-y-auto px-6 pb-6 max-md:px-4">
         {streaming && items.length === 0 && (
           <SkeletonList siteCount={siteProgress.length} />
         )}

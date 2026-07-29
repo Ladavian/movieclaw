@@ -352,7 +352,7 @@ export function LibraryDetailView({ libraryId }: { libraryId: number }) {
   );
 
   return (
-    <div className="scroll-thin flex-1 overflow-y-auto pb-10">
+    <div className="scroll-thin scroll-safe flex-1 overflow-y-auto pb-10">
       {/* 顶栏：返回媒体库 + 吸顶库名 + 库操作 ⋯（无 pt——顶边与侧栏卡片顶边齐平） */}
       <PageNav
         items={[{ label: "媒体库", href: "/library" }, { label: library.name }]}

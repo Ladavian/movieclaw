@@ -110,8 +110,10 @@ export function AgentConversationView({ conversationId }: { conversationId: stri
         </div>
       </div>
 
-      {/* 底部输入：生成中可继续打字，发送键变停止键 */}
-      <div className="shrink-0 px-4 pb-5 pt-2 max-md:px-3 max-md:pb-3">
+      {/* 底部输入：生成中可继续打字，发送键变停止键。
+          移动端主区不再整体让位底部安全区（见 globals.css），贴底的输入行
+          要自己把 Home 指示条的高度让出来，否则发送键会被指示条压住 */}
+      <div className="shrink-0 px-4 pb-5 pt-2 max-md:px-3 max-md:pb-[calc(0.75rem+var(--safe-bottom))]">
         <div className="mx-auto max-w-3xl">
           <Composer
             flat

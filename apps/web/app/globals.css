@@ -352,6 +352,20 @@ a {
   display: none;
 }
 
+/*
+ * 页面级滚动容器的底部安全区让位（配合上文「主区底部不整体让位」的约定）：
+ * 给「直接铺满主区、一滚到底」的那层 overflow-y-auto 加本类，在滚动内容
+ * 末尾追加一段 Home 指示条高度的空白——内容照常从指示条下方穿过（原生
+ * App 的观感），滚到头时最后一行又能完全露出、不被指示条压住。
+ * 用 ::after 占位而非改 padding：不与各页自己的 pb-* 打架；
+ * 非全面屏设备与桌面端 env() 解析为 0，占位高度为零、无副作用。
+ */
+.scroll-safe::after {
+  content: "";
+  display: block;
+  height: var(--safe-bottom);
+}
+
 /* —— 细滚动条 —— */
 .scroll-thin {
   scrollbar-width: thin;
@@ -868,17 +882,22 @@ body.cmdk-open .app-shell {
 /*
  * 移动端主区让位：顶栏是浮在内容之上的 absolute 雾层，主区必须自己空出
  * 「安全区 + 顶栏」这一段，否则页面第一屏会被压在汉堡和字标下面。
- * 三条横向/底部内边距同理吃安全区（横屏刘海、底部指示条）。
+ * 两条横向内边距同理吃安全区（横屏刘海）。
  *
  * 收口在这一条规则里、而不是逐页写 pt-14：全站十几个路由页都是
  * 「外层 h-full + 内层 overflow-y-auto」的同一形状，主区的内边距会自然
  * 传导给每一个页面，新增路由无需登记、不会漏。
+ *
+ * 注意：底部**不在这里让位**。主区整体抬高 safe-bottom 会把滚动视口在
+ * Home 指示条上方截断——内容被硬裁一刀、下面露出一条空底「黑边」
+ * （iPhone 全面屏 PWA 实测）。原生 App 的做法是内容一直滚到屏幕物理底边、
+ * 从指示条下方穿过，只在滚动内容末尾留出安全区高度的空白，
+ * 由页面级滚动容器的 .scroll-safe 承担（见下方）。
  */
 @media (max-width: 767px) {
   .app-shell > main {
     padding-top: calc(var(--safe-top) + var(--mobile-topbar-h));
     padding-right: var(--safe-right);
-    padding-bottom: var(--safe-bottom);
     padding-left: var(--safe-left);
   }
 

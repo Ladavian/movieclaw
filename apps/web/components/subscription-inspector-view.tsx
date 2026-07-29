@@ -136,7 +136,7 @@ export function SubscriptionInspectorView({ id }: { id: number }) {
   };
 
   return (
-    <div className="scroll-thin flex-1 overflow-y-auto px-6 pb-12 max-md:px-4">
+    <div className="scroll-thin scroll-safe flex-1 overflow-y-auto px-6 pb-12 max-md:px-4">
       {/* 顶栏：返回订阅列表 + 吸顶片名（容器已有 px-6，用 -mx-6 让吸顶蒙版铺满） */}
       <PageNav
         items={[{ label: "我的订阅", href: "/subscriptions" }, { label: detail.media.title }]}
