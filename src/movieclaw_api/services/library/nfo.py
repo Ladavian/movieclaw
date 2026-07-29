@@ -399,6 +399,10 @@ class EpisodeNfo:
     title: str | None = None
     plot: str | None = None
     aired: str | None = None  # ISO 日期字符串
+    # 季/集号：刮削器写盘的定位信息，比文件名解析更可信（文件名可能同时
+    # 含「第一季」与 S09 两个互相矛盾的季信号）。season 允许 0（特别篇）。
+    season: int | None = None
+    episode: int | None = None
 
 
 def read_episode_metadata(nfo_path: Path) -> EpisodeNfo | None:
@@ -419,6 +423,8 @@ def read_episode_metadata(nfo_path: Path) -> EpisodeNfo | None:
         title=_first_text(root, "title"),
         plot=_first_text(root, "plot") or _first_text(root, "outline"),
         aired=_first_text(root, "aired"),
+        season=_to_nonneg_int(root.findtext("season")),
+        episode=_to_positive_int(root.findtext("episode")),
     )
 
 
@@ -481,5 +487,13 @@ def _to_float(raw: str | None) -> float | None:
 def _to_positive_int(raw: str | None) -> int | None:
     value = _to_float(raw)
     if value is None or value <= 0:
+        return None
+    return int(value)
+
+
+def _to_nonneg_int(raw: str | None) -> int | None:
+    """季号专用：0 是合法值（Specials 特别篇季）。"""
+    value = _to_float(raw)
+    if value is None or value < 0:
         return None
     return int(value)

@@ -52,7 +52,11 @@ from movieclaw_api.services.library.layout import (
     season_from_dir,
     trailing_index_episode,
 )
-from movieclaw_api.services.library.nfo import NfoIdentity, read_entry_identity
+from movieclaw_api.services.library.nfo import (
+    NfoIdentity,
+    read_entry_identity,
+    read_episode_metadata,
+)
 from movieclaw_api.services.library.resolve import (
     LocalEvidence,
     normalize_title,
@@ -1556,18 +1560,28 @@ def local_episode_count(directory: Path) -> int | None:
 
 
 def _unit_for(kind: MediaKind, file: Path) -> tuple[int, int]:
-    """期望单元：电影 (0,0)；剧集从文件名解析集号、季号缺失看父目录。
+    """期望单元：电影 (0,0)；剧集优先信分集 NFO，其次文件名，季号缺失看父目录。
 
-    常规集号（SxxExx/「第N集」）全灭时退回裸尾号兜底（「走向共和01」，
-    央视老剧惯例）——否则整目录几十集全坍缩成同一个 E0 单元。
+    证据优先级（NAS 实测《妻子的浪漫旅行》第 9 季文件名同时含「第一季」
+    与 S09 两个季信号，整季错挂到第 1 季）：
+    1. 视频同名 NFO 的 <season>/<episode>——刮削器写盘的定位，最强证据；
+    2. 文件名解析；解出多个互相矛盾的季号时，父目录（Season 9）在候选中仲裁；
+    3. 常规集号（SxxExx/「第N集」）全灭时退回裸尾号兜底（「走向共和01」，
+       央视老剧惯例）——否则整目录几十集全坍缩成同一个 E0 单元。
     """
     if kind is MediaKind.MOVIE:
         return 0, 0
+    episode_nfo = read_episode_metadata(file.with_suffix(".nfo"))
+    if episode_nfo and episode_nfo.season is not None and episode_nfo.episode is not None:
+        return episode_nfo.season, episode_nfo.episode
     attrs = enrich(file.stem)
     episode = (
         attrs.episodes[0] if attrs.episodes else (trailing_index_episode(file.stem) or 0)
     )
-    season = attrs.seasons[0] if attrs.seasons else season_from_dir(file.parent)
+    dir_season = season_from_dir(file.parent)
+    if len(set(attrs.seasons)) > 1 and dir_season in attrs.seasons:
+        return dir_season, episode
+    season = attrs.seasons[0] if attrs.seasons else dir_season
     return season if season is not None else 0, episode
 
 

@@ -1569,6 +1569,30 @@ def test_unit_for_trailing_index_episode(tmp_path) -> None:
     assert trailing_index_episode("01") == 1
 
 
+def test_unit_for_season_conflict(tmp_path) -> None:
+    """文件名同时含「第一季」与 S09 两个季信号（NAS 实测《妻子的浪漫旅行》
+    第 9 季整季错挂到第 1 季）：分集 NFO 的 <season> 是最强证据须优先；
+    没有 NFO 时父目录（Season 9）在冲突季号中仲裁。"""
+    season_dir = tmp_path / "妻子的浪漫旅行 第一季 (2018)" / "Season 9"
+    season_dir.mkdir(parents=True)
+    stem = "妻子的浪漫旅行 第一季 S09E01 - 2160p H.265 AAC CHDWEB"
+    (season_dir / f"{stem}.nfo").write_text(
+        "<episodedetails><title>第 1 集</title>"
+        "<season>9</season><episode>1</episode></episodedetails>",
+        encoding="utf-8",
+    )
+    # 有分集 NFO：直接采信 NFO 的季/集号
+    assert scan_mod._unit_for(MediaKind.TV, season_dir / f"{stem}.mkv") == (9, 1)
+    # 无 NFO：文件名解析出 [1, 9] 两个季号，父目录 Season 9 仲裁
+    stem2 = "妻子的浪漫旅行 第一季 S09E02 - 2160p H.265 AAC CHDWEB"
+    assert scan_mod._unit_for(MediaKind.TV, season_dir / f"{stem2}.mkv") == (9, 2)
+    # 无 NFO 且父目录帮不上（仲裁不在候选中）：保持取首个季号的旧行为
+    plain_dir = tmp_path / "某剧"
+    assert scan_mod._unit_for(MediaKind.TV, plain_dir / "某剧 第一季 S09E03.mkv") == (1, 3)
+    # 单一季号不受影响
+    assert scan_mod._unit_for(MediaKind.TV, plain_dir / "某剧 S02E03.mkv") == (2, 3)
+
+
 def test_path_tmdb_ids_collects_conflicts(tmp_path) -> None:
     """路径各级标记全收集（就近在前、去重）：超过一个即声明自相矛盾。"""
     root = tmp_path / "movies"
