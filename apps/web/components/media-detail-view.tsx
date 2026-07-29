@@ -179,8 +179,11 @@ export function MediaDetailView({
 
   return (
     // rounded-2xl + overflow 裁切：内容渐变到底部是近实色的深色板，方角会与
-    // 全站「浮起圆角卡片」的形状语言冲突——按侧栏同规格圆角收尾
-    <div className="scroll-thin scroll-safe h-full overflow-y-auto rounded-2xl">
+    // 全站「浮起圆角卡片」的形状语言冲突——按侧栏同规格圆角收尾。
+    // max-md:rounded-none：圆角只在桌面成立（外壳 p-3.5 的留白托着卡片）；
+    // 窄屏通栏满屏，圆角会直接压在屏幕边上，把吸顶顶栏裁成一块贴在屏幕顶上的
+    // 圆角色块——与 library-item-detail-view 同一处理。
+    <div className="scroll-thin scroll-safe h-full overflow-y-auto rounded-2xl max-md:rounded-none">
       {/* min-h-full + flex 纵向：内容不足一屏时（简介/演职员/剧照都缺的小众条目）
           内容层仍要撑满剩余高度。否则渐变板只到内容底部就断了，下面直接露出
           沉浸背景，板子底边成了一道硬边界——正是这套「无缝渐入」要避免的东西。

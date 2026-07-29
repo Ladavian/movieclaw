@@ -130,7 +130,14 @@ export function PageNav({
   const backLabel = parent ? `返回${parent.label}` : "返回上一页";
 
   return (
-    <div ref={rootRef} className={`sticky top-0 z-30 px-6 max-md:px-4 ${className}`}>
+    /* pt-[var(--safe-top)]：窄屏上主区不再为安全区让位（见 globals.css 的
+       .app-shell[data-topbar="false"] > main），改由顶栏自己吃掉这一段——
+       雾层因此从屏幕物理顶边起铺、从状态栏底下穿过，而图标那一行仍落在
+       安全区以下。这正是原生 App 顶栏的层次，也与全局顶栏 .mobile-topbar 一致。 */
+    <div
+      ref={rootRef}
+      className={`sticky top-0 z-30 px-6 max-md:px-4 max-md:pt-[var(--safe-top)] ${className}`}
+    >
       {/* 吸顶蒙版：不是一条「header 色块」，而是一层向下渐隐的雾——顶边最浓、
           到底部完全化开，没有分隔线，因此看不出边界，只感觉标题那一块变干净了。
           模糊同样用 mask 做渐隐（只模糊上半段），否则会在雾的下沿出现一道

@@ -243,8 +243,13 @@ export function LibraryItemDetailView({
 
   return (
     // rounded-2xl + overflow 裁切：内容渐变到底部是近实色的深色板，方角
-    // 会与全站"浮起圆角卡片"的形状语言冲突——按侧栏同规格圆角收尾
-    <div className="scroll-thin scroll-safe h-full overflow-y-auto rounded-2xl">
+    // 会与全站"浮起圆角卡片"的形状语言冲突——按侧栏同规格圆角收尾。
+    // max-md:rounded-none：这套圆角只在桌面成立——桌面外壳有 p-3.5 的留白，
+    // 圆角落在留白里、背景大图从四周透出，才是一张"浮起的卡片"。窄屏是通栏
+    // 满屏布局，没有留白，圆角直接压在屏幕边上：顶栏的吸顶雾层被这层
+    // overflow 一裁，就成了贴在屏幕顶上的一块圆角色块（手机上肉眼可见的
+    // 两个缺角），底边同理被 Home 指示条切掉。手机上一律方角、真通栏。
+    <div className="scroll-thin scroll-safe h-full overflow-y-auto rounded-2xl max-md:rounded-none">
       {/* —— 顶部：不再有任何 hero 卡片图层——全站背景此刻就是本片剧照
           （沉浸覆盖 + 本页豁免全局蒙版，见 app-shell 的 isHome），大图
           直出、零边界。顶栏首屏只有一颗圆形返回键浮在剧照上（吸顶蒙版
