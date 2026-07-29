@@ -162,6 +162,7 @@ async def test_no_downloader_is_error(db, tmp_path) -> None:
 async def test_mapping_coverage_verdicts(db, tmp_path) -> None:
     root = tmp_path / "movies"
     await _make_library(db, root=root)
+    await _make_library(db, name="剧集库", kind="tv", root=tmp_path / "tv")
     await _make_site(db)
     # 映射不覆盖库根：error + 指向下载器设置（与真实投递被拒同口径）
     await _make_downloader(db, mappings=[{"local": "/somewhere/else", "remote": "/dl"}])
@@ -170,6 +171,10 @@ async def test_mapping_coverage_verdicts(db, tmp_path) -> None:
     mapping = _check(result["libraries"][0], "mapping")
     assert mapping["status"] == "error" and mapping["fix_section"] == "downloaders"
     assert str(root) in mapping["detail"]
+    # 修复指引必须给出两条出路：公共父目录映射（前缀覆盖，不必逐库配）
+    # 与监听导入规则——而不是让用户误以为要为每个库单独配一条映射
+    assert str(tmp_path) in mapping["detail"]
+    assert "监听导入规则" in mapping["detail"]
 
     # 补上覆盖后：整链全绿
     async with db.session() as session:

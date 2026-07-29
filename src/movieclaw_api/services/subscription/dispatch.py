@@ -252,7 +252,8 @@ async def preview_dispatch_route(
         ok = False
         warning = (
             f"目录 {base} 不在下载器「{downloader.name}」的路径映射覆盖范围内，"
-            "届时投递会被拒绝——请为该目录补一条路径映射，或为这个库配置监听导入规则"
+            "届时投递会被拒绝——请补一条覆盖该目录的路径映射（映射按前缀匹配，"
+            "映射公共父目录即可覆盖其下所有库），或为这个库配置监听导入规则"
         )
     return {
         "mode": mode,

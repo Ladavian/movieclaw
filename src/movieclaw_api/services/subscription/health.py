@@ -203,6 +203,17 @@ async def pipeline_health(session: AsyncSession) -> dict:
     watched = _watched_dirs()
     libraries = await LibraryRepository(session).list_all()
 
+    # 映射修复建议的锚点：全部库根的公共父目录。映射按前缀覆盖，一条公共
+    # 父目录的映射即可覆盖其下所有库——建议里给出这个目录，避免用户把
+    # 逐库报警误读成"每个库都要单独配一条映射"
+    all_roots = [root for lib in libraries for root in lib.root_paths if root]
+    try:
+        common_root: str | None = os.path.commonpath(all_roots) if all_roots else None
+    except ValueError:  # 根路径混入了相对路径等异常形态：放弃建议锚点即可
+        common_root = None
+    if common_root == "/":
+        common_root = None  # 公共父目录退化到根：建议映射 / 没有意义
+
     pipelines: list[LibraryPipeline] = []
     for library in libraries:
         assert library.id is not None
@@ -282,9 +293,13 @@ async def pipeline_health(session: AsyncSession) -> dict:
                         status="error",
                         detail=(
                             f"目录 {base} 不在下载器「{downloader.name}」的路径映射"
-                            f"覆盖范围内，投递会被拒绝。建议映射：本机 {base} → "
-                            "下载器视角的对应路径（下载器可直达同名路径时，"
-                            "两边填相同的即可）"
+                            "覆盖范围内，投递会被拒绝。修复二选一：① 补一条路径"
+                            "映射——映射按目录前缀覆盖，映射公共父目录（本机 "
+                            f"{common_root or base} → 下载器视角的对应路径，下载器"
+                            "可直达同名路径时两边填相同的）即可一条覆盖其下所有库，"
+                            "无需逐库配置；② 为库配置监听导入规则（自动路由）——"
+                            "投递会改走独立的下载目录，路径映射只需覆盖那个下载"
+                            "目录，媒体库分得再细也不影响下载器配置"
                         ),
                         fix_section="downloaders",
                     )
