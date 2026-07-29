@@ -360,13 +360,14 @@ function MobileTopBar({
   return (
     <header className="mobile-topbar pointer-events-none absolute inset-x-0 top-0 z-40">
       <div className="pointer-events-auto flex h-[52px] items-center gap-2 px-3">
+        {/* size-11（44px）：iOS HIG 最小可点目标，与子页面 PageNav 的键径一致 */}
         <button
           type="button"
           onClick={onMenu}
           aria-label="打开侧边栏"
-          className="grid size-9 shrink-0 place-items-center rounded-full text-white/85 transition active:scale-95 active:bg-white/10"
+          className="grid size-11 shrink-0 place-items-center rounded-full text-white/85 transition active:scale-95 active:bg-white/10"
         >
-          <MenuIcon className="size-[20px]" />
+          <MenuIcon className="size-[22px]" />
         </button>
         <button
           type="button"

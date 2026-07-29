@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useEffect, useLayoutEffect, useRef } from "react";
 import Link from "next/link";
 import type { Route } from "next";
 import { useRouter } from "next/navigation";
@@ -29,9 +29,13 @@ const REVEAL_END = 82;
  * 顶栏控件的统一形状：圆形深色玻璃键。返回键与页面操作（⋯）并排在同一行，
  * 必须是同一副长相，否则一边圆一边胶囊会像两套控件凑在一起。
  * 页面侧的操作按钮（见 library-detail-view 的 ⋯ 菜单）复用这个类名。
+ *
+ * 尺寸分两档：移动端 44px（iOS HIG 的最小可点目标，导航栏图标键的原生比例，
+ * 触屏上 36px 的键会显得局促难点）；桌面端保持 36px（鼠标精度高，44px 反而笨重）。
+ * 图标同比例缩放（约为键径的一半），改动时两档要一起看。
  */
 export const PAGE_NAV_BUTTON_CLASS =
-  "grid size-9 shrink-0 place-items-center rounded-full border border-white/[0.09] bg-black/30 text-white/85 backdrop-blur-md transition hover:bg-black/50 hover:text-white active:scale-[0.94]";
+  "grid size-9 shrink-0 place-items-center rounded-full border border-white/[0.09] bg-black/30 text-white/85 backdrop-blur-md transition hover:bg-black/50 hover:text-white active:scale-[0.94] max-md:size-11";
 
 /**
  * 找到本组件所在的滚动容器（全站页面都是「外壳固定 + 内层 overflow-y-auto」，
@@ -91,9 +95,12 @@ export function PageNav({
   // （见 lib/page-chrome.tsx）。登记与 items 是否为空无关——空 items 时本组件
   // 不渲染任何东西，也就没有认领顶栏，因此这个 effect 必须在早退之前声明，
   // 但真正登记要跟着「本次是否真的渲染了顶栏」走。
+  // 必须用 useLayoutEffect：登记要赶在浏览器绘制之前生效，用 useEffect（绘制后）
+  // 会让外壳的全局顶栏（☰ + 字标）先画出一帧再被撤掉——进入详情页时顶部 logo
+  // 会肉眼可见地闪一下。本组件只在 AuthGate 之后的纯客户端子树渲染，无 SSR 警告问题。
   const registerPageNav = chrome?.registerPageNav;
   const rendersNav = items.length > 0;
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (!registerPageNav || !rendersNav) return;
     return registerPageNav();
   }, [registerPageNav, rendersNav]);
@@ -152,12 +159,12 @@ export function PageNav({
               aria-label="打开侧边栏"
               className={backClass}
             >
-              <MenuIcon className="size-[18px]" />
+              <MenuIcon className="size-[18px] max-md:size-[22px]" />
             </button>
           )}
           {parent ? (
             <Link href={parent.href as Route} aria-label={backLabel} title={backLabel} className={backClass}>
-              <ChevronLeftIcon className="size-[18px]" />
+              <ChevronLeftIcon className="size-[18px] max-md:size-[22px]" />
             </Link>
           ) : (
             <button
@@ -167,7 +174,7 @@ export function PageNav({
               title={backLabel}
               className={backClass}
             >
-              <ChevronLeftIcon className="size-[18px]" />
+              <ChevronLeftIcon className="size-[18px] max-md:size-[22px]" />
             </button>
           )}
         </div>

@@ -126,9 +126,25 @@ export function MediaDetailView({
     return () => setOverrideBackdrop(null);
   }, [immersiveUrl, setOverrideBackdrop]);
 
+  // 来路祖先（与影片标题无关）：加载/失败兜底与正常内容共用同一条回跳链路。
+  // 兜底态也必须渲染 PageNav——它向外壳登记「本页自带顶栏」，否则移动端的
+  // 全局顶栏（☰ + logo）会在数据到达前先显示、随后又消失，顶部闪一下；
+  // 顺带让用户在转圈期间就有返回键可点。
+  const ancestors = getMediaOrigin(source, id) ?? [
+    (item?.type ?? type ?? "movie") === "movie"
+      ? { label: "发现电影", href: "/discover/movie" }
+      : { label: "发现剧集", href: "/discover/tv" },
+  ];
+
   // 无 seed 且详情尚未到达：直达链接的加载态（或失败兜底）。
   if (!item) {
-    return <DetailFallback failed={loadFailed} onBack={close} />;
+    return (
+      <div className="flex h-full flex-col">
+        {/* 当前页标题未知，末项留空——只为立起返回键并认领顶栏 */}
+        <PageNav items={[...ancestors, { label: "" }]} />
+        <DetailFallback failed={loadFailed} onBack={close} />
+      </div>
+    );
   }
 
   const info = detail?.info;
@@ -159,14 +175,7 @@ export function MediaDetailView({
     });
 
   // 来路：站内点进来按来的列表页作返回目标；直达/刷新按影片类型兜底
-  const trail = [
-    ...(getMediaOrigin(source, id) ?? [
-      isMovie
-        ? { label: "发现电影", href: "/discover/movie" }
-        : { label: "发现剧集", href: "/discover/tv" },
-    ]),
-    { label: item.title },
-  ];
+  const trail = [...ancestors, { label: item.title }];
 
   return (
     // rounded-2xl + overflow 裁切：内容渐变到底部是近实色的深色板，方角会与
@@ -577,8 +586,9 @@ function PhotoArrow({
 function DetailFallback({ failed, onBack }: { failed: boolean; onBack: () => void }) {
   return (
     // ambient-fallback：本页豁免了全局蒙版（isHome），而此刻还没有沉浸背景可铺，
-    // 文案会直接压在用户配的壁纸上——亮壁纸下就读不出来了，兜底态自己带一层底
-    <div className="ambient-fallback flex h-full flex-col items-center justify-center gap-4 px-6 text-center">
+    // 文案会直接压在用户配的壁纸上——亮壁纸下就读不出来了，兜底态自己带一层底。
+    // flex-1 而非 h-full：调用处在其上方叠了一条 PageNav（flex 纵向布局）。
+    <div className="ambient-fallback flex flex-1 flex-col items-center justify-center gap-4 px-6 text-center">
       {failed ? (
         <>
           <p className="text-[15px] font-semibold text-[var(--text)]">未能加载该影片详情</p>

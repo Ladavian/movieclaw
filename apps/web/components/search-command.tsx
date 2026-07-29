@@ -125,7 +125,8 @@ function groupHistory(items: SearchHistoryItem[]): HistoryGroup[] {
 
 export function SearchCommand({
   onSearch,
-  triggerClassName = "glass-row !size-8 shrink-0 justify-center !p-0 max-md:!size-9",
+  // 移动端 44px：iOS HIG 最小可点目标（触屏），桌面保持 32px 紧凑图标键
+  triggerClassName = "glass-row !size-8 shrink-0 justify-center !p-0 max-md:!size-11",
 }: SearchCommandProps) {
   const [open, setOpen] = useState(false);
   // 面板是全屏浮层，Portal 到 body：避免被 sidebar 玻璃面板的 isolation:isolate
@@ -162,7 +163,7 @@ export function SearchCommand({
         title="搜索（⌘K 或 Ctrl+K）"
         className={triggerClassName}
       >
-        <SearchIcon className="size-[18px]" />
+        <SearchIcon className="size-[18px] max-md:size-[22px]" />
       </button>
 
       {/* 面板按需挂载：每次打开都是全新实例，状态（模式/分类/输入）自然重置，
