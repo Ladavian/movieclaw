@@ -8,7 +8,7 @@ import {
   ChevronLeftIcon,
   ChevronRightIcon,
   PhotoIcon,
-  PlayIcon,
+  BellIcon,
   StarIcon,
 } from "@/components/icons";
 import { CastRow } from "@/components/cast-row";
@@ -290,7 +290,7 @@ export function MediaDetailView({
                 onClick={openSubscribe}
                 className="btn-accent flex h-10 items-center gap-2 rounded-full px-5 text-[13px] font-semibold"
               >
-                <PlayIcon className="size-4" />
+                <BellIcon className="size-4" />
                 订阅追踪
               </button>
             )}

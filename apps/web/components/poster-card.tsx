@@ -1,13 +1,16 @@
 "use client";
 
+import { useEffect, useRef, useState, type MouseEvent } from "react";
+
 import type { Route } from "next";
 import Link from "next/link";
 
-import { BellIcon, CheckIcon, DownloadIcon, PlayIcon, StarIcon } from "@/components/icons";
+import { BellIcon, CheckIcon, DownloadIcon, PlusIcon, StarIcon } from "@/components/icons";
 import { PosterImage } from "@/components/poster-image";
 import { useSubscribeEntry } from "@/components/subscribe-entry";
 import { useMediaDetail } from "@/lib/media-detail";
 import type { MediaItem, MediaType } from "@/lib/media-types";
+import { useMediaQuery } from "@/lib/use-media-query";
 import { useTapGuard } from "@/lib/use-tap-guard";
 
 /**
@@ -47,9 +50,11 @@ export interface PosterCardProps {
  */
 export type PosterCardAction = "subscribe" | "follow" | "backfill" | "owned" | "none";
 
-/** 三种订阅入口的文案与图标（已订阅时统一切换为状态徽标，不走这张表）。 */
+/** 三种订阅入口的文案与图标（已订阅时统一切换为状态徽标，不走这张表）。
+ *  订阅是「加入追踪清单」，图标用 +（加入）与 🔔（追新）表意——
+ *  不能用播放三角：它承诺的是「点了就能看」，会误导用户以为是播放键。 */
 const SUBSCRIBE_ACTION_META = {
-  subscribe: { label: "订阅影片", Icon: PlayIcon },
+  subscribe: { label: "订阅影片", Icon: PlusIcon },
   follow: { label: "订阅追新", Icon: BellIcon },
   backfill: { label: "补齐缺集", Icon: DownloadIcon },
 } as const;
@@ -103,10 +108,46 @@ export function PosterCardVisual({
   href?: Route;
   action?: PosterCardAction;
 }) {
+  // 触摸端没有 hover，信息层（类型/简介/订阅操作）原本永远展不开。交互对齐
+  // 桌面的两段式：第一次点按只「展开」信息层（等价于鼠标悬停），看清操作后
+  // 再点海报才进详情；点卡片外任意处收起。之前的方案是在海报角上常驻一枚
+  // 订阅圆键，但图标无文案表意不清，且张张海报都印着按钮、墙面很吵。
+  const noHover = useMediaQuery("(hover: none)");
+  const [revealed, setRevealed] = useState(false);
+  const rootRef = useRef<HTMLElement | null>(null);
+
+  // 展开后点卡片外任意处收起（pointerdown 而非 click：滚动/拖动开始就该收）
+  useEffect(() => {
+    if (!revealed) return;
+    const onDown = (e: globalThis.PointerEvent) => {
+      if (!rootRef.current?.contains(e.target as Node)) setRevealed(false);
+    };
+    document.addEventListener("pointerdown", onDown, { capture: true });
+    return () => document.removeEventListener("pointerdown", onDown, { capture: true });
+  }, [revealed]);
+
   // 触摸端误触保护：海报墙滑动远多于点击，浏览器原生的 click 抑制拦不住
   // 「滑到边缘」「点一下停惯性」这类手势，统一交给 useTapGuard 判定。
   // Link 分支不传动作，仅靠 preventDefault 拦掉不合格点击的跳转。
-  const tapGuard = useTapGuard(onClick);
+  const tapGuard = useTapGuard(
+    onClick &&
+      (() => {
+        if (noHover && !revealed) {
+          setRevealed(true);
+          return;
+        }
+        onClick();
+      }),
+  );
+  // Link 分支的「首点展开」：误触判定放行、且信息层未展开时，拦下跳转改为展开
+  const onLinkClick = (e: MouseEvent) => {
+    tapGuard.onClick(e);
+    if (e.defaultPrevented) return;
+    if (noHover && !revealed) {
+      e.preventDefault();
+      setRevealed(true);
+    }
+  };
   const content = <PosterCardContent item={item} rank={rank} action={action} />;
   const interactiveClass =
     "group/card block w-full cursor-pointer rounded-2xl text-left outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-ring)]";
@@ -114,7 +155,10 @@ export function PosterCardVisual({
     return (
       <Link
         href={href}
+        ref={rootRef as React.Ref<HTMLAnchorElement>}
         {...tapGuard}
+        onClick={onLinkClick}
+        data-revealed={revealed}
         className={interactiveClass}
         aria-label={`查看《${item.title}》详情`}
       >
@@ -124,7 +168,13 @@ export function PosterCardVisual({
   }
   if (!onClick) return <div className="group/card block w-full text-left">{content}</div>;
   return (
-    <button type="button" {...tapGuard} className={interactiveClass}>
+    <button
+      type="button"
+      ref={rootRef as React.Ref<HTMLButtonElement>}
+      {...tapGuard}
+      data-revealed={revealed}
+      className={interactiveClass}
+    >
       {content}
     </button>
   );
@@ -186,21 +236,10 @@ function PosterCardContent({
             </span>
           )}
 
-          {/* 触摸设备的操作入口：没有 hover 就没有下方的信息层，订阅/追新/补齐
-              在手机上会彻底点不到。这里在海报右下角常驻一枚圆形操作键——只放
-              图标不放文案（卡片在两列网格里只有 150px 宽，塞不下胶囊按钮），
-              动作与信息层里的那颗完全一致。仅无悬停设备渲染，桌面端不受影响。
-              只为「够得着操作」而设，因此仅订阅类动作才出这枚键：owned 是纯状态
-              没有可点的动作，在媒体库里更是句废话（那儿的东西本来就都已入库），
-              为它在海报角上常驻一个绿点只是噪声。桌面 hover 层里的标识保持不变。 */}
-          {action !== "none" && action !== "owned" && (
-            <span className="touch-only absolute bottom-2 right-2 z-[2]">
-              <PosterCardActionButton item={item} action={action} compact />
-            </span>
-          )}
-
-          {/* hover 信息层：底部渐变升起，展示类型 / 简介 / 快捷操作 */}
-          <div className="absolute inset-x-0 bottom-0 translate-y-3 bg-gradient-to-t from-black/90 via-black/60 to-transparent px-3 pb-3 pt-10 opacity-0 transition-all duration-300 ease-out group-hover/card:translate-y-0 group-hover/card:opacity-100">
+          {/* hover 信息层：底部渐变升起，展示类型 / 简介 / 快捷操作。
+              触摸端由「首次点按」触发（根节点的 data-revealed，见 PosterCardVisual），
+              与桌面 hover 是同一层——手机上不再另设常驻的角落圆键。 */}
+          <div className="absolute inset-x-0 bottom-0 translate-y-3 bg-gradient-to-t from-black/90 via-black/60 to-transparent px-3 pb-3 pt-10 opacity-0 transition-all duration-300 ease-out group-hover/card:translate-y-0 group-hover/card:opacity-100 group-data-[revealed=true]/card:translate-y-0 group-data-[revealed=true]/card:opacity-100">
             {genres.length > 0 && (
               <p className="text-[11px] font-medium text-[var(--accent-2)]">
                 {genres.join(" · ")}
@@ -239,9 +278,7 @@ function PosterCardContent({
 }
 
 /**
- * 卡片上的操作键（订阅 / 追新 / 补齐 / 已入库标识），两处形态共用一份逻辑：
- *   - 默认（桌面）：hover 信息层里的文字胶囊；
- *   - compact（触摸设备）：海报右下角常驻的圆形图标键。
+ * 信息层里的操作键（订阅 / 追新 / 补齐 / 已入库标识）。
  *
  * 外层整卡已经是 button / Link，内部不能再嵌 button（HTML 不允许交互元素嵌套），
  * 所以用 role="button" 的 span 承载：preventDefault 拦掉 Link 跳转，
@@ -250,12 +287,9 @@ function PosterCardContent({
 function PosterCardActionButton({
   item,
   action,
-  compact = false,
 }: {
   item: PosterVisualItem;
   action: PosterCardAction;
-  /** 紧凑圆形形态：只留图标，给触摸设备的常驻入口用 */
-  compact?: boolean;
 }) {
   const { open: openSubscribe, subscriptionOf } = useSubscribeEntry();
   // 订阅入口类动作（subscribe/follow/backfill）才需要判断订阅状态；owned/none 不查询
@@ -271,8 +305,6 @@ function PosterCardActionButton({
 
   if (!subscribeMeta) {
     // 已入库标识：非交互，与库存格下方的绿点语言一致。
-    // 只有 hover 信息层会走到这里——纯状态没有「够不着」的问题，
-    // 触摸端不再为它单出常驻圆键（见上方 touch-only 的渲染条件）。
     return (
       <span className="flex h-7 items-center gap-1.5 rounded-full bg-white/[0.14] px-3 text-[11px] font-semibold text-white/90 backdrop-blur-sm">
         <span className="size-1.5 rounded-full bg-[#4ade80]" />
@@ -290,7 +322,6 @@ function PosterCardActionButton({
       role="button"
       tabIndex={0}
       aria-label={label}
-      title={compact ? label : undefined}
       onPointerDown={tapGuard.onPointerDown}
       onPointerUp={tapGuard.onPointerUp}
       onPointerCancel={tapGuard.onPointerCancel}
@@ -309,25 +340,20 @@ function PosterCardActionButton({
         }
       }}
       className={
-        compact
-          ? // 32px 圆键：低于这个尺寸在手机上就点不准了（触摸目标下限）
-            existingSub
-            ? "grid size-8 place-items-center rounded-full bg-black/60 text-white/90 shadow-lg backdrop-blur-sm active:scale-90"
-            : "btn-accent grid size-8 place-items-center rounded-full active:scale-90"
-          : existingSub
-            ? "flex h-7 items-center gap-1.5 rounded-full bg-white/[0.14] px-3 text-[11px] font-semibold text-white/90 backdrop-blur-sm transition-colors hover:bg-white/[0.22]"
-            : "btn-accent flex h-7 items-center gap-1 rounded-full px-3 text-[11px] font-semibold"
+        existingSub
+          ? "flex h-7 items-center gap-1.5 rounded-full bg-white/[0.14] px-3 text-[11px] font-semibold text-white/90 backdrop-blur-sm transition-colors hover:bg-white/[0.22]"
+          : "btn-accent flex h-7 items-center gap-1 rounded-full px-3 text-[11px] font-semibold"
       }
     >
       {existingSub ? (
         <>
-          <CheckIcon className={compact ? "size-4 text-[#4ade80]" : "size-3 text-[#4ade80]"} />
-          {!compact && "已订阅"}
+          <CheckIcon className="size-3 text-[#4ade80]" />
+          已订阅
         </>
       ) : (
         <>
-          <subscribeMeta.Icon className={compact ? "size-4" : "size-3"} />
-          {!compact && subscribeMeta.label}
+          <subscribeMeta.Icon className="size-3" />
+          {subscribeMeta.label}
         </>
       )}
     </span>

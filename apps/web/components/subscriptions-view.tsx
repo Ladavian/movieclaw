@@ -9,10 +9,12 @@ import { PosterCardVisual, type PosterVisualItem } from "@/components/poster-car
 import { useSubscribeEntry } from "@/components/subscribe-entry";
 import { getPipelineHealth, type Subscription } from "@/lib/api/subscriptions";
 import { cachedImageUrl } from "@/lib/image-proxy";
+import { usePageChrome } from "@/lib/page-chrome";
 import {
   subscriptionProgressNote,
   subscriptionStatusMeta,
 } from "@/lib/subscription-ui";
+import { useIsMobile } from "@/lib/use-media-query";
 
 /**
  * 订阅页：用户全部订阅的海报墙。
@@ -48,11 +50,22 @@ export function SubscriptionsView() {
     reload();
   }, [reload]);
 
+  // 电影/剧集切换在移动端挂进全局顶栏右上角（字标与搜索之间那段空位），
+  // 与发现页的数据源切换同一套安放方式——窄屏页头不再为它单独堆一行。
+  // 桌面端维持页头右侧的原位不变。
+  const chrome = usePageChrome();
+  const isMobile = useIsMobile();
+  const setTopBarActions = chrome?.setTopBarActions;
+  useEffect(() => {
+    if (!isMobile || !setTopBarActions) return;
+    return setTopBarActions(<MediaTypeSwitcher value={mediaType} onChange={setMediaType} />);
+  }, [isMobile, setTopBarActions, mediaType]);
+
   const visible = (subscriptions ?? []).filter((s) => s.media.kind === mediaType);
 
   return (
     <div className="scroll-thin scroll-safe flex-1 overflow-y-auto pb-10">
-      <div className="flex items-start justify-between gap-4 px-6 pt-2 max-md:flex-col max-md:items-stretch max-md:gap-3 max-md:px-4">
+      <div className="flex items-start justify-between gap-4 px-6 pt-2 max-md:px-4">
         <div>
           <h2 className="text-on-image text-[26px] font-bold leading-tight tracking-[-0.02em] text-white max-md:text-[21px]">
             我的订阅
@@ -63,7 +76,7 @@ export function SubscriptionsView() {
           </p>
         </div>
 
-        <MediaTypeSwitcher value={mediaType} onChange={setMediaType} />
+        {!isMobile && <MediaTypeSwitcher value={mediaType} onChange={setMediaType} />}
       </div>
 
       {/* 链路警示横幅：只在体检整体为 error 时出现——订阅不会丢（工单退避
@@ -127,7 +140,7 @@ function MediaTypeSwitcher({
 }) {
   return (
     <div
-      className="flex shrink-0 self-start rounded-full border border-white/10 bg-black/35 p-1 backdrop-blur-xl"
+      className="flex shrink-0 rounded-full border border-white/10 bg-black/35 p-1 backdrop-blur-xl"
       aria-label="订阅类型"
     >
       {(["movie", "tv"] as const).map((type) => (

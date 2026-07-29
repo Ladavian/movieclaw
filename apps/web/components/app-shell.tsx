@@ -11,6 +11,7 @@ const SIDEBAR_COLLAPSED_KEY = "movieclaw.sidebar-collapsed";
 const SETTINGS_RETURN_KEY = "movieclaw.settings-return";
 
 import { MenuIcon } from "@/components/icons";
+import { PAGE_NAV_BUTTON_CLASS } from "@/components/page-nav";
 import { SearchCommand, type SearchSubmitOptions } from "@/components/search-command";
 import { SettingsSidebar } from "@/components/settings-view";
 import { Sidebar } from "@/components/sidebar";
@@ -360,20 +361,27 @@ function MobileTopBar({
   return (
     <header className="mobile-topbar pointer-events-none absolute inset-x-0 top-0 z-40">
       <div className="pointer-events-auto flex h-[52px] items-center gap-2 px-3">
-        {/* size-11（44px）：iOS HIG 最小可点目标，与子页面 PageNav 的键径一致 */}
+        {/* 复用子页面 PageNav 的圆形玻璃键（移动端 44px，iOS HIG 最小可点目标）：
+            全局顶栏与详情页顶栏是同一层级的导航条，控件必须同一副长相。
+            这里刻意不用真实 WebGL 液态玻璃（LiquidGlassIconButton）：每颗都是独立
+            WebGL 上下文（移动 Safari 上限个位数，超限静默丢弃最老的上下文），且它
+            只会折射静态背景大图——顶栏浮在滚动的海报墙上，CSS backdrop-blur 对真实
+            内容实时取样反而更接近真玻璃（2026-07 实测对比后的结论）。 */}
         <button
           type="button"
           onClick={onMenu}
           aria-label="打开侧边栏"
-          className="grid size-11 shrink-0 place-items-center rounded-full text-white/85 transition active:scale-95 active:bg-white/10"
+          className={PAGE_NAV_BUTTON_CLASS}
         >
           <MenuIcon className="size-[22px]" />
         </button>
+        {/* 字标可点区拉到 44px 高（与图标键同标准）——图片本身保持 h-7 的视觉
+            大小，命中区靠按钮撑起，否则 28px 高的字标在触屏上很难点中 */}
         <button
           type="button"
           onClick={() => router.push("/")}
           aria-label="回到首页"
-          className="shrink-0 transition-opacity active:opacity-60"
+          className="flex h-11 shrink-0 items-center transition-opacity active:opacity-60"
         >
           <Image
             src="/movieclaw-logo-rotor.png"
@@ -389,7 +397,7 @@ function MobileTopBar({
         <div className="ml-auto flex min-w-0 shrink items-center gap-2">
           {actions}
           <div className="shrink-0">
-            <SearchCommand onSearch={onSearch} />
+            <SearchCommand onSearch={onSearch} triggerClassName={PAGE_NAV_BUTTON_CLASS} />
           </div>
         </div>
       </div>

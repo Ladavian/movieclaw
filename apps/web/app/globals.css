@@ -139,19 +139,6 @@ body {
 }
 
 /*
- * 只在无悬停设备出现的元素：给那些「桌面靠 hover 层承载、触摸端必须另设入口」
- * 的操作用（如海报卡右下角的常驻订阅圆键）。默认不渲染，不影响桌面版式。
- */
-.touch-only {
-  display: none;
-}
-@media (hover: none) {
-  .touch-only {
-    display: block;
-  }
-}
-
-/*
  * 【全站约定】backdrop-filter 一律只写标准属性，不要手写 -webkit- 前缀行。
  *
  * 构建期 Tailwind v4 的 Lightning CSS 会按浏览器目标自动补前缀（产物里两条都在）；

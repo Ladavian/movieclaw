@@ -61,10 +61,11 @@
     ".next-scanux/types/**/*.ts",
     ".next-subcancel/types/**/*.ts",
     ".next-subinspector/types/**/*.ts",
+    ".next-tapguard/types/**/*.ts",
     ".next-wishbtn/types/**/*.ts",
     ".next/types/**/*.ts",
     "next-env.d.ts",
-    ".next-tapguard/types/**/*.ts"
+    ".next-mobilechrome/types/**/*.ts"
   ],
   "exclude": [
     "node_modules"

@@ -10,7 +10,7 @@ import {
   ChevronRightIcon,
   GlobeIcon,
   InfoIcon,
-  PlayIcon,
+  BellIcon,
   StarIcon,
 } from "@/components/icons";
 import { MediaRow } from "@/components/media-row";
@@ -405,7 +405,7 @@ function HeroSlide({ item, active }: { item: MediaItem; active: boolean }) {
             type="button"
             className="btn-accent flex h-10 items-center gap-2 rounded-full px-5 text-[13px] font-semibold"
           >
-            <PlayIcon className="size-4" />
+            <BellIcon className="size-4" />
             订阅追踪
           </button>
           <button
