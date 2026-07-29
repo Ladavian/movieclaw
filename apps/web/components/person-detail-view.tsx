@@ -49,14 +49,25 @@ export function PersonDetailView({ tmdbPersonId }: { tmdbPersonId: number | stri
 
   usePageTitle(person?.name);
 
+  // 兜底态也要渲染 PageNav（姓名未知，标签留空）：向外壳登记「本页自带顶栏」，
+  // 否则移动端全局顶栏（☰ + logo）会先显示再消失、顶部闪一下；无 href 的
+  // 单节点回退为浏览器后退，与正文态的返回行为一致。
   if (failure !== null) {
-    return <PersonFallback failure={failure} />;
+    return (
+      <div className="flex h-full flex-col">
+        <PageNav items={[{ label: "" }]} />
+        <PersonFallback failure={failure} />
+      </div>
+    );
   }
   if (person === null) {
     return (
-      <div className="flex h-full items-center justify-center gap-2.5 text-[13px] text-[var(--text-muted)]">
-        <span className="size-4 animate-spin rounded-full border-2 border-white/20 border-t-white/70" />
-        正在读取影人档案…
+      <div className="flex h-full flex-col">
+        <PageNav items={[{ label: "" }]} />
+        <div className="flex flex-1 items-center justify-center gap-2.5 text-[13px] text-[var(--text-muted)]">
+          <span className="size-4 animate-spin rounded-full border-2 border-white/20 border-t-white/70" />
+          正在读取影人档案…
+        </div>
       </div>
     );
   }
@@ -194,7 +205,8 @@ function CreditCard({ credit, showCharacter }: { credit: PersonCredit; showChara
  */
 function PersonFallback({ failure }: { failure: "missing" | "error" }) {
   return (
-    <div className="flex h-full flex-col items-center justify-center gap-4 px-6 text-center">
+    // flex-1 而非 h-full：调用处在其上方叠了一条 PageNav（flex 纵向布局）
+    <div className="flex flex-1 flex-col items-center justify-center gap-4 px-6 text-center">
       {failure === "missing" ? (
         <>
           <p className="text-[15px] font-semibold text-[var(--text)]">库内没有这位影人的作品</p>

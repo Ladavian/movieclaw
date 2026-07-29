@@ -77,23 +77,33 @@ export function SubscriptionInspectorView({ id }: { id: number }) {
   );
   usePageTitle(detail?.media.title);
 
+  // 兜底态（加载中/失败）也渲染 PageNav（片名未知，末项留空）：向外壳登记
+  // 「本页自带顶栏」，否则移动端全局顶栏（☰ + logo）会先显示再消失、顶部闪一下。
+  const fallbackTrail = [{ label: "我的订阅", href: "/subscriptions" }, { label: "" }];
+
   if (failed) {
     return (
-      <div className="flex h-full flex-col items-center justify-center gap-4">
-        <p className="text-[14px] text-[var(--text-muted)]">未能加载该订阅，可能已被删除。</p>
-        <Link href="/subscriptions" className="btn-glass px-4 py-2 text-[13px] font-medium">
-          <ArrowLeftIcon className="size-4" />
-          返回订阅列表
-        </Link>
+      <div className="flex h-full flex-col">
+        <PageNav items={fallbackTrail} />
+        <div className="flex flex-1 flex-col items-center justify-center gap-4">
+          <p className="text-[14px] text-[var(--text-muted)]">未能加载该订阅，可能已被删除。</p>
+          <Link href="/subscriptions" className="btn-glass px-4 py-2 text-[13px] font-medium">
+            <ArrowLeftIcon className="size-4" />
+            返回订阅列表
+          </Link>
+        </div>
       </div>
     );
   }
 
   if (!detail) {
     return (
-      <div className="flex h-full items-center justify-center gap-2.5 text-[13px] text-[var(--text-muted)]">
-        <span className="size-4 animate-spin rounded-full border-2 border-white/20 border-t-white/70" />
-        正在加载订阅详情…
+      <div className="flex h-full flex-col">
+        <PageNav items={fallbackTrail} />
+        <div className="flex flex-1 items-center justify-center gap-2.5 text-[13px] text-[var(--text-muted)]">
+          <span className="size-4 animate-spin rounded-full border-2 border-white/20 border-t-white/70" />
+          正在加载订阅详情…
+        </div>
       </div>
     );
   }

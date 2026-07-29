@@ -238,38 +238,51 @@ export function LibraryDetailView({ libraryId }: { libraryId: number }) {
   // 只有一次都没加载成功过才整页报错；已有数据在手时，瞬时失败只在页内
   // 挂提示条（stale-while-error）——为一次网络抖动把整面海报墙换成错误屏，
   // 用户看到的就是"页面闪没了"
+  // 兜底态（加载中/失败/不存在）也渲染 PageNav（库名未知，末项留空）：向外壳
+  // 登记「本页自带顶栏」，否则移动端全局顶栏（☰ + logo）会先显示再消失、顶部闪一下。
+  const fallbackTrail = [{ label: "媒体库", href: "/library" }, { label: "" }];
+
   if (failed && libraries === null) {
     return (
-      <CenteredNote>
-        <p className="text-[13.5px] text-[var(--text-muted)]">媒体库加载失败</p>
-        <button
-          type="button"
-          onClick={reload}
-          className="btn-glass px-4 py-2 text-[13px] font-medium text-[var(--text)]"
-        >
-          重试
-        </button>
-      </CenteredNote>
+      <div className="flex-1">
+        <PageNav items={fallbackTrail} />
+        <CenteredNote>
+          <p className="text-[13.5px] text-[var(--text-muted)]">媒体库加载失败</p>
+          <button
+            type="button"
+            onClick={reload}
+            className="btn-glass px-4 py-2 text-[13px] font-medium text-[var(--text)]"
+          >
+            重试
+          </button>
+        </CenteredNote>
+      </div>
     );
   }
 
   if (libraries === null) {
     return (
-      <CenteredNote>
-        <span className="size-4 animate-spin rounded-full border-2 border-white/20 border-t-white/70" />
-        <p className="text-[13px] text-[var(--text-muted)]">正在加载媒体库…</p>
-      </CenteredNote>
+      <div className="flex-1">
+        <PageNav items={fallbackTrail} />
+        <CenteredNote>
+          <span className="size-4 animate-spin rounded-full border-2 border-white/20 border-t-white/70" />
+          <p className="text-[13px] text-[var(--text-muted)]">正在加载媒体库…</p>
+        </CenteredNote>
+      </div>
     );
   }
 
   if (library === null) {
     return (
-      <CenteredNote>
-        <p className="text-[13.5px] text-[var(--text-muted)]">这个媒体库不存在（可能已被删除）</p>
-        <Link href={"/library" as Route} className="btn-glass px-4 py-2 text-[13px] font-medium">
-          返回媒体库
-        </Link>
-      </CenteredNote>
+      <div className="flex-1">
+        <PageNav items={fallbackTrail} />
+        <CenteredNote>
+          <p className="text-[13.5px] text-[var(--text-muted)]">这个媒体库不存在（可能已被删除）</p>
+          <Link href={"/library" as Route} className="btn-glass px-4 py-2 text-[13px] font-medium">
+            返回媒体库
+          </Link>
+        </CenteredNote>
+      </div>
     );
   }
 

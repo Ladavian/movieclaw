@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useEffect, useLayoutEffect, useRef } from "react";
 import Link from "next/link";
 import type { Route } from "next";
 import { useRouter } from "next/navigation";
@@ -91,9 +91,12 @@ export function PageNav({
   // （见 lib/page-chrome.tsx）。登记与 items 是否为空无关——空 items 时本组件
   // 不渲染任何东西，也就没有认领顶栏，因此这个 effect 必须在早退之前声明，
   // 但真正登记要跟着「本次是否真的渲染了顶栏」走。
+  // 必须用 useLayoutEffect：登记要赶在浏览器绘制之前生效，用 useEffect（绘制后）
+  // 会让外壳的全局顶栏（☰ + 字标）先画出一帧再被撤掉——进入详情页时顶部 logo
+  // 会肉眼可见地闪一下。本组件只在 AuthGate 之后的纯客户端子树渲染，无 SSR 警告问题。
   const registerPageNav = chrome?.registerPageNav;
   const rendersNav = items.length > 0;
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (!registerPageNav || !rendersNav) return;
     return registerPageNav();
   }, [registerPageNav, rendersNav]);

@@ -149,31 +149,46 @@ export function LibraryItemDetailView({
     return () => clearTimeout(timer);
   }, [detail, libraryId, mediaItemId]);
 
+  // 兜底态（加载中/失败）的顶栏：条目标题未知，末项留空——渲染 PageNav 是为了
+  // 向外壳登记「本页自带顶栏」，否则移动端全局顶栏（☰ + logo）会先显示再消失，
+  // 顶部闪一下；同时转圈期间就有返回键可点。祖先链路与正文的 trail 保持一致。
+  const fallbackTrail = [
+    { label: "媒体库", href: "/library" as Route },
+    { label: library?.name ?? "库存", href: `/library/${libraryId}` as Route },
+    { label: "" },
+  ];
+
   if (failed) {
     return (
       // ambient-fallback：同 MediaDetailView——本页豁免全局蒙版，兜底态没有沉浸
       // 背景可铺，文案会压在用户壁纸上，自己带一层底才读得清
-      <div className="ambient-fallback flex h-full flex-col items-center justify-center gap-4 px-6 text-center">
-        <p className="text-[15px] font-semibold text-[var(--text)]">未能加载该条目</p>
-        <p className="max-w-sm text-[13px] leading-6 text-[var(--text-muted)]">
-          条目可能已被删除或重新识别为其他作品，请回库存页查看。
-        </p>
-        <Link
-          href={`/library/${libraryId}` as Route}
-          className="btn-glass flex items-center gap-2 px-4 py-2 text-[13px] font-medium text-[var(--text)]"
-        >
-          <ArrowLeftIcon className="size-4" />
-          回到库存页
-        </Link>
+      <div className="ambient-fallback flex h-full flex-col">
+        <PageNav items={fallbackTrail} />
+        <div className="flex flex-1 flex-col items-center justify-center gap-4 px-6 text-center">
+          <p className="text-[15px] font-semibold text-[var(--text)]">未能加载该条目</p>
+          <p className="max-w-sm text-[13px] leading-6 text-[var(--text-muted)]">
+            条目可能已被删除或重新识别为其他作品，请回库存页查看。
+          </p>
+          <Link
+            href={`/library/${libraryId}` as Route}
+            className="btn-glass flex items-center gap-2 px-4 py-2 text-[13px] font-medium text-[var(--text)]"
+          >
+            <ArrowLeftIcon className="size-4" />
+            回到库存页
+          </Link>
+        </div>
       </div>
     );
   }
 
   if (!detail) {
     return (
-      <div className="ambient-fallback flex h-full items-center justify-center gap-2.5 text-[13px] text-[var(--text-muted)]">
-        <span className="size-4 animate-spin rounded-full border-2 border-white/20 border-t-white/70" />
-        正在读取本地刮削信息…
+      <div className="ambient-fallback flex h-full flex-col">
+        <PageNav items={fallbackTrail} />
+        <div className="flex flex-1 items-center justify-center gap-2.5 text-[13px] text-[var(--text-muted)]">
+          <span className="size-4 animate-spin rounded-full border-2 border-white/20 border-t-white/70" />
+          正在读取本地刮削信息…
+        </div>
       </div>
     );
   }
