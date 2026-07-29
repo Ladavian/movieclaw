@@ -1180,7 +1180,9 @@ function MissingRow({
    一部剧几十集是同一件事，逐集处理既刷屏又折磨人。认领一律走「详情确认
    面板」：点候选/搜索结果先看海报、简介、季数再确认——只看名字不足以在
    同名双版本（正片 46 集 vs 送审版 51 集）之间下判断。候选全不对时走
-   TMDB 搜索（按片名检索、支持直接粘 ID），不再让用户手抄 TMDB ID。 */
+   TMDB 搜索（按片名检索、支持直接粘 ID），不再让用户手抄 TMDB ID。
+   TMDB 真没有条目（no_match）也不是死路：卡片上写明「扫描会自动重试」
+   并引导去 TMDB 社区补录——补录收录后回来搜索认领即可。 */
 
 /** 进入确认面板的最小信息：来自候选 chip 或搜索结果，详情异步补全。 */
 interface ClaimSeed {
@@ -1328,7 +1330,7 @@ function UnidentifiedGroupRow({
     if (
       group.file_count > 1 &&
       !window.confirm(
-        `忽略「${group.label}」的全部 ${group.file_count} 个文件？之后扫描不再过问（不动磁盘；可在「已忽略」里恢复）`,
+        `忽略「${group.label}」的全部 ${group.file_count} 个文件？之后扫描不再过问（不动磁盘；可在「已忽略」里恢复）。适合自录、花絮这类 TMDB 本就不会有条目的内容——只是暂时认不出的建议先搜索认领`,
       )
     )
       return;
@@ -1380,6 +1382,24 @@ function UnidentifiedGroupRow({
           onToggleFiles={() => setExpanded((v) => !v)}
         />
       </div>
+
+      {/* no_match 的两条真实出口写在卡片上：条目常常是晚几周才被社区补上
+          （待识别行每次扫描本就自动重试），等不及可以自己去补录。不写清楚，
+          用户会以为搜不到就只剩忽略一条路 */}
+      {group.code === "no_match" && (
+        <p className="mt-1 text-[11px] leading-relaxed text-[var(--text-faint)]">
+          每次扫描会自动重试识别。TMDB 是社区维护的数据库，确认缺这个条目可以
+          <a
+            href={`https://www.themoviedb.org/${movie ? "movie" : "tv"}/new`}
+            target="_blank"
+            rel="noreferrer"
+            className="underline decoration-white/20 underline-offset-2 transition hover:text-white/80"
+          >
+            去 TMDB 补录 ↗
+          </a>
+          ，收录后回来搜索认领；自录、花絮这类本就不会有条目的内容用「忽略」即可。
+        </p>
+      )}
 
       {/* 候选：机器给出的可能匹配。点击先进详情确认面板，不直接认领 */}
       {group.candidates.length > 0 && (
@@ -1823,8 +1843,18 @@ function ClaimSearchPanel({
 
       {error && <p className="mt-2 text-[11.5px] text-red-300">{error}</p>}
       {results !== null && results.length === 0 && !error && (
-        <p className="mt-2 text-[11.5px] text-[var(--text-muted)]">
-          没有找到{movie ? "电影" : "剧集"}结果，换个关键词试试（TMDB 对中文名支持有限时可试英文/原名）
+        <p className="mt-2 text-[11.5px] leading-relaxed text-[var(--text-muted)]">
+          没有找到{movie ? "电影" : "剧集"}结果，换个关键词试试（TMDB 对中文名支持有限时可试英文/原名）。
+          确认 TMDB 没收录的话，可以
+          <a
+            href={`https://www.themoviedb.org/${movie ? "movie" : "tv"}/new`}
+            target="_blank"
+            rel="noreferrer"
+            className="underline decoration-white/20 underline-offset-2 transition hover:text-white/80"
+          >
+            去 TMDB 补录该条目 ↗
+          </a>
+          ——它是维基式社区库，收录后回来搜索或粘 ID 即可认领
         </p>
       )}
       {results !== null && results.length > 0 && (
