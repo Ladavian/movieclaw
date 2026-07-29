@@ -1,12 +1,16 @@
 from __future__ import annotations
 
+import logging
 from datetime import datetime
 
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
 
 from movieclaw_db.models.base import utcnow
 from movieclaw_db.models.library_file import IdentitySource, LibraryFile
+
+logger = logging.getLogger("movieclaw_db.library_file")
 
 # 哨兵：区分「调用方没提供同路径旧行」与「调用方已确认该路径没有旧行」。
 # 用 None 当默认值就没法区分这两种情况，前者必须自己去查，后者查了是白查
@@ -157,11 +161,33 @@ class LibraryFileRepository:
         if existing is _LOOKUP:
             existing = await self.get_by_path(row.file_path)
         if existing is None:
-            self._session.add(row)
-            # 不 refresh：expire_on_commit=False，提交后属性仍在，
-            # id 由 INSERT 回填，没有库端默认值需要读回
-            await self._session.commit()
-            return row
+            try:
+                # INSERT 圈在 SAVEPOINT 里：撞键只回滚保存点自身，不会把整个
+                # 会话置为失败态、也不会把已加载对象全部过期（async 会话下
+                # 过期属性一碰就抛 MissingGreenlet，等于毒死调用方的后续工作）
+                async with self._session.begin_nested():
+                    self._session.add(row)
+            except IntegrityError:
+                # 调用方的「没有旧行」结论过期了：file_path 全局唯一，同路径
+                # 行可能刚被另一条链路写入（扫描进行中监听导入恰好投递同一
+                # 文件），也可能挂在另一个库名下（跨库根路径重叠的历史配置）。
+                # 撞键不是终局——全局重查、转为原地更新，保住幂等语义
+                existing = await self.get_by_path(row.file_path)
+                if existing is None:
+                    raise  # 不是路径撞键，是别的完整性问题：如实上抛
+                if existing.library_id != row.library_id:
+                    logger.warning(
+                        "文件已挂在另一个媒体库（#%d）名下，本次写入将其转归媒体库 #%d"
+                        "——若两个库的根路径互相重叠，请调整库配置：%s",
+                        existing.library_id,
+                        row.library_id,
+                        row.file_path,
+                    )
+            else:
+                # 不 refresh：expire_on_commit=False，提交后属性仍在，
+                # id 由 INSERT 回填，没有库端默认值需要读回
+                await self._session.commit()
+                return row
         existing.library_id = row.library_id
         existing.media_item_id = row.media_item_id
         existing.season_number = row.season_number

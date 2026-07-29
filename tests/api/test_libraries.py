@@ -110,6 +110,58 @@ def test_validation_rejects_bad_inputs(client) -> None:
     assert r.status_code == 409
 
 
+def test_root_overlap_across_libraries_rejected(client) -> None:
+    """跨库根路径相同/嵌套（双向）一律拒绝。
+
+    事故回归：两个库指向同一目录时，``library_file.file_path`` 全局唯一键
+    会让后扫描的库整轮撞键失败（实测事故：480 个文件全灭）。一个目录只能
+    归属一个库，这种配置必须在保存时拦下。
+    """
+    _create(client, name="综艺", kind="tv", root="/media/综艺剧集")
+    # 完全相同
+    r = client.post(
+        "/api/v1/libraries",
+        json={"name": "纪录片", "kind": "tv", "root_paths": ["/media/综艺剧集"]},
+    )
+    assert r.status_code == 400 and "综艺" in r.json()["message"]
+    # 新根在已有库根之下（尾斜杠不影响判定）
+    r = client.post(
+        "/api/v1/libraries",
+        json={"name": "纪录片", "kind": "tv", "root_paths": ["/media/综艺剧集/纪录片/"]},
+    )
+    assert r.status_code == 400 and "重叠" in r.json()["message"]
+    # 已有库根在新根之下
+    r = client.post(
+        "/api/v1/libraries",
+        json={"name": "总库", "kind": "tv", "root_paths": ["/media"]},
+    )
+    assert r.status_code == 400 and "重叠" in r.json()["message"]
+    # 仅前缀相似而非路径嵌套：不误伤
+    r = client.post(
+        "/api/v1/libraries",
+        json={"name": "纪录片", "kind": "tv", "root_paths": ["/media/综艺剧集2"]},
+    )
+    assert r.status_code == 200
+
+
+def test_root_overlap_update_excludes_self(client) -> None:
+    """更新时校验排除自身：保留自己原有的根路径不算重叠，撞别的库仍拒绝。"""
+    lib = _create(client, name="综艺", kind="tv", root="/media/综艺剧集")
+    _create(client, name="纪录片", kind="tv", root="/media/纪录片")
+    # 保留自己的根 + 新增一个干净的根：放行
+    r = client.put(
+        f"/api/v1/libraries/{lib['id']}",
+        json={"name": "综艺", "kind": "tv", "root_paths": ["/media/综艺剧集", "/mnt/综艺"]},
+    )
+    assert r.status_code == 200
+    # 改成盖住别的库的根：拒绝
+    r = client.put(
+        f"/api/v1/libraries/{lib['id']}",
+        json={"name": "综艺", "kind": "tv", "root_paths": ["/media/纪录片/综艺"]},
+    )
+    assert r.status_code == 400 and "纪录片" in r.json()["message"]
+
+
 def test_update_name_and_paths(client) -> None:
     movie_id = _create(client, name="电影库", kind="movie", root="/media/movies")["id"]
     r = client.put(

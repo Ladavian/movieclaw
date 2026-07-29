@@ -276,6 +276,36 @@ async def test_scan_identifies_by_name_and_flags_unknown(db, tmp_path) -> None:
     assert summary2.retried == 1 and summary2.unidentified == 1
 
 
+async def test_scan_survives_paths_ledgered_under_another_library(db, tmp_path) -> None:
+    """事故回归：路径已挂在另一个库名下时，扫描不得整轮崩掉。
+
+    配置层已经拒绝跨库根路径重叠，但历史数据/并发写入（扫描进行中监听导入
+    恰好投递同一文件）仍可能让「本库快照里没有、数据库里却有」的路径出现。
+    此前这会裸抛 UNIQUE 撞键，且失败的事务不回滚毒死会话，后续全部文件
+    跟着失败（实测事故：480 个文件全灭、库计数归零）。现在 upsert 撞键
+    自愈为原地更新，单文件失败也会回滚会话不再连坐。
+    """
+    root = _make_tv_library(tmp_path)
+    async with db.session() as session:
+        repo = LibraryRepository(session)
+        # 直接走仓储建两个同根库，模拟配置校验上线前留下的历史配置
+        first = await repo.create(name="综艺", kind="tv", root_paths=[str(root)])
+        second = await repo.create(name="纪录片", kind="tv", root_paths=[str(root)])
+
+    summary1 = await scan_library(first.id)
+    assert summary1.scanned == 3 and summary1.errors == []
+
+    # 第二个库扫描同一目录：快照为空，每条路径都会撞上第一个库的台账行
+    summary2 = await scan_library(second.id)
+    assert summary2.errors == []  # 不再撞键，更不再连坐全灭
+    assert summary2.scanned == 3 and summary2.identified == 2
+
+    async with db.session() as session:
+        files = list((await session.execute(select(LibraryFile))).scalars().all())
+        assert len(files) == 3  # 原地更新，没有产生重复行
+        assert {f.library_id for f in files} == {second.id}  # 行转归后扫的库
+
+
 async def test_scan_prefers_nfo_identity(db, tmp_path) -> None:
     """电影库：文件名认不出，但目录里的 movie.nfo 带 tmdbid → 精确识别。"""
     root = tmp_path / "media" / "movies"

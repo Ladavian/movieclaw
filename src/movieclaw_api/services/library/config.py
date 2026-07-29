@@ -134,6 +134,30 @@ class LibraryConfigService:
                         "请先调整「监听导入」配置"
                     )
 
+    async def _assert_roots_clear_of_other_libraries(
+        self, roots: list[str], *, exclude_id: int | None = None
+    ) -> None:
+        """根路径不得与**其他库**的根路径相同或嵌套（双向）。
+
+        台账 ``library_file.file_path`` 是全局唯一键——一个文件属于且仅属于
+        一个库。两个库盖住同一片目录没有合理语义：谁后扫描谁就把台账行抢走，
+        文件在两个库之间反复横跳，扫描还会撞唯一键整轮失败。这种配置必须在
+        保存时拒绝，而不是等扫描时炸出天书报错。同一个库自己的嵌套根路径
+        不受此限（扫描按 seen_paths 去重，明确支持）。
+        """
+        for other in await self._repo.list_all():
+            if other.id == exclude_id:
+                continue
+            for root in roots:
+                r = root.rstrip("/")
+                for other_root in other.root_paths:
+                    s = other_root.rstrip("/")
+                    if r == s or r.startswith(s + "/") or s.startswith(r + "/"):
+                        raise BadRequestException(
+                            f"根路径与媒体库「{other.name}」重叠：{root} ↔ {other_root}；"
+                            "一个目录只能归属一个库，请调整其中一方的根路径"
+                        )
+
     async def _assert_name_available(self, name: str, *, exclude_id: int | None = None) -> None:
         existing = await self._repo.get_by_name(name)
         if existing is not None and existing.id != exclude_id:
@@ -180,6 +204,7 @@ class LibraryConfigService:
         roots = self._validate(name=name, root_paths=root_paths)
         rules = validate_match_rules(match_rules)
         await self._assert_roots_clear_of_import_watch(roots)
+        await self._assert_roots_clear_of_other_libraries(roots)
         await self._assert_name_available(name)
         row = await self._repo.create(
             name=name.strip(), kind=kind.value, root_paths=roots, match_rules=rules
@@ -202,6 +227,7 @@ class LibraryConfigService:
         roots = self._validate(name=name, root_paths=root_paths)
         rules = validate_match_rules(match_rules)
         await self._assert_roots_clear_of_import_watch(roots)
+        await self._assert_roots_clear_of_other_libraries(roots, exclude_id=library_id)
         await self._assert_name_available(name, exclude_id=library_id)
         updated = await self._repo.update(
             library_id, name=name.strip(), root_paths=roots, match_rules=rules

@@ -335,6 +335,20 @@ async def _scan(library_id: int, summary: ScanSummary, state: ScanState) -> Scan
         # 下载线索：手动下载提交时锚定的「条目目录 → 副标题」（拼音名种子的救赎）
         hints = await _load_hints(session)
 
+        async def recover_failed_session() -> None:
+            """单文件失败后的会话急救。失败若发生在半截事务里（如写台账时
+            数据库层报错），会话会进入 pending rollback 状态，不回滚则后续
+            所有文件跟着全灭（实测事故：一条撞键连坐 480 个文件）。而回滚
+            又会把已加载对象全部置为过期——async 会话碰过期属性直接抛
+            MissingGreenlet——所以回滚后把主循环依赖的共享对象一并重取。"""
+            if session.is_active:
+                return  # 失败不在事务层（探测/识别网络错误等），会话无恙
+            await session.rollback()
+            await session.refresh(library)
+            known.clear()
+            known.update({row.file_path: row for row in await repo.list_by_library(library_id)})
+            resolve_cache.clear()
+
         # 先盘点全部待处理文件（纯目录遍历、很快）：总数定下来，进度才有分母
         seen_paths: set[str] = set()
         scanned_roots: list[str] = []
@@ -420,6 +434,7 @@ async def _scan(library_id: int, summary: ScanSummary, state: ScanState) -> Scan
                             hint=_hint_for(file, hints),
                         )
                     except Exception as exc:  # noqa: BLE001 -- 单文件失败不断整轮
+                        await recover_failed_session()
                         logger.exception("身份复核失败：%s", file)
                         summary.errors.append(f"「{file.name}」身份复核失败：{exc}")
                 else:
@@ -458,6 +473,7 @@ async def _scan(library_id: int, summary: ScanSummary, state: ScanState) -> Scan
                     existing=existing,
                 )
             except Exception as exc:  # noqa: BLE001 -- 单文件失败不断整轮
+                await recover_failed_session()
                 logger.exception("扫描文件失败：%s", file)
                 summary.errors.append(f"「{file.name}」处理失败：{exc}")
             state.processed = done
