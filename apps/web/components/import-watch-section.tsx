@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { DirectoryPicker } from "@/components/directory-picker";
 import { FolderIcon, PlusIcon, XIcon } from "@/components/icons";
@@ -72,6 +72,23 @@ export function ImportWatchSection() {
   useEffect(() => {
     reload();
   }, [reload]);
+
+  // 体检修复卡跳转（?suggest=auto&kinds=movie,tv）：自动打开新建规则弹窗并
+  // 预选「自动路由」目标；多个类型排成队列，保存一条后接着预填下一条
+  const [suggestKinds, setSuggestKinds] = useState<("movie" | "tv")[]>([]);
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("suggest") !== "auto") return;
+    const kinds = (params.get("kinds") ?? "")
+      .split(",")
+      .filter((k): k is "movie" | "tv" => k === "movie" || k === "tv");
+    setSuggestKinds(kinds.length > 0 ? kinds : ["movie"]);
+    setEditing("new");
+  }, []);
+  const suggestTarget = useMemo(
+    () => (suggestKinds[0] ? ({ type: "auto", kind: suggestKinds[0] } as const) : null),
+    [suggestKinds],
+  );
 
   const remove = (rule: ImportWatchRule) => {
     if (
@@ -163,10 +180,21 @@ export function ImportWatchSection() {
         state={editing}
         libraries={libraries}
         downloaderDirs={downloaderDirs}
-        onClose={() => setEditing(null)}
-        onSaved={() => {
+        initialTarget={suggestTarget}
+        onClose={() => {
           setEditing(null);
+          setSuggestKinds([]); // 用户中途关闭即放弃剩余预填队列
+        }}
+        onSaved={() => {
           reload();
+          if (suggestKinds.length > 1) {
+            // 还有下一个类型要建：弹窗保持打开，initialTarget 变化触发表单
+            // 重置为下一类型的预填（如电影规则建完接着建剧集）
+            setSuggestKinds((prev) => prev.slice(1));
+          } else {
+            setSuggestKinds([]);
+            setEditing(null);
+          }
         }}
       />
     </div>
@@ -179,6 +207,7 @@ function RuleFormDialog({
   state,
   libraries,
   downloaderDirs,
+  initialTarget,
   onClose,
   onSaved,
 }: {
@@ -186,6 +215,8 @@ function RuleFormDialog({
   libraries: MediaLibrary[];
   /** 下载器的本地目录候选：源目录大概率就是其中之一（或其子目录） */
   downloaderDirs: DownloaderDirOption[];
+  /** 新建时的目标预选（体检修复卡跳转预填「自动路由 + 类型」；变化会重置表单） */
+  initialTarget?: { type: "auto"; kind: "movie" | "tv" } | null;
   onClose: () => void;
   onSaved: () => void;
 }) {
@@ -210,11 +241,13 @@ function RuleFormDialog({
       setTarget({ type: "library", id: rule.library_id });
     } else if (rule?.kind) {
       setTarget({ type: "auto", kind: rule.kind });
+    } else if (initialTarget) {
+      setTarget(initialTarget);
     } else {
       setTarget(libraries[0] ? { type: "library", id: libraries[0].id } : null);
     }
     setPickerOpen(false);
-  }, [state, rule, libraries]);
+  }, [state, rule, libraries, initialTarget]);
 
   if (state === null) return null;
 

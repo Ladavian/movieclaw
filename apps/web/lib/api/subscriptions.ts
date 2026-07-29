@@ -197,7 +197,34 @@ export interface LibraryPipeline {
   /** 库主根（入库节点的落点展示） */
   library_root: string | null;
   status: "ok" | "warn" | "error";
+  /** 「订阅命中本库会发生什么」的一句话叙事（全绿时的正向可预期） */
+  narrative: string;
   checks: PipelineCheck[];
+}
+
+/** 修复卡里的一个可选修法。 */
+export interface FixOption {
+  title: string;
+  /** 为什么这么做 / 适合谁（帮用户在多个选项间取舍；可为空串） */
+  why: string;
+  /** 具体做什么，含建议值 */
+  steps: string;
+  /** 修复去处（与 PipelineCheck.fix_section 同词表，前端映射到路由） */
+  fix_section: string;
+  fix_label: string;
+  /** 跳转预填参数：目标设置页读取后自动填表单，免去誊写路径 */
+  fix_params: Record<string, string> | null;
+}
+
+/** 按根因聚合的问题卡：一个根因 = 一张卡，不随受影响的库数膨胀。 */
+export interface PipelineIssue {
+  /** 与被聚合检查项的 PipelineCheck.key 同词表（库卡片据此隐藏重复红项） */
+  key: string;
+  status: "warn" | "error";
+  title: string;
+  detail: string;
+  affected_libraries: string[];
+  options: FixOption[];
 }
 
 /** 订阅链路体检整体结论（订阅设定页与订阅列表警示横幅共用）。 */
@@ -215,6 +242,8 @@ export interface PipelineHealth {
   sites_configured: boolean;
   /** 是否配置过下载器（同上语义） */
   downloaders_configured: boolean;
+  /** 按根因聚合的问题卡（error 在前）——置顶展示为「需要处理 N 件事」 */
+  issues: PipelineIssue[];
   libraries: LibraryPipeline[];
 }
 

@@ -58,7 +58,45 @@ class LibraryPipeline:
     path: str | None  # 投递基底目录（movieclaw 视角）
     library_root: str | None  # 库主根（入库节点的落点展示）
     status: str  # 全链路最坏状态
+    narrative: str = ""  # 「订阅命中本库会发生什么」的一句话叙事（全绿时的正向可预期）
     checks: list[HealthCheck] = field(default_factory=list)
+
+
+@dataclass
+class FixOption:
+    """修复卡里的一个可选修法：做什么 / 为什么 / 跳到哪。
+
+    fix_section 沿用 HealthCheck 的词表（前端负责映射到路由），fix_params
+    是跳转要携带的预填参数（如建议的映射路径）——目标设置页读取后自动
+    填好表单，用户不必凭记忆誊写路径。
+    """
+
+    title: str  # 选项标题（如「补一条公共父目录映射」）
+    why: str  # 为什么这么做 / 适合谁（帮用户二选一）
+    steps: str  # 具体做什么，含建议值
+    fix_section: str  # 修复去处（sites / downloaders / import-watch / libraries）
+    fix_label: str  # 跳转按钮文案
+    fix_params: dict[str, str] | None = None  # 跳转预填参数
+
+
+@dataclass
+class HealthIssue:
+    """按根因聚合的问题卡：一个根因 = 一张卡，不随受影响的库数膨胀。
+
+    体检按库逐条报告事实（``LibraryPipeline.checks``，保持不变），但同一个
+    根因（如下载器映射没覆盖媒体库）会在每个库上各亮一条红项——用户看到
+    的是 N 个问题，实际要修的只有一处。这里把红黄项按根因归并，给出
+    受影响的库和结构化的修复选项，前端置顶展示为「需要处理 N 件事」。
+    ``key`` 与被归并检查项的 ``HealthCheck.key`` 一致，前端据此在库卡片里
+    隐藏已被聚合的红项文字、只保留状态点。
+    """
+
+    key: str  # 与聚合来源的 HealthCheck.key 同词表
+    status: str  # error / warn
+    title: str  # 一句话根因
+    detail: str  # 根因的事实陈述与后果
+    affected_libraries: list[str] = field(default_factory=list)
+    options: list[FixOption] = field(default_factory=list)
 
 
 def _worst(statuses: list[str]) -> str:
@@ -189,6 +227,190 @@ def _check_transfer(
     return checks
 
 
+def _narrative(mode: str, base: str | None, library: Library, rule: ImportWatch | None) -> str:
+    """「订阅命中本库会发生什么」的一句话叙事。
+
+    体检的红黄项讲"哪里会坏"，这句话讲"正常时会发生什么"——把模拟一单
+    的结论常驻到每个库卡片上，全绿时用户也能对订阅后的行为有明确预期。
+    """
+    root = library.primary_root
+    if mode == "watch" and rule is not None:
+        if not root:
+            return f"投递到监听导入目录 {base}，但库没有根路径，下载完成后无法入库。"
+        if rule.strategy == "hardlink":
+            return (
+                f"订阅命中本库的影片会投递到 {base}，下载完成后自动识别并硬链接进 "
+                f"{root} 的「片名 (年份)」目录——源文件留在下载目录继续做种，删种不删片。"
+            )
+        return (
+            f"订阅命中本库的影片会投递到 {base}，下载完成后自动识别并复制进 "
+            f"{root} 的「片名 (年份)」目录——源文件保留在下载目录。"
+        )
+    if mode == "inplace":
+        return (
+            f"订阅命中本库的影片会以「片名 (年份)」目录直接下载进 {base}，"
+            "下载完成即在库内，扫描自动入账。"
+        )
+    return "库没有根路径：下载会落到下载器默认目录，不会自动入库。"
+
+
+# 修复去处 → 默认跳转按钮文案（与前端 fixTarget 的词表一致）
+_FIX_LABELS = {
+    "sites": "去接入站点",
+    "downloaders": "去下载器设置",
+    "import-watch": "去监听导入",
+    "libraries": "去媒体库",
+}
+
+
+def _aggregate_issues(
+    pipelines: list[LibraryPipeline],
+    site_check: HealthCheck,
+    downloader: DownloaderClient | None,
+    common_root: str | None,
+) -> list[HealthIssue]:
+    """把逐库的红黄项按根因归并成修复卡（error 在前，warn 在后）。
+
+    专门聚合的两类：全局段（站点/下载器，本就与库无关）与路径映射
+    （同一个根因逐库开花的重灾区，给出二选一的结构化修法）；其余红黄项
+    按（key, detail）归并——detail 相同即同一根因，受影响库合并列出。
+    """
+    issues: list[HealthIssue] = []
+
+    if site_check.status != "ok":
+        issues.append(
+            HealthIssue(
+                key="sites",
+                status=site_check.status,
+                title="资源站点不可用",
+                detail=site_check.detail,
+                options=[
+                    FixOption(
+                        title="接入或修复资源站点",
+                        why="订阅的一切从站点搜索开始，没有可用站点就搜不到任何资源。",
+                        steps="到「资源站点」接入站点，或修复失效的登录态（如更新 Cookie）。",
+                        fix_section="sites",
+                        fix_label=_FIX_LABELS["sites"],
+                    )
+                ],
+            )
+        )
+
+    if downloader is None:
+        issues.append(
+            HealthIssue(
+                key="downloader",
+                status="error",
+                title="没有可用的默认下载器",
+                detail="订阅只能记录想要的内容，无法真实下载。",
+                options=[
+                    FixOption(
+                        title="接入下载器并设为默认",
+                        why="找到的资源要交给 qBittorrent / Transmission 完成下载。",
+                        steps="到「下载器」添加实例，确保连接测试通过并设为默认。",
+                        fix_section="downloaders",
+                        fix_label=_FIX_LABELS["downloaders"],
+                    )
+                ],
+            )
+        )
+
+    # —— 路径映射：同一根因逐库开花的重灾区，归并成一张二选一的修复卡
+    mapping_hits = [
+        (p, c) for p in pipelines for c in p.checks if c.key == "mapping" and c.status != "ok"
+    ]
+    if mapping_hits and downloader is not None:
+        names = [p.library_name for p, _ in mapping_hits]
+        # 受影响的类型（去重保序）：监听导入选项据此建议建几条 auto 规则
+        kinds = list(dict.fromkeys(p.kind for p, _ in mapping_hits))
+        kind_labels = "、".join("电影" if k == "movie" else "剧集" for k in kinds)
+        anchor = common_root or mapping_hits[0][0].path or ""
+        issues.append(
+            HealthIssue(
+                key="mapping",
+                status="error",
+                title=f"下载器「{downloader.name}」的路径映射没有覆盖媒体库目录",
+                detail=(
+                    f"{len(names)} 个库的投递目录都不在映射覆盖范围内——这是同一个"
+                    "原因，修一处即可，不需要逐库配置。修复前投递会被拒绝"
+                    "（工单不会丢，修好后自动重试）。"
+                ),
+                affected_libraries=names,
+                options=[
+                    FixOption(
+                        title="补一条公共父目录映射（改动最小）",
+                        why=(
+                            "映射按目录前缀覆盖：一条公共父目录的映射即可覆盖其下"
+                            "所有库。适合下载器能直接访问媒体库目录、愿意让下载"
+                            "文件直接落在库内的部署。"
+                        ),
+                        steps=(
+                            f"添加映射：本机 {anchor} → 下载器视角的对应路径"
+                            "（下载器可直达同名路径时，两边填相同的即可）。"
+                        ),
+                        fix_section="downloaders",
+                        fix_label="去补映射",
+                        fix_params={"suggest_mapping": anchor} if anchor else None,
+                    ),
+                    FixOption(
+                        title="改用监听导入（下载区与库分离）",
+                        why=(
+                            "投递改走独立的下载目录，映射只需覆盖下载目录，媒体库"
+                            "分得再细也不影响下载器配置；下载完成后硬链接/复制进库，"
+                            "源文件继续做种、删种不删片——PT 保种推荐。"
+                        ),
+                        steps=(
+                            f"为{kind_labels}各建一条「自动路由」规则，源目录选"
+                            "下载器的下载目录（不能在媒体库根路径之下）。"
+                        ),
+                        fix_section="import-watch",
+                        fix_label="去建规则",
+                        fix_params={"suggest": "auto", "kinds": ",".join(kinds)},
+                    ),
+                ],
+            )
+        )
+
+    # —— 其余红黄项：detail 相同即同一根因，受影响库合并成一张单选项卡。
+    # 标题按 (key, status) 给人话版本，兜底退回检查项的段落名
+    titles = {
+        ("dispatch_dir", "error"): "媒体库没有根路径，无法自动入库",
+        ("transfer_disk", "error"): "硬链接无法跨文件系统工作",
+        ("transfer_disk", "warn"): "硬链接同盘暂时无法检测",
+        ("watch_active", "warn"): "目录监听未生效，入库会不及时",
+    }
+    grouped: dict[tuple[str, str], list[tuple[LibraryPipeline, HealthCheck]]] = {}
+    for pipeline in pipelines:
+        for check in pipeline.checks:
+            if check.status == "ok" or check.key in ("mapping", "downloader"):
+                continue
+            grouped.setdefault((check.key, check.detail), []).append((pipeline, check))
+    for (key, detail), hits in grouped.items():
+        check = hits[0][1]
+        section = check.fix_section or "libraries"
+        issues.append(
+            HealthIssue(
+                key=key,
+                status=check.status,
+                title=titles.get((key, check.status), check.label),
+                detail=detail,
+                affected_libraries=[p.library_name for p, _ in hits],
+                options=[
+                    FixOption(
+                        title=f"处理「{check.label}」",
+                        why="",
+                        steps=detail,
+                        fix_section=section,
+                        fix_label=_FIX_LABELS.get(section, "去处理"),
+                    )
+                ],
+            )
+        )
+
+    issues.sort(key=lambda i: -_SEVERITY.get(i.status, 0))
+    return issues
+
+
 async def pipeline_health(session: AsyncSession) -> dict:
     """全部库的链路体检。返回 dict（路由层直接进响应模型）。"""
     from movieclaw_api.services.library.routing import resolve_save_path
@@ -202,6 +424,17 @@ async def pipeline_health(session: AsyncSession) -> dict:
     ).scalars().first() is not None
     watched = _watched_dirs()
     libraries = await LibraryRepository(session).list_all()
+
+    # 映射修复建议的锚点：全部库根的公共父目录。映射按前缀覆盖，一条公共
+    # 父目录的映射即可覆盖其下所有库——建议里给出这个目录，避免用户把
+    # 逐库报警误读成"每个库都要单独配一条映射"
+    all_roots = [root for lib in libraries for root in lib.root_paths if root]
+    try:
+        common_root: str | None = os.path.commonpath(all_roots) if all_roots else None
+    except ValueError:  # 根路径混入了相对路径等异常形态：放弃建议锚点即可
+        common_root = None
+    if common_root == "/":
+        common_root = None  # 公共父目录退化到根：建议映射 / 没有意义
 
     pipelines: list[LibraryPipeline] = []
     for library in libraries:
@@ -282,9 +515,13 @@ async def pipeline_health(session: AsyncSession) -> dict:
                         status="error",
                         detail=(
                             f"目录 {base} 不在下载器「{downloader.name}」的路径映射"
-                            f"覆盖范围内，投递会被拒绝。建议映射：本机 {base} → "
-                            "下载器视角的对应路径（下载器可直达同名路径时，"
-                            "两边填相同的即可）"
+                            "覆盖范围内，投递会被拒绝。修复二选一：① 补一条路径"
+                            "映射——映射按目录前缀覆盖，映射公共父目录（本机 "
+                            f"{common_root or base} → 下载器视角的对应路径，下载器"
+                            "可直达同名路径时两边填相同的）即可一条覆盖其下所有库，"
+                            "无需逐库配置；② 为库配置监听导入规则（自动路由）——"
+                            "投递会改走独立的下载目录，路径映射只需覆盖那个下载"
+                            "目录，媒体库分得再细也不影响下载器配置"
                         ),
                         fix_section="downloaders",
                     )
@@ -305,6 +542,7 @@ async def pipeline_health(session: AsyncSession) -> dict:
                 path=base,
                 library_root=library.primary_root,
                 status=status,
+                narrative=_narrative(mode, base, library, rule),  # type: ignore[arg-type]
                 checks=checks,
             )
         )
@@ -314,6 +552,7 @@ async def pipeline_health(session: AsyncSession) -> dict:
     overall = _worst([p.status for p in pipelines] + [site_check.status])
     if downloader is None:
         overall = "error"
+    issues = _aggregate_issues(pipelines, site_check, downloader, common_root)
     return {
         "status": overall,
         "error_count": sum(1 for p in pipelines if p.status == "error"),
@@ -322,5 +561,6 @@ async def pipeline_health(session: AsyncSession) -> dict:
         "downloader_ok": downloader is not None,
         "sites_configured": sites_configured,
         "downloaders_configured": downloaders_configured,
+        "issues": [asdict(i) for i in issues],
         "libraries": [asdict(p) for p in pipelines],
     }

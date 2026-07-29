@@ -385,7 +385,34 @@ class LibraryPipelineView(BaseModel):
     path: str | None = Field(default=None, description="投递基底目录（movieclaw 视角）")
     library_root: str | None = Field(default=None, description="库主根（入库节点的落点）")
     status: Literal["ok", "warn", "error"] = Field(description="全链路最坏状态")
+    narrative: str = Field(
+        default="", description="「订阅命中本库会发生什么」的一句话叙事（正向可预期）"
+    )
     checks: list[HealthCheckView]
+
+
+class FixOptionView(BaseModel):
+    """修复卡里的一个可选修法。"""
+
+    title: str = Field(description="选项标题（如「补一条公共父目录映射」）")
+    why: str = Field(default="", description="为什么这么做 / 适合谁（帮用户在多个选项间取舍）")
+    steps: str = Field(description="具体做什么，含建议值")
+    fix_section: str = Field(description="修复去处：设置分区 id 或 libraries（前端映射到路由）")
+    fix_label: str = Field(description="跳转按钮文案")
+    fix_params: dict[str, str] | None = Field(
+        default=None, description="跳转预填参数（目标设置页读取后自动填表单）"
+    )
+
+
+class HealthIssueView(BaseModel):
+    """按根因聚合的问题卡：一个根因 = 一张卡，不随受影响的库数膨胀。"""
+
+    key: str = Field(description="与被聚合检查项的 HealthCheck.key 同词表")
+    status: Literal["warn", "error"]
+    title: str = Field(description="一句话根因")
+    detail: str = Field(description="根因的事实陈述与后果")
+    affected_libraries: list[str] = Field(default_factory=list, description="受影响的库名")
+    options: list[FixOptionView] = Field(description="结构化修复选项（多个时由用户取舍）")
 
 
 class PipelineHealthView(BaseModel):
@@ -403,6 +430,10 @@ class PipelineHealthView(BaseModel):
         "配置过但失效的老用户看到的是体检红项而非新手清单"
     )
     downloaders_configured: bool = Field(description="是否配置过下载器（同上语义）")
+    issues: list[HealthIssueView] = Field(
+        default_factory=list,
+        description="按根因聚合的问题卡（error 在前）——前端置顶展示为「需要处理 N 件事」",
+    )
     libraries: list[LibraryPipelineView]
 
 

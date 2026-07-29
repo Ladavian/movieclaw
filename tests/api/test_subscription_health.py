@@ -162,6 +162,7 @@ async def test_no_downloader_is_error(db, tmp_path) -> None:
 async def test_mapping_coverage_verdicts(db, tmp_path) -> None:
     root = tmp_path / "movies"
     await _make_library(db, root=root)
+    await _make_library(db, name="剧集库", kind="tv", root=tmp_path / "tv")
     await _make_site(db)
     # 映射不覆盖库根：error + 指向下载器设置（与真实投递被拒同口径）
     await _make_downloader(db, mappings=[{"local": "/somewhere/else", "remote": "/dl"}])
@@ -170,6 +171,25 @@ async def test_mapping_coverage_verdicts(db, tmp_path) -> None:
     mapping = _check(result["libraries"][0], "mapping")
     assert mapping["status"] == "error" and mapping["fix_section"] == "downloaders"
     assert str(root) in mapping["detail"]
+    # 修复指引必须给出两条出路：公共父目录映射（前缀覆盖，不必逐库配）
+    # 与监听导入规则——而不是让用户误以为要为每个库单独配一条映射
+    assert str(tmp_path) in mapping["detail"]
+    assert "监听导入规则" in mapping["detail"]
+
+    # 根因聚合：两个库同因映射不覆盖 → 一张修复卡，不随库数膨胀；
+    # 卡上给二选一的结构化修法，且父目录映射选项带跳转预填参数
+    mapping_issues = [i for i in result["issues"] if i["key"] == "mapping"]
+    assert len(mapping_issues) == 1
+    issue = mapping_issues[0]
+    assert issue["status"] == "error"
+    assert set(issue["affected_libraries"]) == {"电影库", "剧集库"}
+    assert len(issue["options"]) == 2
+    by_section = {o["fix_section"]: o for o in issue["options"]}
+    assert by_section["downloaders"]["fix_params"] == {"suggest_mapping": str(tmp_path)}
+    assert by_section["import-watch"]["fix_params"] == {
+        "suggest": "auto",
+        "kinds": "movie,tv",
+    }
 
     # 补上覆盖后：整链全绿
     async with db.session() as session:
@@ -181,6 +201,9 @@ async def test_mapping_coverage_verdicts(db, tmp_path) -> None:
         result = await pipeline_health(session)
     assert result["status"] == "ok" and result["error_count"] == 0
     assert _check(result["libraries"][0], "mapping")["status"] == "ok"
+    # 全绿后修复卡清空；每库带「订阅后会发生什么」的正向叙事（inplace 口径）
+    assert result["issues"] == []
+    assert "直接下载进" in result["libraries"][0]["narrative"]
 
 
 @pytest.mark.asyncio
@@ -202,6 +225,11 @@ async def test_watch_mode_transfer_segments(db, tmp_path) -> None:
     active = _check(pipeline, "watch_active")
     assert active["status"] == "warn" and "兜底巡检" in active["detail"]
     assert result["status"] == "warn"  # 降级不算故障
+    # watch + 硬链接的叙事讲清分离布局的行为：投监听目录 → 硬链进库 → 继续做种
+    assert str(watch) in pipeline["narrative"] and "硬链接" in pipeline["narrative"]
+    # warn 也聚合成修复卡（监听未生效），指向监听导入设置
+    watch_issues = [i for i in result["issues"] if i["key"] == "watch_active"]
+    assert len(watch_issues) == 1 and watch_issues[0]["status"] == "warn"
 
 
 @pytest.mark.asyncio
