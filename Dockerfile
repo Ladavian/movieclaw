@@ -53,7 +53,10 @@ FROM node-deps AS web-builder
 ENV NEXT_BUILD_CPUS=2 \
     NODE_OPTIONS=--max-old-space-size=4096
 COPY --from=ext-builder /out/movieclaw-extension.zip apps/web/public/extension/movieclaw-extension.zip
-RUN pnpm web:build
+# 输出重定向到文件、仅失败时回放：next build 的输出量很大，直接写 BuildKit
+# 的日志管道会在管道拥塞时把进程永久挂起（表现为日志停在 "Creating an
+# optimized production build"、CPU 掉到 0，可以挂十几个小时）。
+RUN pnpm web:build > /tmp/web-build.log 2>&1 || (cat /tmp/web-build.log; exit 1)
 
 # ---------------------------------------------------------------------------
 # 阶段 2：后端运行依赖（只装 pyproject 的 dependencies，不装 dev 工具、不打包源码）
