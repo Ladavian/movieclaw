@@ -84,8 +84,8 @@ _ROUTES = {
         "genres": [{"id": 1, "name": "剧情"}],
         "credits": {
             "cast": [
-                {"name": "线上演员甲", "character": "主角", "profile_path": "/a1.jpg"},
-                {"name": "线上演员乙", "character": "", "profile_path": None},
+                {"id": 9101, "name": "线上演员甲", "character": "主角", "profile_path": "/a1.jpg"},
+                {"id": 9102, "name": "线上演员乙", "character": "", "profile_path": None},
             ],
             "crew": [{"name": "线上导演", "job": "Director"}],
         },
@@ -554,6 +554,49 @@ async def test_item_detail_fills_missing_actor_thumbs_from_archive(db, tmp_path)
     assert [(a.name, a.role) for a in actors] == [("线上演员甲", "主角"), ("查无此人", None)]
     assert actors[0].thumb_url and actors[0].thumb_url.endswith("/w300/a1.jpg")
     assert actors[1].thumb_url is None
+
+
+async def test_item_detail_fills_person_ids_even_when_thumbs_complete(db, tmp_path) -> None:
+    """NFO 头像全齐但没有 <actor><tmdbid>（TMM/Emby 与本项目旧版本写出的
+    典型形态）时，影人 id 仍要按姓名从库内档案回填——曾因"头像齐了就早退"
+    把 id 回填一起跳掉，演职员卡全部不可点（人物页链接依赖这个 id）。"""
+    root = tmp_path / "media" / "movies"
+    entry = root / "某电影 (2020)"
+    entry.mkdir(parents=True)
+    (entry / "某电影.2020.1080p.mkv").write_bytes(b"m")
+    (entry / "movie.nfo").write_text(
+        "<movie><title>某电影</title><tmdbid>300</tmdbid></movie>", encoding="utf-8"
+    )
+    async with db.session() as session:
+        library = await LibraryRepository(session).create(
+            name="电影库", kind="movie", root_paths=[str(root)]
+        )
+    await scan_library(library.id)  # 刮削落库：档案里的演员带 tmdb_person_id
+
+    # 换成"头像全有、影人 id 全无"的 NFO
+    (entry / "movie.nfo").write_text(
+        "<movie><title>某电影</title><tmdbid>300</tmdbid>"
+        "<plot>一段剧情简介。</plot>"
+        "<actor><name>线上演员甲</name><role>主角</role>"
+        "<thumb>https://image.tmdb.org/t/p/w300/a1.jpg</thumb></actor>"
+        "<actor><name>线上演员乙</name>"
+        "<thumb>https://image.tmdb.org/t/p/w300/a2.jpg</thumb></actor></movie>",
+        encoding="utf-8",
+    )
+    async with db.session() as session:
+        item = (
+            (await session.execute(select(MediaItem).where(MediaItem.tmdb_id == 300)))
+            .scalars()
+            .one()
+        )
+        resp = await get_library_item(library.id, item.id, BackgroundTasks(), session)
+        view = resp.data
+
+    assert view.local_meta is not None and view.local_meta.source == "nfo"
+    actors = view.local_meta.actors
+    assert [a.tmdb_person_id for a in actors] == [9101, 9102]
+    # 头像以 NFO 为准，不被回填覆盖
+    assert actors[0].thumb_url and actors[0].thumb_url.endswith("/w300/a1.jpg")
 
 
 async def test_manual_artwork_selection_locks_against_refresh(db, tmp_path) -> None:

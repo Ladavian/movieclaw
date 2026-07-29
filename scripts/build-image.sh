@@ -50,6 +50,14 @@ if [[ -n "${PLATFORM:-}" ]]; then
     BUILD_ARGS+=(--platform "$PLATFORM")
 fi
 
+# 离线构建：只用本地已有的基础镜像，不去 registry 查元数据。
+# 适用于 Docker 守护进程出网不畅的环境（如 fake-ip 代理模式下，dockerd 自身
+# 的请求不经宿主代理，会卡在解析出的 198.18.x 地址上）。
+# 前提：node/python/debian 三个基础镜像本地已存在。
+if [[ "${OFFLINE_BASE:-0}" == "1" ]]; then
+    BUILD_ARGS+=(--pull=false)
+fi
+
 echo "构建 $IMAGE ……"
 docker build "${BUILD_ARGS[@]}" -t "$IMAGE" .
 echo "完成：$IMAGE"

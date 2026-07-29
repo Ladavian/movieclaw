@@ -1648,7 +1648,13 @@ function ClaimConfirmPanel({
   const credits = detail
     ? [
         detail.info.directors.length > 0 ? `导演 ${detail.info.directors.slice(0, 2).join(" / ")}` : "",
-        detail.info.cast.length > 0 ? `主演 ${detail.info.cast.slice(0, 4).join(" / ")}` : "",
+        // cast 是 MediaCastMember 对象数组，取 name 拼接；直接 join 会渲染成 [object Object]
+        detail.info.cast.length > 0
+          ? `主演 ${detail.info.cast
+              .slice(0, 4)
+              .map((member) => member.name)
+              .join(" / ")}`
+          : "",
       ]
         .filter(Boolean)
         .join(" · ")

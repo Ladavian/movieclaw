@@ -542,16 +542,18 @@ async def _fill_from_tmdb_season(
 async def _fill_actor_thumbs(
     session: AsyncSession, item: MediaItem, meta: EntryMetadata
 ) -> None:
-    """给 NFO 里没有 ``<thumb>`` 的演员按姓名回填库内档案的头像地址（就地改 meta）。
+    """给 NFO 里缺 ``<thumb>`` 或缺 ``<tmdbid>`` 的演员按姓名回填库内档案（就地改 meta）。
 
     很多刮削器（包括本项目早期版本）只往 NFO 写演员姓名与角色，不写头像，
     详情页的演职员条就是一排灰底占位。而 media_metadata.cast 里的
     ``profile_path`` 通常是全的——数据本来就在库里，只是被"NFO 优先"整份
-    挡住了。这里只补空缺的头像，姓名/角色一律以 NFO 为准，不动其它字段。
+    挡住了。这里只补空缺的头像与影人 id，姓名/角色一律以 NFO 为准，不动其它字段。
     """
     if item.id is None or not meta.actors:
         return
-    if all(actor.thumb for actor in meta.actors):
+    # 头像**和**影人 id 都齐了才可以跳过：TMM/Emby 写的 NFO 常见头像全有、
+    # <tmdbid> 全无，只看头像就早退会把 id 回填一起跳掉，人物页永远点不开
+    if all(actor.thumb and actor.tmdb_person_id is not None for actor in meta.actors):
         return
     from movieclaw_api.core.config import get_settings
     from movieclaw_db.repositories import MediaItemRepository

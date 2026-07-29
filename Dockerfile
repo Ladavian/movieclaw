@@ -1,4 +1,6 @@
-# syntax=docker/dockerfile:1
+# 不声明 syntax 指令：本文件只用多阶段、COPY --from、$BUILDPLATFORM 这些
+# BuildKit 内置前端就支持的特性。声明了反而要求每次构建先从 Docker Hub 拉
+# frontend 镜像，网络不畅时整个构建会卡在第一步（国内部署者尤其常见）。
 # =============================================================================
 # movieclaw 单容器镜像：Next.js 前端 + FastAPI 后端 + NER 模型，一个容器跑全部。
 #
