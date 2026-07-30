@@ -7,7 +7,13 @@ from typing import Any
 import httpx
 import pytest
 
-from movieclaw_media.douban import DoubanClient, DoubanDiscoverService, DoubanError
+from movieclaw_media.douban import (
+    _MOVIE_COLLECTIONS,
+    _TV_COLLECTIONS,
+    DoubanClient,
+    DoubanDiscoverService,
+    DoubanError,
+)
 from movieclaw_media.models import MediaKind, MediaSource
 
 
@@ -213,17 +219,27 @@ async def test_top250_requests_and_returns_full_collection() -> None:
     assert ("movie_real_time_hotest", 30) in client.calls
 
 
-async def test_all_collections_failure_raises_readable_error() -> None:
+async def test_tv_page_requests_all_configured_collections_in_order() -> None:
+    """剧集页应按配置顺序请求全部榜单，行序与配置一致（含动画与综艺行）。"""
     client = StubDoubanClient(
         {
-            key: DoubanError("豆瓣不可用")
-            for key in (
-                "movie_real_time_hotest",
-                "movie_weekly_best",
-                "movie_top250",
-                "EC7Q5H2QI",
-            )
+            spec.collection_id: {
+                "subject_collection_items": [_item(i, type="tv") for i in range(1, 6)]
+            }
+            for spec in _TV_COLLECTIONS
         }
+    )
+    page = await DoubanDiscoverService(client).discover_page(MediaKind.TV)  # type: ignore[arg-type]
+
+    assert [row.id for row in page.rows] == [
+        f"douban-{spec.collection_id}" for spec in _TV_COLLECTIONS
+    ]
+    assert page.rows[0].ranked
+
+
+async def test_all_collections_failure_raises_readable_error() -> None:
+    client = StubDoubanClient(
+        {spec.collection_id: DoubanError("豆瓣不可用") for spec in _MOVIE_COLLECTIONS}
     )
     with pytest.raises(DoubanError, match="豆瓣不可用"):
         await DoubanDiscoverService(client).discover_page(MediaKind.MOVIE)  # type: ignore[arg-type]
