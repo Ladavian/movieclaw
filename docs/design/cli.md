@@ -21,7 +21,7 @@
 2. **首要运行形态**：movieclaw 自带 AI 助手（movieclaw_agent）在隔离工作区执行
    bash——CLI 会被放进这个工作区，成为 Agent 操作产品本身的工具集；其次才是
    用户在自己终端远程使用。因此**非交互（non-TTY）是主形态，不是降级形态**。
-3. 工具名 `movieclaw`，短别名 `mc`，Python 实现（与后端同栈同仓，见 §8）。
+3. 工具名 `movieclaw`，短别名 `mc`，Python 实现（与后端同栈同仓，见 §9）。
 4. 现状硬约束（盘点结论）：认证只有 Cookie 会话（无通用 API Token）；
    2 个 SSE 端点（搜索流、Agent 运行流）；长任务全部「POST 启动 + 轮询」；
    响应统一 `ApiResponse{success,code,message,data}` 信封；敏感字段保存后不回读；
@@ -171,19 +171,28 @@ mc sub create --help     # 长说明(description) + 全部标志(参数 descript
                          # + 示例(x-cli-examples) + 关联命令(同域推荐)
 ```
 
-### 4.2 机器形态：结构化自描述（Agent 的工具发现协议）
+### 4.2 机器形态：help 是主协议，结构化目录只为「注册进工具列表」服务
+
+**对模型而言，`--help` 本身就是发现协议**——Agent 在工作区跑 bash 时，
+`mc --help → mc sub --help → mc sub create --help` 的逐级探索对模型和对人
+同样自然，模型读帮助文本毫无障碍。因此**不为「模型发现能力」单设机制**，
+help 就是唯一入口；4.1 的三级 help 同时服务人类与模型。
+
+结构化自描述只保留两个明确用途，都不是给模型「读」的：
 
 ```
-mc api list [-o json]            # 全部命令目录：命令名 + summary + 危险等级
-mc api describe sub.create       # 单命令完整契约：参数 JSON Schema、
-                                 # 请求/响应 schema、示例、错误码表
-mc capabilities                  # 一次性输出整个命令目录的 JSON
-                                 # （含每个命令的参数 schema）
+mc api list / describe / call    # L0 逃生舱本身的组成部分：list 用于找到
+                                 # method+path，describe 给出原始参数 schema，
+                                 # 没有它们 call 无从下手（对标 gh api）
+mc capabilities                  # 【为 §6.1 集成形态 B 预留】输出全部命令的
+                                 # name/description/input_schema JSON——当 CLI
+                                 # 命令要注册成 Agent tool 列表里的一等工具
+                                 # （function calling）时，消费方是「程序」
+                                 # 而非「模型」，help 文本满足不了 schema 需求
 ```
 
-`mc capabilities` 的输出在结构上等价于一份「工具清单」（name / description /
-input_schema），可以直接喂给模型做工具选择，也让未来把 CLI 反向包成 MCP server
-只是一层壳的事情。**help 不是文档功能，是 Agent 的运行时协议。**
+若集成形态 B（见 §6.1）最终不做，`mc capabilities` 随之取消——它不是
+独立价值点，只是形态 B 的前置件。
 
 ### 4.3 错误即帮助
 
@@ -231,7 +240,55 @@ Agent 最常见的「学习方式」是试错。因此错误输出必须携带�
 
 ---
 
-## 6. L2 精选命令层：只收「跨接口的工作流」，个位数
+## 6. 内置到产品 Agent：两种集成形态与自动授权
+
+CLI 的第一消费者是产品自带的 AI 助手（movieclaw_agent，隔离工作区跑 bash）。
+「CLI 进入 Agent 的 tool 列表」有两种形态，授权机制两者共用：
+
+### 6.1 集成形态
+
+| | 形态 A：bash + 工作区（推荐先做） | 形态 B：命令注册为一等工具 |
+|---|---|---|
+| 做法 | CLI 装进 Agent 工作区，模型通过已有 bash 工具调用，靠 `--help` 探索 | 启动时用 `mc capabilities` 拉命令目录，把每条命令注册成独立 tool（function calling，带 input_schema） |
+| 改动量 | 几乎为零（工作区镜像加一个包 + 注入两个环境变量） | Agent 模块要做目录拉取、工具注册、参数拼装到 argv 的桥接层 |
+| 模型体验 | 通用 bash 心智，组合能力强（管道、jq）；需要多轮 help 探索 | 工具即目录，schema 强约束参数，选择更稳、幂次更少 |
+| 风险面 | bash 是全能工具，边界靠工作区隔离 | 工具面收窄到白名单命令，可按危险等级过滤注册 |
+
+**结论：P1 落地形态 A（成本趋近于零，立刻可用）；形态 B 作为后续演进**——
+它的全部前置件只有 `mc capabilities`，且注册时可以只挑非 destructive 命令，
+把「Agent 能碰什么」变成注册期的白名单决策。两形态不互斥，可共存。
+
+### 6.2 自动授权：按 run 签发的短时效内部令牌（Agent 全程零登录）
+
+```
+用户发起 Agent 任务
+  → agent 模块创建 run，向认证服务申请内部令牌
+      令牌 = itsdangerous 签名（复用现有会话签名密钥，新 salt
+             "movieclaw.agent-token.v1"），负载 {aud:"agent", run_id, exp}
+      —— 无状态、不落库、无需新增存储
+  → 拉起隔离工作区时注入环境变量：
+      MOVIECLAW_SERVER=http://127.0.0.1:8000   （同容器回环直连）
+      MOVIECLAW_TOKEN=<内部令牌>
+  → CLI 环境变量优先级最高 → 每个请求自动带 Bearer → 零配置、零交互
+  → 服务端 require_login 扩展：Cookie 或 Bearer（PAT / agent 令牌同一入口验签）
+```
+
+关键性质（选无状态签名令牌而非落库 PAT 的理由）：
+
+- **生命周期 = run 生命周期**：`exp` 取 run 最大时长（如 2 小时），run 结束
+  令牌自然作废，不需要吊销存储；长会话续聊时每次新 run 重新签发。
+- **全局熔断免费获得**：管理员改密会轮换签名密钥（现有机制），所有 agent
+  令牌与会话一起瞬间失效——安全兜底不用另写。
+- **可审计**：令牌负载带 `run_id`，服务端访问日志可把每一次 CLI 调用归因到
+  具体的 Agent 运行，配合订阅/媒体库已有的活动时间线，「是谁改的」可回答。
+- **与用户手动 PAT 正交**：用户在自己终端用的长期 PAT（P1 的 /auth/tokens）
+  走落库 + 可命名可吊销；agent 内部令牌走无状态短时效。两者验签入口同一个，
+  实现共享，语义不混。
+
+破坏性操作的双保险：即便持有效令牌，CLI 的危险门槛（`--yes`、destructive
+回显影响面）依然生效；若采用形态 B，还可在注册期直接不注册 destructive 命令。
+
+## 7. L2 精选命令层：只收「跨接口的工作流」，个位数
 
 生成层覆盖单接口调用，以下场景一条命令背后是多个接口的编排，值得手写
 （同名注册即覆盖生成命令，其余全部放行给生成层）：
@@ -252,29 +309,27 @@ Agent 最常见的「学习方式」是试错。因此错误输出必须携带�
 
 ---
 
-## 7. 基础能力层（core/，与生成无关的地基）
+## 8. 基础能力层（core/，与生成无关的地基）
 
-### 7.1 认证（唯一需要后端新增的功能点）
+### 8.1 认证（唯一需要后端新增的功能点）
 
 - **P0**：`mc login` 走 Cookie 会话（后端零改动），凭证落
   `~/.config/movieclaw/credentials`（0600）。
 - **P1**：后端新增 PAT——`POST/GET/DELETE /auth/tokens`，`require_login` 扩展为
   「Cookie 或 `Authorization: Bearer <token>`」，实现直接复用插件同步令牌的
   加密落库（SecretBox）与 `hmac.compare_digest` 校验模式。
-- **Agent 工作区注入**：movieclaw_agent 拉起隔离工作区时注入
-  `MOVIECLAW_SERVER=http://127.0.0.1:8000` 与 `MOVIECLAW_TOKEN=<内部令牌>`，
-  CLI 环境变量优先级高于配置文件——产品内 Agent 因此**零配置可用**。
-  内部令牌按 run 签发、可短时效，与用户手动创建的 PAT 走同一套端点。
+- **产品内 Agent 的自动授权**：按 run 签发的无状态短时效令牌 + 工作区环境
+  变量注入，详见 §6.2；与用户手动 PAT 共用同一个 Bearer 验签入口。
 - `--debug` 输出对 Authorization/Cookie/密码打码；密钥输入优先环境变量与
   `--input` 文件，标志形态在 help 里注明会留 shell 历史。
 
-### 7.2 配置与多上下文
+### 8.2 配置与多上下文
 
 `~/.config/movieclaw/config.toml`，`[contexts.*]` 多服务器；优先级
 **标志 > 环境变量（MOVIECLAW_SERVER/TOKEN/CONTEXT）> 配置文件 > 默认**。
 环境变量形态是 Agent/CI 的主通道，可完全不落盘。
 
-### 7.3 http / sse / task / output / errors
+### 8.3 http / sse / task / output / errors
 
 - **http**：httpx 封装——认证注入、超时、GET 自动重试、信封拆解、
   `ErrorResponse → 中文错误 + hint + 退出码` 映射。
@@ -288,7 +343,7 @@ Agent 最常见的「学习方式」是试错。因此错误输出必须携带�
 
 ---
 
-## 8. 技术选型与仓库落位
+## 9. 技术选型与仓库落位
 
 **Python + click（动态构建命令树）+ httpx + rich。**
 
@@ -318,7 +373,7 @@ CI 守护测试、（P1）PAT 端点。全部是元数据与鉴权层面，不�
 
 ---
 
-## 9. 实施路线
+## 10. 实施路线
 
 | 阶段 | 内容 | 验证标准 |
 |---|---|---|
@@ -327,11 +382,14 @@ CI 守护测试、（P1）PAT 端点。全部是元数据与鉴权层面，不�
 | **P2 精选层 + 流式** | L2 八条命令（sub create 消歧流 / search+download / organize / agent run…）；SSE 两处 | 「搜索→下载→订阅→扫描入库」全流程由 Agent 通过 bash 调 CLI 完成，全程零交互 |
 | **P3 打磨** | 错误 hint 全覆盖、编辑距离建议、shell 补全、`logs -f`、README/示例扩充 | 抽样端点的 --help 含示例率 100%；退出码契约回归测试全绿 |
 
-## 10. 需要产品拍板的开放问题
+## 11. 需要产品拍板的开放问题
 
-1. **产品内 Agent 的令牌形态**：按 run 签发短时效内部令牌（更安全，实现多一点），
-   还是复用一枚常驻内部令牌（更简单）？建议前者，签发逻辑放 agent 拉起工作区处。
-2. **`mc capabilities` 是否在 P1 就直接做成 MCP server 壳**：当前判断是不做、
-   保留形态兼容即可——产品内 Agent 走 bash 已够用；若未来要接第三方 MCP 客户端再加壳。
+1. **Agent 令牌是否需要权限降级**：§6.2 的方案默认 agent 令牌与管理员同权
+   （危险门槛由 CLI 的 `--yes`/影响面回显兜底）。是否要在令牌负载加 scope、
+   服务端直接拒绝 agent 令牌执行 destructive 端点？更安全但多一层实现，
+   建议先不做、观察形态 A 的实际使用后再定。
+2. **集成形态 B（命令注册为一等工具）的启动时机**：形态 A 成本趋近于零先上；
+   形态 B 需要 Agent 模块做注册桥接层，建议等形态 A 用出真实痛点
+   （help 探索轮次过多、参数出错率高）再投入。
 3. **x-cli-examples 的铺设节奏**：129 端点全铺工作量可观，是否接受 P1 只给
    写操作与危险操作铺示例、读操作靠 summary + 参数说明兜底？
