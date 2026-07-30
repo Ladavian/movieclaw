@@ -77,6 +77,10 @@ vec3 sampleBlur(vec2 uv, float amount) {
 }
 vec3 spectralSample(vec2 base, vec2 axis, float blurAmount, float mixAmount) {
   vec3 neutral = sampleBlur(base, blurAmount);
+  // 色散混合量很小（面板主体，远离边缘）时光谱贡献不可见，但 7 路 sampleBlur
+  // 的 63 次纹理采样照付不误——大面板绝大多数像素都落在这条快速路径上，
+  // 每像素从 72 次采样降到 9 次。阈值 3% 的混合量在视觉上无法分辨。
+  if (mixAmount < 0.03) return neutral;
   vec3 red = sampleBlur(base + axis * 3.0, blurAmount) * vec3(1.0, 0.0, 0.0);
   vec3 orange = sampleBlur(base + axis * 2.0, blurAmount) * vec3(1.0, 0.45, 0.0);
   vec3 yellow = sampleBlur(base + axis, blurAmount) * vec3(1.0, 1.0, 0.0);
@@ -181,17 +185,21 @@ float thickness = hC * mix(2.0, 1.1, press);
   vec2 chromaAxis = normalize(normal.xy + vec2(.0001))
     * chromaSpread * pxToUV * u_bgScale;
   float prismMix = min(.32, u_chroma * 3.6 * (.25 + edge));
-  vec3 sampledBackground = spectralSample(
-    backgroundUV,
-    chromaAxis,
-    u_blurAmount,
-    prismMix
-  );
-  sampledBackground = adjustColor(sampledBackground);
-
   float glassLight = .032 + depth * .018 + lowerBody * .018 + topSheen * .055;
   vec3 neutralGlass = vec3(glassLight, glassLight + .004, glassLight + .01);
-  vec3 color = mix(neutralGlass, sampledBackground, u_sampleBackground);
+  // 采样强度为 0（纯中性玻璃底）时整条背景采样路径都不必执行。u_sampleBackground
+  // 是运行时 uniform，编译器无法静态消除死代码，必须显式分支跳过。
+  vec3 color = neutralGlass;
+  if (u_sampleBackground > 0.004) {
+    vec3 sampledBackground = spectralSample(
+      backgroundUV,
+      chromaAxis,
+      u_blurAmount,
+      prismMix
+    );
+    sampledBackground = adjustColor(sampledBackground);
+    color = mix(neutralGlass, sampledBackground, u_sampleBackground);
+  }
   color = mix(color, color * u_tintColor, u_tintStrength);
   color *= 1.0 - u_darkTint * (.62 + edge * .38);
   if (u_tint >= 0.0) {

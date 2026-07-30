@@ -30,6 +30,12 @@ private sampleBackground = 0;
   };
   private disposed = false;
   private positionFrame = 0;
+  /**
+   * 失效标记：参数 setter 只置位，真正的绘制统一由 watchPosition 的 RAF 消费。
+   * 一次 ResizeObserver 回调里连改采样/尺寸/设置/几何四项参数时，从四次全量
+   * 绘制合并为下一帧的一次；静止页面上没有失效就完全不绘制（见 watchPosition）。
+   */
+  private needsDraw = false;
   private lastViewport = { width: 0, height: 0 };
   private lastScroll = { x: Number.NaN, y: Number.NaN };
   private lastRect = { left: Number.NaN, top: Number.NaN, width: Number.NaN, height: Number.NaN };
@@ -166,7 +172,11 @@ private sampleBackground = 0;
       viewport.width !== this.lastViewport.width ||
       viewport.height !== this.lastViewport.height;
 
-    if (moved || ((this.sampleBackground || this.video) && visible)) {
+    // 重绘条件：位置/尺寸/滚动变化（采样对齐会失效）、参数更新标了脏、或视频
+    // 背景在可见中播放（纹理逐帧变化）。静态图片背景不满足任何条件时一帧都不画
+    // ——此前这里对 sampleBackground>0 的实例无条件逐帧全量绘制，是空闲页面
+    // 持续吃 GPU 的根源（侧栏/登录面板都开着背景采样）。
+    if (moved || this.needsDraw || (this.video && visible)) {
       this.lastRect = {
         left: rect.left,
         top: rect.top,
@@ -175,16 +185,22 @@ private sampleBackground = 0;
       };
       this.lastViewport = viewport;
       this.lastScroll = scroll;
+      this.needsDraw = false;
       this.draw();
     }
     this.positionFrame = window.requestAnimationFrame(this.watchPosition);
   };
 
+  /** 标记需要重绘：合并到下一帧统一执行，多次参数更新只触发一次绘制。 */
+  private requestDraw() {
+    this.needsDraw = true;
+  }
+
   setImage(url: string) {
     if (this.video?.currentSrc === url || this.video?.src === url || this.image.currentSrc === url || this.image.src === url) return;
     this.loadSource(url);
   }
-  setSettings(settings: LiquidGlassSettings) { this.settings = settings; this.size = { width: settings.lensWidth, height: settings.lensHeight }; this.draw(); }
+  setSettings(settings: LiquidGlassSettings) { this.settings = settings; this.size = { width: settings.lensWidth, height: settings.lensHeight }; this.requestDraw(); }
   setGeometry(
     x: number,
     y: number,
@@ -200,21 +216,21 @@ private sampleBackground = 0;
     this.button = button;
     this.morph = Math.max(0, Math.min(1, morph));
     this.materialMorph = Math.max(0, Math.min(1, materialMorph));
-    this.draw();
+    this.requestDraw();
   }
   setTrack(start: number, end: number, y: number, value: number, radius = 2.5) {
     this.track = { start, end, y, value, radius };
-    this.draw();
+    this.requestDraw();
   }
   setTrackColors(base: [number, number, number], fill: [number, number, number]) {
     this.trackColors = { base, fill };
-    this.draw();
+    this.requestDraw();
   }
   setBackgroundSampling(amount: boolean | number) {
     // 兼容旧的布尔开关；数值则按 0~1 夹取，作为 shader 里中性玻璃与背景的混合系数
     this.sampleBackground =
       typeof amount === "number" ? Math.max(0, Math.min(1, amount)) : amount ? 1 : 0;
-    this.draw();
+    this.requestDraw();
   }
   dispose() {
     this.disposed = true;
@@ -228,13 +244,27 @@ private sampleBackground = 0;
   }
   resize(width: number, height: number) {
     const deviceScale = window.devicePixelRatio || 1;
-    const compactSupersampling = height <= 80 ? 3 : height <= 140 ? 2.5 : 2;
-    const renderScale = Math.min(4, Math.max(deviceScale, compactSupersampling));
-    this.canvas.width = Math.max(1, Math.round(width * renderScale));
-    this.canvas.height = Math.max(1, Math.round(height * renderScale));
+    // 超采样只对小控件有意义（边缘占比大，锯齿明显）；大面板（侧栏/登录面板）
+    // 边缘只占极小比例，高倍率的视觉收益有限而像素成本按平方增长，压到 1.5。
+    const compactSupersampling = height <= 80 ? 3 : height <= 140 ? 2.5 : 1.5;
+    let renderScale = Math.min(4, Math.max(deviceScale, compactSupersampling));
+    // 像素面积上限：防止「大面板 × 高 DPR」相乘出数百万像素的 backing buffer，
+    // 着色器是每像素几十次纹理采样的重路径，面积必须封顶。
+    const MAX_PIXELS = 2_400_000;
+    const area = width * height;
+    if (area > 0 && area * renderScale * renderScale > MAX_PIXELS) {
+      renderScale = Math.max(1, Math.sqrt(MAX_PIXELS / area));
+    }
+    const pixelWidth = Math.max(1, Math.round(width * renderScale));
+    const pixelHeight = Math.max(1, Math.round(height * renderScale));
+    // 尺寸没变就不重设 canvas.width/height——赋值本身会清空并重分配缓冲区
+    if (this.canvas.width !== pixelWidth || this.canvas.height !== pixelHeight) {
+      this.canvas.width = pixelWidth;
+      this.canvas.height = pixelHeight;
+    }
     this.canvas.style.width = `${width}px`;
     this.canvas.style.height = `${height}px`;
-    this.draw();
+    this.requestDraw();
   }
   draw() {
     if (!this.ready) return;
