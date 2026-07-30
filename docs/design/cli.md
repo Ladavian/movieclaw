@@ -29,20 +29,22 @@
 
 ---
 
-## 1. 总体架构：三层命令面，覆盖率逐层收窄、体验逐层增强
+## 1. 总体架构：两层命令面（less is more）
 
 ```
-L2 精选命令（手写，个位数）    mc sub create / mc download / mc search ...
+精选命令（overlay，手写，个位数）  mc sub create / mc download / mc search ...
    跨接口工作流、长任务 --wait、SSE 聚合 —— 覆盖「多步才能完成一件事」的场景
 ─────────────────────────────────────────────────────────────
-L1 生成命令（自动，=接口数）   mc sub list / mc lib scan / mc site add ...
+生成命令（gen，自动，=接口数）     mc sub list / mc lib scan / mc site add ...
    运行时由 OpenAPI spec 生成：命令名、参数、校验、help、示例全部来自 spec
    —— 新 API 合入后端即自动出现，CLI 零改动
-─────────────────────────────────────────────────────────────
-L0 原始逃生舱（恒定 3 条）     mc api list / describe / call
-   直接按 method+path 调任意端点 —— 即使 L1 映射规则不认识的新形态接口，
-   Agent 也永远有一条 100% 覆盖的路可走（对标 gh api）
 ```
+
+刻意**不设** `mc api call` 式的裸调逃生舱，也不设结构化目录命令——模型面对的
+每一条命令都是有正规名字、正规 help 的命令，工具面越小越干净，模型的选择
+就越稳。「新 API 自动支持」不靠留后门保证，靠 §2.3 的 CI 守护独力保证：
+生成器不认识的端点形态直接 CI 红，逼着当场扩映射规则或收进精选层，
+**失败在合入时显式暴露，而不是留一条谁都可能误用的旁路**。
 
 ```
 ┌ 后端（唯一事实源）────────────────────────────────┐
@@ -57,11 +59,6 @@ L0 原始逃生舱（恒定 3 条）     mc api list / describe / call
 │ overlay/ 精选命令注册（同名覆盖生成命令）          │
 └───────────────────────────────────────────────────┘
 ```
-
-**为什么 L0 必须存在**：「新 API 自动支持」的最后保障不是生成器多聪明，而是
-存在一条不依赖任何映射规则的通路。`mc api call POST /subscriptions --input body.json`
-在生成器还不认识某个新端点形态时依然可用，Agent 拿着 `mc api describe` 的输出
-就能自助完成调用。
 
 ---
 
@@ -108,7 +105,7 @@ spec 标准字段表达不了的 CLI 语义，用少量扩展字段声明（声�
 | `x-cli-dangerous` | 破坏性等级：`confirm`（需 --yes）/ `destructive`（删磁盘，需 --yes 且回显影响面） | 删条目、删库 |
 | `x-cli-long-task` | 声明这是长任务启动端点 + 进度从哪读（端点或字段路径），驱动统一 `--wait` | `{"progress": "lib.show#scan_progress"}` |
 | `x-cli-stream` | SSE 端点标记 + 终态事件名 | 搜索流 / Agent 流 |
-| `x-cli-hidden` | 不生成 L1 命令（纯 Web 基础设施，如图片代理），L0 仍可达 | `/images/proxy` |
+| `x-cli-hidden` | 不生成命令（纯 Web 基础设施，如图片代理），CI 快照中显式记为豁免 | `/images/proxy` |
 | `x-cli-paged` | 分页参数名，驱动统一 `--limit/--all` | `/agent/sessions` |
 
 **CI 守护测试**（新 API 自动支持 CLI 的强制机制）：遍历 OpenAPI 全部路由，
@@ -154,15 +151,15 @@ CI 里生成一次命令树快照，路由变更时快照 diff 一目了然。
 | 枚举 | 校验 + help 里列出候选值 |
 | `x-cli-paged` | `--limit N` / `--all`（自动翻页聚合） |
 
-规则之外的形态一律不猜——生成器跳过并在 `mc api list` 里标注「仅 L0 可用」，
-CI 快照会暴露这类端点，届时要么扩规则要么进 L2 精选层。**不追求生成器全知全能，
-追求失败显式可见。**
+规则之外的形态一律不猜——CI 快照测试会把「生成器不认识的端点」直接标红，
+合入前就必须二选一：扩映射规则，或收进精选层。**不追求生成器全知全能，
+追求失败显式可见、且没有静默的第三条路。**
 
 ---
 
-## 4. Help 体系：一份 spec，三种消费形态
+## 4. Help 体系：一份 spec，help 即协议
 
-### 4.1 人类形态：`--help` 逐级探索
+### 4.1 `--help` 逐级探索——对人和模型是同一套
 
 ```
 mc --help                # 域列表（来自 tags + 中文描述）
@@ -171,30 +168,13 @@ mc sub create --help     # 长说明(description) + 全部标志(参数 descript
                          # + 示例(x-cli-examples) + 关联命令(同域推荐)
 ```
 
-### 4.2 机器形态：help 是主协议，结构化目录只为「注册进工具列表」服务
+**不为「模型发现能力」单设任何机制。** Agent 在工作区跑 bash 时，逐级 help
+探索对模型和对人同样自然，模型读帮助文本毫无障碍——gcloud/gh 的 agent 用法
+都是这么跑的。多一套结构化目录命令只会稀释工具面、干扰模型选择，less is more。
+（若未来做 §6.1 的集成形态 B，Agent 模块直接消费后端 `/spec` 端点生成工具
+注册表即可，同样不需要 CLI 提供目录命令。）
 
-**对模型而言，`--help` 本身就是发现协议**——Agent 在工作区跑 bash 时，
-`mc --help → mc sub --help → mc sub create --help` 的逐级探索对模型和对人
-同样自然，模型读帮助文本毫无障碍。因此**不为「模型发现能力」单设机制**，
-help 就是唯一入口；4.1 的三级 help 同时服务人类与模型。
-
-结构化自描述只保留两个明确用途，都不是给模型「读」的：
-
-```
-mc api list / describe / call    # L0 逃生舱本身的组成部分：list 用于找到
-                                 # method+path，describe 给出原始参数 schema，
-                                 # 没有它们 call 无从下手（对标 gh api）
-mc capabilities                  # 【为 §6.1 集成形态 B 预留】输出全部命令的
-                                 # name/description/input_schema JSON——当 CLI
-                                 # 命令要注册成 Agent tool 列表里的一等工具
-                                 # （function calling）时，消费方是「程序」
-                                 # 而非「模型」，help 文本满足不了 schema 需求
-```
-
-若集成形态 B（见 §6.1）最终不做，`mc capabilities` 随之取消——它不是
-独立价值点，只是形态 B 的前置件。
-
-### 4.3 错误即帮助
+### 4.2 错误即帮助
 
 Agent 最常见的「学习方式」是试错。因此错误输出必须携带修正路径：
 
@@ -231,8 +211,7 @@ Agent 最常见的「学习方式」是试错。因此错误输出必须携带�
    默认截断带标记。上下文窗口是 Agent 的稀缺资源，多余输出就是伤害。
 6. **破坏性操作显式化。** `x-cli-dangerous` 驱动：`confirm` 级需 `--yes`；
    `destructive` 级（删磁盘文件）需 `--yes` 且执行前回显影响面（条目名、
-   文件数、路径）到 stderr。help 与 `mc api list` 里都标注 ⚠，让模型在
-   选工具阶段就看见风险等级。
+   文件数、路径）到 stderr。help 里标注 ⚠，让模型在选工具阶段就看见风险等级。
 7. **幂等与可重试友好。** 服务端已有的幂等语义（重复订阅幂等返回）在 help 中
    写明；网络错误自动重试仅限只读请求（GET），写请求失败原样报错绝不自动重发。
 8. **退出码契约**：0 成功 / 1 业务错误 / 2 用法错误 / 3 认证失败 / 4 连不上
@@ -249,13 +228,13 @@ CLI 的第一消费者是产品自带的 AI 助手（movieclaw_agent，隔离工
 
 | | 形态 A：bash + 工作区（推荐先做） | 形态 B：命令注册为一等工具 |
 |---|---|---|
-| 做法 | CLI 装进 Agent 工作区，模型通过已有 bash 工具调用，靠 `--help` 探索 | 启动时用 `mc capabilities` 拉命令目录，把每条命令注册成独立 tool（function calling，带 input_schema） |
+| 做法 | CLI 装进 Agent 工作区，模型通过已有 bash 工具调用，靠 `--help` 探索 | Agent 模块直接读后端 `/spec` 生成工具注册表，把每条命令注册成独立 tool（function calling，带 input_schema），执行时拼装 argv 调 CLI |
 | 改动量 | 几乎为零（工作区镜像加一个包 + 注入两个环境变量） | Agent 模块要做目录拉取、工具注册、参数拼装到 argv 的桥接层 |
 | 模型体验 | 通用 bash 心智，组合能力强（管道、jq）；需要多轮 help 探索 | 工具即目录，schema 强约束参数，选择更稳、幂次更少 |
 | 风险面 | bash 是全能工具，边界靠工作区隔离 | 工具面收窄到白名单命令，可按危险等级过滤注册 |
 
 **结论：P1 落地形态 A（成本趋近于零，立刻可用）；形态 B 作为后续演进**——
-它的全部前置件只有 `mc capabilities`，且注册时可以只挑非 destructive 命令，
+所需的 spec 与映射规则届时都已存在，注册时可以只挑非 destructive 命令，
 把「Agent 能碰什么」变成注册期的白名单决策。两形态不互斥，可共存。
 
 ### 6.2 自动授权：按 run 签发的短时效内部令牌（Agent 全程零登录）
@@ -288,7 +267,7 @@ CLI 的第一消费者是产品自带的 AI 助手（movieclaw_agent，隔离工
 破坏性操作的双保险：即便持有效令牌，CLI 的危险门槛（`--yes`、destructive
 回显影响面）依然生效；若采用形态 B，还可在注册期直接不注册 destructive 命令。
 
-## 7. L2 精选命令层：只收「跨接口的工作流」，个位数
+## 7. 精选命令层（overlay）：只收「跨接口的工作流」，个位数
 
 生成层覆盖单接口调用，以下场景一条命令背后是多个接口的编排，值得手写
 （同名注册即覆盖生成命令，其余全部放行给生成层）：
@@ -304,7 +283,7 @@ CLI 的第一消费者是产品自带的 AI 助手（movieclaw_agent，隔离工
 | `mc status` | health + auth/me + spec 版本，一眼看部署状态 |
 | `mc logs -f` | 轮询模拟 follow |
 
-预计 8 条左右。**准入标准：需要编排或本地状态才收进 L2；单接口的便利包装
+预计 8 条左右。**准入标准：需要编排或本地状态才收进精选层；单接口的便利包装
 一律不收**（那是生成层 + x-cli 元数据该解决的事）。
 
 ---
@@ -349,13 +328,12 @@ CLI 的第一消费者是产品自带的 AI 助手（movieclaw_agent，隔离工
 
 - 与后端同栈同仓；httpx 已是后端依赖；**运行时动态生成命令树**要求框架支持
   程序化注册——click 的 `Group`/`Command` 对象模型天然适合（Typer 偏静态
-  装饰器风格，动态场景反而别扭，L2 精选命令仍可享受类型标注的舒适度有限，
-  故整体选 click）。
+  装饰器风格，动态场景反而别扭，故整体选 click）。
 - 分发：① Docker 镜像内置（产品内 Agent 与 `docker exec` 用户零安装）；
   ② `pipx install movieclaw-cli` / `uv tool install`（远程人类用户）。
-- 不做的事（防过度工程）：不做插件系统、不做本地数据库（仅「上次搜索快照」
-  一个 JSON 文件）、不做自动更新、不内嵌业务逻辑、不在 P0 做 MCP 壳
-  （capabilities 输出已为此留好接口形态）。
+- 不做的事（防过度工程）：不做裸调逃生舱与结构化目录命令（less is more，
+  见 §1/§4）、不做插件系统、不做本地数据库（仅「上次搜索快照」一个 JSON
+  文件）、不做自动更新、不内嵌业务逻辑、不做 MCP 壳。
 
 ```
 src/movieclaw_cli/
@@ -363,8 +341,7 @@ src/movieclaw_cli/
 ├── core/              # config.py auth.py http.py sse.py task.py output.py errors.py
 ├── gen/               # spec_loader.py（拉取+ETag缓存） tree_builder.py（映射规则）
 │                      # invoker.py（参数→请求） helpgen.py（spec→help渲染）
-├── overlay/           # L2 精选命令，每条一个模块
-└── rawapi.py          # L0：mc api list / describe / call
+└── overlay/           # 精选命令，每条一个模块
 tests/cli/             # respx 测 core；对真实 app 导出 spec 做命令树快照测试
 ```
 
@@ -377,9 +354,9 @@ CI 守护测试、（P1）PAT 端点。全部是元数据与鉴权层面，不�
 
 | 阶段 | 内容 | 验证标准 |
 |---|---|---|
-| **P0 地基 + 逃生舱** | 后端：`/spec` 端点 + operation_id 约定 + CI 守护测试。CLI：core 全套、`mc login`(Cookie)、`mc api list/describe/call`、`mc capabilities`、`mc status` | Agent 仅凭 `mc api list → describe → call` 能完成任意接口调用；capabilities 输出通过 JSON Schema 校验 |
-| **P1 生成层 + Token** | gen/ 映射规则全量落地；x-cli-* 标注铺完 129 端点；后端 PAT + Agent 工作区令牌注入；长任务 `--wait`、分页、危险确认 | 命令树快照 = 全部非 hidden 端点；产品内 Agent 工作区里 `mc sub list` 零配置跑通；漏标元数据 CI 红 |
-| **P2 精选层 + 流式** | L2 八条命令（sub create 消歧流 / search+download / organize / agent run…）；SSE 两处 | 「搜索→下载→订阅→扫描入库」全流程由 Agent 通过 bash 调 CLI 完成，全程零交互 |
+| **P0 地基 + 生成层雏形** | 后端：`/spec` 端点 + operation_id 约定 + CI 守护测试。CLI：core 全套、`mc login`(Cookie)、`mc status`、生成器先覆盖「纯 GET + path/query 参数」类端点 | 命令树快照测试跑通；`mc login && mc sub list -o json` 远程全通；退出码契约测试通过 |
+| **P1 生成层全量 + Token** | gen/ 映射规则全量落地（requestBody/上传/下载/分页）；x-cli-* 标注铺完 129 端点；后端 PAT + Agent 工作区令牌注入；长任务 `--wait`、危险确认 | 命令树快照 = 全部非 hidden 端点；产品内 Agent 工作区里 `mc sub list` 零配置跑通；漏标元数据 CI 红 |
+| **P2 精选层 + 流式** | 精选八条命令（sub create 消歧流 / search+download / organize / agent run…）；SSE 两处 | 「搜索→下载→订阅→扫描入库」全流程由 Agent 通过 bash 调 CLI 完成，全程零交互 |
 | **P3 打磨** | 错误 hint 全覆盖、编辑距离建议、shell 补全、`logs -f`、README/示例扩充 | 抽样端点的 --help 含示例率 100%；退出码契约回归测试全绿 |
 
 ## 11. 需要产品拍板的开放问题
