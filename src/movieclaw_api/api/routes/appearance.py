@@ -115,6 +115,7 @@ async def set_active_backdrop(
     summary="从图库删除一张背景图",
     dependencies=[Depends(require_login)],
     operation_id="appearance.backdrops.delete",
+    openapi_extra={"x-cli-dangerous": "confirm"},
 )
 async def delete_backdrop(backdrop_id: str) -> ApiResponse[AppearanceView]:
     """删除指定背景图；若删的是当前生效图，自动回退到内置默认背景。"""

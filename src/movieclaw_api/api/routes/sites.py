@@ -211,6 +211,7 @@ async def reverify_site(
     response_model=ApiResponse[dict],
     summary="删除站点配置（连带清理 cookie 缓存）",
     operation_id="site.delete",
+    openapi_extra={"x-cli-dangerous": "confirm"},
 )
 async def delete_site(
     site_id: str,

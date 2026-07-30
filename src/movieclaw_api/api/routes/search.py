@@ -150,6 +150,7 @@ async def _save_snapshot(
     "/stream",
     summary="跨站点流式搜索（SSE）：站点开始/返回结果/失败逐事件实时推送",
     operation_id="search.stream",
+    openapi_extra={"x-cli-stream": {"terminal_events": ["done"]}},
 )
 async def search_torrents_stream(
     keyword: str = Query(..., min_length=1, description="搜索关键词，支持 IMDb ID"),
@@ -413,6 +414,7 @@ async def get_media_search_snapshot(
     response_model=ApiResponse[None],
     summary="删除单条搜索历史",
     operation_id="search.history.delete",
+    openapi_extra={"x-cli-dangerous": "confirm"},
 )
 async def delete_search_history(
     history_id: int,
@@ -429,6 +431,7 @@ async def delete_search_history(
     response_model=ApiResponse[None],
     summary="清空搜索历史",
     operation_id="search.history.clear",
+    openapi_extra={"x-cli-dangerous": "confirm"},
 )
 async def clear_search_history(
     session: AsyncSession = Depends(get_session),

@@ -61,6 +61,7 @@ async def update_rule_set(
     response_model=ApiResponse[dict],
     summary="删除规则组（默认组与被引用的组禁删）",
     operation_id="rules.delete",
+    openapi_extra={"x-cli-dangerous": "confirm"},
 )
 async def delete_rule_set(
     rule_set_id: int,

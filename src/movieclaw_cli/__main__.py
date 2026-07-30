@@ -2,7 +2,8 @@
 
 命令面两层（docs/design/cli.md §1）：
 - 精选命令（overlay）：login / logout / status 等跨接口工作流，先注册；
-- 生成命令（gen）：由内置基线 spec 动态构建，后挂载，同名让位于精选层。
+- 生成命令（gen）：由 spec（内置基线，或偏斜刷新后的服务器缓存）动态
+  构建，后挂载，同名让位于精选层。缓存 spec 建树失败自动回退内置基线。
 """
 
 from __future__ import annotations
@@ -16,7 +17,7 @@ import httpx
 from movieclaw_cli.core import config as cfg
 from movieclaw_cli.core.errors import CliError
 from movieclaw_cli.core.http import Api
-from movieclaw_cli.gen.spec_loader import load_baseline
+from movieclaw_cli.gen import spec_loader
 from movieclaw_cli.gen.tree_builder import build_tree
 from movieclaw_cli.overlay.auth_cmds import login, logout, status
 
@@ -67,18 +68,36 @@ def cli(ctx: click.Context, **kwargs) -> None:
     ctx.obj = Settings(transport=transport, **kwargs)
 
 
-# 精选命令先注册（同名时生成命令让位）
-cli.add_command(login)
-cli.add_command(logout)
-cli.add_command(status)
+def _assemble() -> None:
+    """装配命令树：精选命令 + 生成命令（缓存 spec 失败回退内置基线）。"""
+    cli.add_command(login)
+    cli.add_command(logout)
+    cli.add_command(status)
 
-# 生成命令树：内置基线 spec → 命令
-build_tree(cli, load_baseline())
+    server = spec_loader.guess_server_for_startup(sys.argv[1:])
+    spec, from_cache = spec_loader.load_active(server)
+    try:
+        build_tree(cli, spec)
+    except Exception:
+        if not from_cache:
+            raise
+        # 刷新缓存里的新 spec 含本版生成器不认识的形态：回退内置基线
+        print(
+            "提示：服务器接口目录较新，部分命令暂不可用，已回退内置命令目录；建议升级 CLI",
+            file=sys.stderr,
+        )
+        spec, _ = spec_loader.load_active(None)
+        build_tree(cli, spec)
+
+
+_assemble()
 
 
 def main() -> int:
+    exit_code = 0
+    settings: Settings | None = None
     try:
-        cli(standalone_mode=False)
+        cli(standalone_mode=False, obj=None)
     except CliError as exc:
         prefix = f"错误[{exc.code}]" if exc.code else "错误"
         print(f"{prefix}：{exc.message}", file=sys.stderr)
@@ -86,16 +105,23 @@ def main() -> int:
             print(f"提示：{exc.hint}", file=sys.stderr)
         if exc.details:
             print(f"详情：{exc.details}", file=sys.stderr)
-        return int(exc.exit_code)
+        exit_code = int(exc.exit_code)
     except click.UsageError as exc:
         # 用法错误 → 退出码 2；附上 --help 指引（错误即帮助）
         exc.show()
-        return 2
+        exit_code = 2
     except click.exceptions.Abort:
         return 130
     except click.exceptions.Exit as exc:
-        return exc.exit_code
-    return 0
+        exit_code = exc.exit_code
+    # 版本偏斜检查：服务端 spec 指纹变了就拉新缓存（下次调用生效）。
+    # 放在退出码结算之后，绝不影响本次命令的结果。
+    try:
+        settings = Settings()
+        spec_loader.maybe_refresh(settings)
+    except Exception:  # noqa: BLE001 - 刷新是尽力而为，任何失败都不能改变本次结果
+        pass
+    return exit_code
 
 
 if __name__ == "__main__":

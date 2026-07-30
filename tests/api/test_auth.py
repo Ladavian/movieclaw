@@ -254,6 +254,7 @@ def test_every_route_denies_anonymous_access(client: TestClient) -> None:
             .replace("{media_item_id}", "1")
             .replace("{rule_id}", "1")
             .replace("{file_id}", "1")
+            .replace("{token_id}", "1")
             .replace("{run_id}", "test-run")
             .replace("{session_id}", "test-session")
             .replace("{day}", "2026-01-01")

@@ -61,3 +61,41 @@ def test_operation_ids_are_unique(operations: list[tuple[str, str, dict]]) -> No
         else:
             seen[opid] = f"{method} {path}"
     assert not dup, f"operation_id 重复（命令名会冲突）：{dup}"
+
+
+# ---------------------------------------------------------------------------
+# x-cli-* 标注守护（docs/design/cli.md §2.3）：漏标即红
+# ---------------------------------------------------------------------------
+
+
+def test_every_delete_declares_danger_level(operations: list[tuple[str, str, dict]]) -> None:
+    """DELETE 端点必须声明 x-cli-dangerous——CLI 据此决定 --yes 门槛。"""
+    missing = [
+        op["operationId"]
+        for method, _path, op in operations
+        if method == "DELETE" and op.get("x-cli-dangerous") not in ("confirm", "destructive")
+    ]
+    assert not missing, (
+        f"以下 DELETE 端点未声明 x-cli-dangerous（confirm/destructive）：{missing}"
+    )
+
+
+def test_x_cli_vocabulary_is_valid(operations: list[tuple[str, str, dict]]) -> None:
+    """x-cli-* 扩展字段的取值必须合法，long-task 的进度端点必须真实存在。"""
+    all_ids = {op["operationId"] for _m, _p, op in operations}
+    problems: list[str] = []
+    for _method, _path, op in operations:
+        opid = op["operationId"]
+        if (danger := op.get("x-cli-dangerous")) is not None and danger not in (
+            "confirm",
+            "destructive",
+        ):
+            problems.append(f"{opid}: x-cli-dangerous 取值非法 {danger!r}")
+        if (task := op.get("x-cli-long-task")) is not None:
+            if task.get("progress_op") not in all_ids:
+                problems.append(f"{opid}: x-cli-long-task.progress_op 指向不存在的端点")
+            if not (task.get("progress_field") or task.get("done_field")):
+                problems.append(f"{opid}: x-cli-long-task 缺少 progress_field/done_field")
+        if (stream := op.get("x-cli-stream")) is not None and not stream.get("terminal_events"):
+            problems.append(f"{opid}: x-cli-stream 缺少 terminal_events")
+    assert not problems, f"x-cli 标注不合法：{problems}"

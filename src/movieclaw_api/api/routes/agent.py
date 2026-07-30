@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from functools import lru_cache
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, Header
@@ -19,6 +18,7 @@ from movieclaw_api.schemas.agent import (
     AgentStartView,
 )
 from movieclaw_api.schemas.response import ApiResponse, ok
+from movieclaw_api.services import auth as auth_service
 from movieclaw_api.services.agent_runs import get_agent_run_registry
 from movieclaw_api.services.agent_session_recorder import AgentSessionRecorder
 from movieclaw_api.services.agent_sessions import get_agent_session_store
@@ -33,17 +33,32 @@ from movieclaw_llm import ChatMessage
 router = APIRouter(prefix="/agent", tags=["agent"])
 
 
-@lru_cache(maxsize=1)
-def get_agent_tools() -> list[AgentTool]:
+def get_agent_tools(extra_env: dict[str, str] | None = None) -> list[AgentTool]:
     """Agent 的工具集（内置基础工具 + 后续领域工具的注册挂点）。
 
     一期内置 bash / read / write / edit，工作目录取配置的 agent 工作区
     （首次调用时确保目录存在）。领域工具（站点搜索、提交下载等）后续
-    在此列表追加。lru_cache 保证进程内构建一次。
+    在此列表追加。extra_env 注入 bash 子进程环境——mclaw CLI 的自动授权
+    走这里（每次运行的令牌不同，因此每次运行都重新构建工具集）。
     """
     workdir = Path(get_settings().agent_workspace_dir).resolve()
     workdir.mkdir(parents=True, exist_ok=True)
-    return [*builtin_tools(workdir)]
+    return [*builtin_tools(workdir, extra_env)]
+
+
+async def _cli_env(session_id: str) -> dict[str, str]:
+    """构造工作区里 mclaw CLI 的自动授权环境（docs/design/cli.md §6.2）。
+
+    令牌按运行签发、短时效、无状态签名（改密轮换密钥即全体失效）；
+    服务器地址走容器内回环直连。Agent 在工作区内执行 `mclaw ...` 即可
+    直接操作本产品，全程零登录零交互。
+    """
+    settings = get_settings()
+    token = await auth_service.issue_agent_token(session_id)
+    return {
+        "MOVIECLAW_SERVER": f"http://127.0.0.1:{settings.port}",
+        "MOVIECLAW_TOKEN": token,
+    }
 
 
 @router.post(
@@ -101,7 +116,7 @@ async def start_agent(
 
     runner = AgentRunner(
         llm_router,
-        tools=get_agent_tools(),
+        tools=get_agent_tools(extra_env=await _cli_env(session_id)),
         on_message=recorder.on_message,
     )
     params = AgentStartParams(input=payload.input, history=history, model=payload.model)
@@ -178,6 +193,7 @@ async def rename_agent_session(
     response_model=ApiResponse[dict],
     summary="删除会话（转录文件与索引一并删除）",
     operation_id="agent.sessions.delete",
+    openapi_extra={"x-cli-dangerous": "confirm"},
 )
 async def delete_agent_session(
     session_id: str,
@@ -200,6 +216,9 @@ async def delete_agent_session(
     "/runs/{run_id}/stream",
     summary="订阅 Agent 运行事件（SSE，支持断线续传）",
     operation_id="agent.runs.stream",
+    openapi_extra={
+        "x-cli-stream": {"terminal_events": ["agent_done", "agent_error", "agent_cancelled"]},
+    },
 )
 async def stream_agent_run(
     run_id: str,

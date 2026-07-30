@@ -244,6 +244,7 @@ async def reverify_downloader(
     response_model=ApiResponse[dict],
     summary="删除下载器配置",
     operation_id="dl.delete",
+    openapi_extra={"x-cli-dangerous": "confirm"},
 )
 async def delete_downloader_config(
     downloader_id: int,

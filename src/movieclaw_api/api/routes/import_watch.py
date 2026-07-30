@@ -144,6 +144,7 @@ async def update_rule(
     response_model=ApiResponse[dict],
     summary="删除监听导入规则（不动磁盘，仅停止监听）",
     operation_id="watch.delete",
+    openapi_extra={"x-cli-dangerous": "confirm"},
 )
 async def delete_rule(
     rule_id: int,

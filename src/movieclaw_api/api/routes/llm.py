@@ -89,6 +89,7 @@ async def reverify_llm_provider(
     response_model=ApiResponse[dict],
     summary="删除模型供应商配置",
     operation_id="llm.provider.delete",
+    openapi_extra={"x-cli-dangerous": "confirm"},
 )
 async def delete_llm_provider(
     session: AsyncSession = Depends(get_session),

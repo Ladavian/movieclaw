@@ -103,9 +103,8 @@ def logout(settings):
 )
 @click.pass_obj
 def status(settings, output_override: str | None):
-    """一眼看部署状态：服务健康、登录身份、CLI 基线 spec 指纹。"""
-    from movieclaw_api.export_openapi import spec_hash  # 仅取哈希算法，无重依赖
-    from movieclaw_cli.gen.spec_loader import load_baseline
+    """一眼看部署状态：服务健康、登录身份、spec 版本偏斜。"""
+    from movieclaw_cli.gen import spec_loader
 
     target = cfg.resolve_server(settings.server, settings.context)
     api = settings.make_api(server=target)
@@ -120,6 +119,8 @@ def status(settings, output_override: str | None):
             identity = "未登录（mclaw login）"
     finally:
         api.close()
+    server_hash = (health or {}).get("spec_hash")
+    cli_hash = spec_loader.active_spec_hash
     emit(
         {
             "server": target,
@@ -127,7 +128,9 @@ def status(settings, output_override: str | None):
             "status": (health or {}).get("status"),
             "environment": (health or {}).get("environment"),
             "identity": identity,
-            "cli_spec_hash": spec_hash(load_baseline()),
+            "cli_spec_hash": cli_hash,
+            "server_spec_hash": server_hash,
+            "spec_in_sync": (server_hash == cli_hash) if server_hash else None,
         },
         output=output_override or settings.output,
         quiet=settings.quiet,

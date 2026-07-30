@@ -4,11 +4,20 @@ import time
 from fastapi import FastAPI, Request
 
 from movieclaw_api.core.config import Settings
+from movieclaw_api.spec_state import SPEC_HASH_HEADER, get_spec_hash
 
 logger = logging.getLogger("movieclaw_api.access")
 
 
 def register_middlewares(app: FastAPI, settings: Settings) -> None:
+    @app.middleware("http")
+    async def spec_hash_header_middleware(request: Request, call_next):  # type: ignore[no-untyped-def]
+        """所有 API 响应携带 spec 指纹头，CLI 借此零成本发现版本偏斜。"""
+        response = await call_next(request)
+        if request.url.path.startswith(settings.api_v1_prefix):
+            response.headers[SPEC_HASH_HEADER] = get_spec_hash(request.app)
+        return response
+
     @app.middleware("http")
     async def access_log_middleware(request: Request, call_next):  # type: ignore[no-untyped-def]
         started_at = time.perf_counter()

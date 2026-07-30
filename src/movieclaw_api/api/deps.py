@@ -40,11 +40,21 @@ async def require_sync_token(authorization: str | None = Header(default=None)) -
 
 async def require_login(
     session_token: str | None = Cookie(default=None, alias=auth_service.SESSION_COOKIE_NAME),
+    authorization: str | None = Header(default=None),
 ) -> str:
-    """Web 端接口的登录鉴权依赖：校验会话 Cookie，返回登录用户名。
+    """业务接口的登录鉴权依赖：会话 Cookie **或** Bearer 令牌，返回身份标识。
+
+    两条通道（docs/design/cli.md §8.1）：
+    - Web 端：会话 Cookie（原有机制，不变）；
+    - CLI / 产品内 Agent：``Authorization: Bearer <令牌>``——PAT 长期令牌
+      或 Agent 短时效签名令牌，同一验签入口。
 
     全站默认拒绝的执行点——除公开白名单与插件侧接口外，所有路由都必须挂
     本依赖（api/router.py 按组挂载，tests 里有守护测试兜底防漏挂）。
-    未登录 / 会话过期 / 签名无效统一 401，前端据此跳转登录页。
+    未登录 / 会话过期 / 令牌无效统一 401。
     """
-    return await auth_service.verify_session_token(session_token)
+    if session_token:
+        return await auth_service.verify_session_token(session_token)
+    if bearer := _extract_bearer(authorization):
+        return await auth_service.verify_bearer_token(bearer)
+    raise UnauthorizedException("未登录，请先登录")

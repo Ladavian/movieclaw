@@ -608,6 +608,7 @@ async def set_default_library(
     response_model=ApiResponse[dict],
     summary="删除媒体库（不动磁盘文件；其订阅回落到该类型默认库；扫描/整理中锁定）",
     operation_id="lib.delete",
+    openapi_extra={"x-cli-dangerous": "confirm"},
 )
 async def delete_library(
     library_id: int,
@@ -651,6 +652,9 @@ async def delete_library(
     response_model=ApiResponse[ScanResultView],
     summary="扫描该库的根路径，把存量文件识别入账（后台执行）",
     operation_id="lib.scan.start",
+    openapi_extra={
+        "x-cli-long-task": {"progress_op": "lib.show", "progress_field": "scan_progress"},
+    },
 )
 async def start_scan(
     library_id: int,
@@ -705,6 +709,9 @@ async def stop_scan(
     response_model=ApiResponse[dict],
     summary="整库刷新元数据：全部已识别条目重新刮削（后台执行，串行）",
     operation_id="lib.refresh.start",
+    openapi_extra={
+        "x-cli-long-task": {"progress_op": "lib.refresh.progress", "done_field": "refreshing"},
+    },
 )
 async def start_metadata_refresh(
     library_id: int,
@@ -894,6 +901,9 @@ async def preview_organize(
     response_model=ApiResponse[OrganizeStartView],
     summary="开始整理：按规范命名批量改名归位（后台执行，与扫描互斥）",
     operation_id="lib.organize.start",
+    openapi_extra={
+        "x-cli-long-task": {"progress_op": "lib.show", "progress_field": "organize_progress"},
+    },
 )
 async def start_organize(
     library_id: int,
@@ -1227,6 +1237,7 @@ async def get_item_artwork(
     response_model=ApiResponse[ItemDeleteResultView],
     summary="从磁盘彻底删除条目（整个刮削目录：视频+NFO+海报+字幕一起清除）",
     operation_id="lib.items.delete",
+    openapi_extra={"x-cli-dangerous": "destructive"},
 )
 async def delete_library_item(
     library_id: int,
@@ -1390,6 +1401,7 @@ async def list_missing(
     response_model=ApiResponse[dict],
     summary="清理缺失记录（只删台账，绝不动磁盘）；不带 media_item_id 清整库",
     operation_id="lib.missing.clear",
+    openapi_extra={"x-cli-dangerous": "confirm"},
 )
 async def clear_missing(
     payload: MissingClearPayload,
@@ -1408,6 +1420,7 @@ async def clear_missing(
     response_model=ApiResponse[dict],
     summary="批量忽略整库的待识别文件（只删台账，绝不动磁盘）",
     operation_id="lib.unidentified.clear",
+    openapi_extra={"x-cli-dangerous": "confirm"},
 )
 async def clear_unidentified(
     payload: UnidentifiedClearPayload,
@@ -1510,6 +1523,7 @@ async def claim_files_batch(
     response_model=ApiResponse[dict],
     summary="忽略一个待识别文件：以后扫描不再过问（不动磁盘）",
     operation_id="lib.files.ignore",
+    openapi_extra={"x-cli-dangerous": "confirm"},
 )
 async def ignore_file(
     file_id: int,

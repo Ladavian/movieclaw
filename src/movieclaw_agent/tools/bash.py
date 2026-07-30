@@ -13,6 +13,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 import tempfile
 from pathlib import Path
 
@@ -31,13 +32,17 @@ _DESCRIPTION = (
 )
 
 
-def make_bash_tool(workdir: Path) -> AgentTool:
+def make_bash_tool(workdir: Path, extra_env: dict[str, str] | None = None) -> AgentTool:
+    """extra_env：附加到子进程环境的变量（如 mclaw CLI 的服务器地址与令牌），
+    与进程环境合并、同名覆盖。"""
+
     async def handler(args: dict) -> str:
         command: str = args["command"]
         timeout = float(args.get("timeout") or _DEFAULT_TIMEOUT)
         proc = await asyncio.create_subprocess_shell(
             command,
             cwd=workdir,
+            env={**os.environ, **(extra_env or {})},
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )

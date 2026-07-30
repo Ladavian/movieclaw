@@ -17,11 +17,14 @@ from movieclaw_agent.tools.bash import make_bash_tool
 from movieclaw_agent.tools.files import make_edit_tool, make_read_tool, make_write_tool
 
 
-def builtin_tools(workdir: Path | None = None) -> list[AgentTool]:
-    """构建内置工具集。workdir 是 bash 的 cwd 与相对路径的解析基准。"""
+def builtin_tools(
+    workdir: Path | None = None, extra_env: dict[str, str] | None = None
+) -> list[AgentTool]:
+    """构建内置工具集。workdir 是 bash 的 cwd 与相对路径的解析基准；
+    extra_env 注入 bash 子进程环境（如 mclaw CLI 的自动授权令牌）。"""
     wd = (workdir or Path.cwd()).resolve()
     return [
-        make_bash_tool(wd),
+        make_bash_tool(wd, extra_env),
         make_read_tool(wd),
         make_write_tool(wd),
         make_edit_tool(wd),

@@ -270,6 +270,7 @@ async def pause_subscription(
     response_model=ApiResponse[dict],
     summary="删除订阅（不影响已下载内容）",
     operation_id="sub.delete",
+    openapi_extra={"x-cli-dangerous": "confirm"},
 )
 async def delete_subscription(
     subscription_id: int,

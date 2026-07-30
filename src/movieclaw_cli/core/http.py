@@ -1,14 +1,16 @@
 """HTTP 客户端封装（docs/design/cli.md §8.3）。
 
-职责：认证注入（会话 Cookie，P1 起兼容 Bearer Token）、统一超时、
+职责：认证注入（会话 Cookie 或 Bearer 令牌）、统一超时、
 `ApiResponse{success,code,message,data}` 信封拆解、错误 → 中文 CliError
-（带退出码与 hint）映射。业务命令层只拿到拆好信封的 data。
+（带退出码与 hint）映射、文件上传/下载、spec 版本偏斜检测（读响应头
+X-Movieclaw-Spec-Hash）。业务命令层只拿到拆好信封的 data。
 """
 
 from __future__ import annotations
 
 import os
 import sys
+from pathlib import Path
 from typing import Any
 
 import httpx
@@ -18,6 +20,12 @@ from movieclaw_cli.core.errors import CliError, ExitCode
 
 SESSION_COOKIE_NAME = "movieclaw_session"
 API_PREFIX = "/api/v1"
+SPEC_HASH_HEADER = "X-Movieclaw-Spec-Hash"
+
+# 最近一次请求观察到的 (服务器, 服务端 spec 指纹)——供偏斜刷新流程在命令
+# 执行完后统一读取（gen/spec_loader.maybe_refresh），避免每个命令自行处理。
+last_seen_spec_hash: str | None = None
+last_seen_server: str | None = None
 
 
 class Api:
@@ -33,11 +41,12 @@ class Api:
     ) -> None:
         self.server = server
         self.debug = debug
+        self.last_message: str | None = None
         cookies = {}
         if cookie := cfg.load_session_cookie(server):
             cookies[SESSION_COOKIE_NAME] = cookie
         headers = {"Accept": "application/json"}
-        # P1 的 API Token 通道：环境变量存在即带上，老服务器会忽略该头
+        # Bearer 令牌通道：PAT 或产品内 Agent 工作区注入的短时效令牌
         if token := os.environ.get(cfg.ENV_TOKEN):
             headers["Authorization"] = f"Bearer {token}"
         self._client = httpx.Client(
@@ -58,9 +67,12 @@ class Api:
         *,
         params: dict[str, Any] | None = None,
         json_body: Any = None,
+        upload_path: Path | None = None,
     ) -> Any:
         """发起请求并拆信封，返回 data 字段。错误统一抛 CliError。"""
-        data, _ = self.request_raw(method, path, params=params, json_body=json_body)
+        data, _ = self.request_raw(
+            method, path, params=params, json_body=json_body, upload_path=upload_path
+        )
         return data
 
     def request_raw(
@@ -70,13 +82,37 @@ class Api:
         *,
         params: dict[str, Any] | None = None,
         json_body: Any = None,
+        upload_path: Path | None = None,
     ) -> tuple[Any, httpx.Response]:
         """同 request，但额外返回原始响应（登录要读 Set-Cookie）。"""
+        files = None
+        if upload_path is not None:
+            files = {"file": (upload_path.name, upload_path.read_bytes())}
+        response = self._send(method, path, params=params, json_body=json_body, files=files)
+        return self._parse(response), response
+
+    def download(self, path: str, target: Path, *, params: dict[str, Any] | None = None) -> None:
+        """文件直出端点：把响应内容写到本地文件。"""
+        response = self._send("GET", path, params=params)
+        if response.is_error:
+            self._parse(response)  # 统一走错误映射（会抛 CliError）
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(response.content)
+
+    def _send(
+        self,
+        method: str,
+        path: str,
+        *,
+        params: dict[str, Any] | None = None,
+        json_body: Any = None,
+        files: dict[str, Any] | None = None,
+    ) -> httpx.Response:
         url = f"{API_PREFIX}{path}"
         if self.debug:
             print(f"[debug] {method} {self.server}{url} params={params}", file=sys.stderr)
         try:
-            response = self._client.request(method, url, params=params, json=json_body)
+            response = self._client.request(method, url, params=params, json=json_body, files=files)
         except httpx.ConnectError as exc:
             raise CliError(
                 f"无法连接 movieclaw 服务器：{self.server}",
@@ -92,14 +128,19 @@ class Api:
             ) from exc
         if self.debug:
             print(f"[debug] -> {response.status_code}", file=sys.stderr)
-        return self._parse(response), response
+        if spec_hash := response.headers.get(SPEC_HASH_HEADER):
+            global last_seen_spec_hash, last_seen_server
+            last_seen_spec_hash = spec_hash
+            last_seen_server = self.server
+        return response
 
     def _parse(self, response: httpx.Response) -> Any:
+        self.last_message = None
         if response.status_code == 401:
             raise CliError(
                 "未登录或会话已过期",
                 exit_code=ExitCode.AUTH,
-                hint="请先执行 mclaw login",
+                hint="请先执行 mclaw login（或检查 MOVIECLAW_TOKEN 是否有效）",
             )
         if response.status_code == 204:
             return None
@@ -114,6 +155,7 @@ class Api:
         # 统一信封：success 字段存在即为 ApiResponse/ErrorResponse
         if isinstance(payload, dict) and "success" in payload:
             if payload.get("success"):
+                self.last_message = payload.get("message")
                 return payload.get("data")
             raise CliError(
                 payload.get("message") or f"请求失败（HTTP {response.status_code}）",

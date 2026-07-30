@@ -188,6 +188,7 @@ async def create_token() -> ApiResponse[SyncTokenView]:
     summary="关闭同步（撤销令牌）",
     dependencies=[Depends(require_login)],
     operation_id="extension.token.revoke",
+    openapi_extra={"x-cli-dangerous": "confirm"},
 )
 async def delete_token() -> ApiResponse[SyncTokenView]:
     """撤销令牌、关闭插件同步。此后插件侧接口一律 401。"""

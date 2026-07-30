@@ -35,6 +35,28 @@ class UpdateProfileRequest(BaseModel):
     nickname: str = Field(min_length=1, max_length=32, description="展示昵称")
 
 
+class ApiTokenCreateRequest(BaseModel):
+    """创建 CLI API 令牌。"""
+
+    name: str = Field(
+        min_length=1, max_length=64, description="令牌名字，如 'nas-cron'，便于识别与吊销"
+    )
+
+
+class ApiTokenView(BaseModel):
+    """令牌元信息（列表用；不含任何可用于认证的内容）。"""
+
+    id: str
+    name: str
+    created_at: str
+
+
+class ApiTokenCreatedView(ApiTokenView):
+    """创建成功的返回体：token 明文仅此一次，请立即保存。"""
+
+    token: str = Field(description="令牌明文；服务端只存哈希，之后无法再次查看")
+
+
 class SessionView(BaseModel):
     """当前登录状态（GET /auth/me 与登录成功后的返回体）。"""
 
