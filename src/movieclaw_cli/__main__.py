@@ -115,19 +115,34 @@ def _assemble() -> None:
     except Exception:
         if not from_cache:
             raise
-        # 刷新缓存里的新 spec 含本版生成器不认识的形态：回退内置基线
+        # 刷新缓存里的新 spec 含本版生成器不认识的形态：回退内置基线，
+        # 并登记坏指纹——否则每次调用结束后偏斜检查都会重拉一遍同一份坏 spec
+        bad_hash = spec_loader.active_spec_hash
         print(
             "提示：服务器接口目录较新，部分命令暂不可用，已回退内置命令目录；建议升级 CLI",
             file=sys.stderr,
         )
         spec, _ = spec_loader.load_active(None)
         build_tree(cli, spec)
+        if server:
+            spec_loader.mark_spec_bad(server, bad_hash)
 
 
-_assemble()
+# 装配失败（如安装包缺内置 spec）不能在 import 期裸抛 traceback——
+# 记下来，进 main() 后用统一的中文错误格式报告
+_ASSEMBLY_ERROR: CliError | None = None
+try:
+    _assemble()
+except CliError as _exc:
+    _ASSEMBLY_ERROR = _exc
 
 
 def main() -> int:
+    if _ASSEMBLY_ERROR is not None:
+        print(f"错误：{_ASSEMBLY_ERROR.message}", file=sys.stderr)
+        if _ASSEMBLY_ERROR.hint:
+            print(f"提示：{_ASSEMBLY_ERROR.hint}", file=sys.stderr)
+        return int(_ASSEMBLY_ERROR.exit_code)
     exit_code = 0
     settings: Settings | None = None
     try:

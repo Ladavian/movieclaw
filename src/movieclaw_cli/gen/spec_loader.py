@@ -56,6 +56,28 @@ def _cache_path(server: str) -> Path:
     return cfg.config_dir() / "spec-cache" / f"{digest}.json"
 
 
+def _bad_marker_path(server: str) -> Path:
+    """记录「已知本版生成器处理不了」的服务端 spec 指纹，阻止无限重拉。"""
+    return _cache_path(server).with_suffix(".bad")
+
+
+def mark_spec_bad(server: str, spec_hash_value: str | None) -> None:
+    """缓存 spec 建树失败时调用：删除坏缓存并登记指纹，等 CLI 升级后自然解除。"""
+    _cache_path(server).unlink(missing_ok=True)
+    if spec_hash_value:
+        path = _bad_marker_path(server)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(spec_hash_value, encoding="utf-8")
+
+
+def _known_bad_hash(server: str) -> str | None:
+    path = _bad_marker_path(server)
+    try:
+        return path.read_text(encoding="utf-8").strip() or None
+    except OSError:
+        return None
+
+
 def load_active(server: str | None) -> tuple[dict[str, Any], bool]:
     """装载生效 spec：目标服务器有刷新缓存则优先，否则内置基线。
 
@@ -85,13 +107,18 @@ def guess_server_for_startup(argv: list[str]) -> str | None:
     只做无副作用的轻量解析：--server 标志 > 环境变量 > 配置文件当前上下文。
     猜不出（或配置损坏）返回 None，走内置基线——功能不受影响。
     """
+    context: str | None = None
     for i, arg in enumerate(argv):
         if arg == "--server" and i + 1 < len(argv):
             return argv[i + 1].rstrip("/")
         if arg.startswith("--server="):
             return arg.split("=", 1)[1].rstrip("/")
+        if arg == "--context" and i + 1 < len(argv):
+            context = argv[i + 1]
+        elif arg.startswith("--context="):
+            context = arg.split("=", 1)[1]
     try:
-        return cfg.resolve_server(None, None)
+        return cfg.resolve_server(None, context)
     except CliError:
         return None
 
@@ -107,6 +134,10 @@ def maybe_refresh(settings: Any) -> None:
     seen = http_mod.last_seen_spec_hash
     server = http_mod.last_seen_server
     if not seen or not server or seen == active_spec_hash:
+        return
+    if seen == _known_bad_hash(server):
+        # 该版本的服务端 spec 已确认本版生成器处理不了：不再重复拉取，
+        # 静默维持内置基线，直到服务端再次升级（指纹变化）或 CLI 升级
         return
     try:
         api = settings.make_api(server=server)

@@ -48,3 +48,11 @@ def test_unauthenticated_exits_3_with_login_hint(run_mclaw, live_server) -> None
     result = run_mclaw("--server", live_server, "sub", "list")
     assert result.returncode == 3
     assert "mclaw login" in result.stderr
+
+
+def test_server_url_without_scheme_exits_4_with_hint(run_mclaw) -> None:
+    """地址漏写 http:// 前缀（极常见）：中文提示而非裸 traceback。"""
+    result = run_mclaw("--server", "127.0.0.1:9", "--timeout", "3", "sub", "list")
+    assert result.returncode == 4
+    assert "http://" in result.stderr
+    assert "Traceback" not in result.stderr

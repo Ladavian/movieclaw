@@ -97,3 +97,16 @@ def test_cached_spec_json_is_valid(isolated_home, live_server, admin) -> None:
 
     cached = json.loads(spec_loader._cache_path(live_server).read_text(encoding="utf-8"))
     assert cached["paths"], "缓存必须是完整可用的 OpenAPI spec"
+
+
+def test_known_bad_hash_stops_refetch_loop(isolated_home, live_server, admin) -> None:
+    """缓存 spec 建树失败后登记坏指纹：同一服务端版本不再每次调用都重拉。"""
+    _login_and_store_cookie(live_server, admin)
+    spec_loader.load_active(None)
+    http_mod.last_seen_spec_hash = "0000000000000000"
+    http_mod.last_seen_server = live_server
+
+    spec_loader.mark_spec_bad(live_server, "0000000000000000")
+    spec_loader.maybe_refresh(_Settings())
+
+    assert not spec_loader._cache_path(live_server).exists(), "坏指纹在册时不应重新拉取"

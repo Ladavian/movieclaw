@@ -13,9 +13,8 @@ import sys
 import time
 
 import click
-import httpx
 
-from movieclaw_cli.core.errors import CliError
+from movieclaw_cli.core.errors import CliError, ExitCode
 from movieclaw_cli.core.http import Api
 from movieclaw_cli.core.output import emit
 from movieclaw_cli.overlay.groups import output_option
@@ -54,7 +53,9 @@ def _stream_run(api: Api, run_id: str, from_id: int | None) -> tuple[str, dict]:
     failures = 0
     while True:
         try:
+            got_event = False
             for sse in api.stream_sse(f"/agent/runs/{run_id}/stream", last_event_id=cursor):
+                got_event = True
                 failures = 0
                 if sse.id is not None:
                     cursor = sse.id
@@ -63,8 +64,12 @@ def _stream_run(api: Api, run_id: str, from_id: int | None) -> tuple[str, dict]:
                     return sse.event, payload
                 _render_event(sse.event, payload)
             # 流正常闭合但没见到终态（服务重启等）：按断线处理重连
-            raise httpx.ReadError("事件流在终态前闭合")
-        except (httpx.HTTPError, httpx.StreamError):
+            raise CliError("事件流在终态前闭合", exit_code=ExitCode.NETWORK, details=got_event)
+        except CliError as exc:
+            # 只有网络类失败才重连——服务器重启期间是 ConnectError（也归一为
+            # NETWORK），必须落在退避重试里；4xx/业务错误照常抛出
+            if exc.exit_code != ExitCode.NETWORK:
+                raise
             failures += 1
             if failures > _MAX_RECONNECTS:
                 raise CliError(

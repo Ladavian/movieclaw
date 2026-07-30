@@ -124,6 +124,7 @@ def search(
     api = settings.make_api()
     collected: list[dict] = []
     site_status: list[dict] = []
+    saw_done = False
     try:
         for event in api.stream_sse("/search/stream", params=params):
             payload = json.loads(event.data) if event.data else {}
@@ -147,12 +148,20 @@ def search(
                     file=sys.stderr,
                 )
             elif event.event == "done":
+                saw_done = True
                 print(
                     f"完成：共 {payload.get('total')} 条（{payload.get('elapsed_ms')}ms）",
                     file=sys.stderr,
                 )
     finally:
         api.close()
+    if not saw_done:
+        # 流在 done 之前闭合：结果不完整，绝不能当完整结果输出/落快照
+        raise CliError(
+            f"搜索流提前中断，结果不完整（仅收到 {len(collected)} 条，未落快照）",
+            exit_code=ExitCode.NETWORK,
+            hint="网络可能不稳或服务已重启，请重试 mclaw search",
+        )
     if stream_events:
         return
 
@@ -211,14 +220,23 @@ def download(
     投递落点由服务端三级兜底决策（监听导入 / 直接进库 / 下载器默认目录），
     结论会回显——「会不会自动入库」当场讲清。
     """
+    api = settings.make_api()
     body: dict[str, Any] = {}
     if row is not None:
         snapshot = load_snapshot()
         if snapshot is None:
+            api.close()
             raise CliError(
                 "没有可用的搜索快照",
                 exit_code=ExitCode.USAGE,
                 hint="先执行 mclaw search <关键词>，或改用 --site-id + --url 显式指定",
+            )
+        if snapshot.get("server") and snapshot["server"] != api.server:
+            api.close()
+            raise CliError(
+                f"搜索快照来自另一台服务器（{snapshot['server']}），不能提交到 {api.server}",
+                exit_code=ExitCode.USAGE,
+                hint="在当前服务器重新执行 mclaw search 后再用行号下载",
             )
         items = snapshot.get("items") or []
         if not 1 <= row <= len(items):
@@ -229,10 +247,13 @@ def download(
             )
         hit = items[row - 1]
         attrs = hit.get("attrs") or {}
+        # 条目标题取解析出的片名（中文名优先）；TorrentAttrs 是 titles_zh/
+        # titles_en 列表，没有 title 标量字段
+        parsed_titles = (attrs.get("titles_zh") or []) + (attrs.get("titles_en") or [])
         body = {
             "site_id": hit.get("site_id"),
             "download_url": hit.get("download_url"),
-            "title": attrs.get("title") or None,
+            "title": parsed_titles[0] if parsed_titles else None,
             "year": attrs.get("year"),
             "subtitle": hit.get("subtitle") or None,
         }
@@ -240,6 +261,7 @@ def download(
     elif site_id and url:
         body = {"site_id": site_id, "download_url": url}
     else:
+        api.close()
         raise click.UsageError("请给出搜索结果行号，或同时提供 --site-id 与 --url")
 
     if library_id is not None:
@@ -247,7 +269,6 @@ def download(
     if save_path is not None:
         body["save_path"] = save_path
 
-    api = settings.make_api()
     try:
         data = api.request("POST", "/downloaders/submit", json_body=body)
         if api.last_message:

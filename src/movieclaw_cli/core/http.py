@@ -46,12 +46,14 @@ class Api:
         self.debug = debug
         self.last_message: str | None = None
         cookies = {}
-        if cookie := cfg.load_session_cookie(server):
-            cookies[SESSION_COOKIE_NAME] = cookie
         headers = {"Accept": "application/json"}
-        # Bearer 令牌通道：PAT 或产品内 Agent 工作区注入的短时效令牌
+        # Bearer 令牌通道：PAT 或产品内 Agent 工作区注入的短时效令牌。
+        # 有令牌时**不再附带本地 Cookie**——服务端鉴权 Cookie 优先，
+        # 过期的旧 Cookie 会把有效令牌拖成 401
         if token := os.environ.get(cfg.ENV_TOKEN):
             headers["Authorization"] = f"Bearer {token}"
+        elif cookie := cfg.load_session_cookie(server):
+            cookies[SESSION_COOKIE_NAME] = cookie
         self._client = httpx.Client(
             base_url=server,
             timeout=timeout,
@@ -103,8 +105,10 @@ class Api:
     ):
         """订阅一个 SSE 端点，产出 SseEvent（生成器；调用方 for 循环消费）。
 
-        连接前的 4xx（未登录/不存在）走统一错误映射；连接建立后的断流
-        由调用方决定是否用 last_event_id 重连（Agent 流）或放弃（搜索流）。
+        错误统一归一为 CliError(NETWORK)：连接失败、流中途断开、长时间无
+        数据（read 超时 120s，防半开连接永久挂死——服务端有心跳/事件节奏，
+        正常流不会触发）。调用方据 NETWORK 退出码决定重连（Agent 流用
+        last_event_id 续传）或如实报告不完整（搜索流）。
         """
         from movieclaw_cli.core.sse import parse_sse_lines
 
@@ -114,7 +118,7 @@ class Api:
             headers["Last-Event-ID"] = str(last_event_id)
         try:
             with self._client.stream(
-                "GET", url, params=params, headers=headers, timeout=httpx.Timeout(30, read=None)
+                "GET", url, params=params, headers=headers, timeout=httpx.Timeout(30, read=120)
             ) as response:
                 if response.status_code >= 400:
                     response.read()
@@ -125,6 +129,18 @@ class Api:
                 f"无法连接 movieclaw 服务器：{self.server}",
                 exit_code=ExitCode.NETWORK,
                 hint="确认服务已启动、地址正确（含端口）",
+            ) from exc
+        except httpx.TimeoutException as exc:
+            raise CliError(
+                "事件流超过 120 秒没有任何数据，已断开",
+                exit_code=ExitCode.NETWORK,
+                hint="网络可能不稳或服务假死；可重试",
+            ) from exc
+        except (httpx.HTTPError, httpx.InvalidURL, httpx.StreamError) as exc:
+            raise CliError(
+                f"事件流中断：{exc}",
+                exit_code=ExitCode.NETWORK,
+                hint="网络可能不稳或服务已重启；可重试",
             ) from exc
 
     def download(self, path: str, target: Path, *, params: dict[str, Any] | None = None) -> None:
@@ -162,6 +178,14 @@ class Api:
                 exit_code=ExitCode.NETWORK,
                 hint="可用 --timeout 调大超时时间",
             ) from exc
+        except (httpx.HTTPError, httpx.InvalidURL) as exc:
+            # 兜底所有传输层异常（UnsupportedProtocol / ReadError /
+            # RemoteProtocolError / ProxyError…），绝不向用户裸抛 traceback
+            raise CliError(
+                f"与服务器通信失败：{exc}",
+                exit_code=ExitCode.NETWORK,
+                hint=f"检查服务器地址格式（须含 http:// 前缀，当前为 {self.server}）与网络状况",
+            ) from exc
         if self.debug:
             print(f"[debug] -> {response.status_code}", file=sys.stderr)
         if spec_hash := response.headers.get(SPEC_HASH_HEADER):
@@ -173,8 +197,14 @@ class Api:
     def _parse(self, response: httpx.Response) -> Any:
         self.last_message = None
         if response.status_code == 401:
+            # 优先透传服务端的具体原因（如「用户名或密码错误」），
+            # 只在拿不到时才用通用话术
+            try:
+                message = (response.json() or {}).get("message")
+            except ValueError:
+                message = None
             raise CliError(
-                "未登录或会话已过期",
+                message or "未登录或会话已过期",
                 exit_code=ExitCode.AUTH,
                 hint="请先执行 mclaw login（或检查 MOVIECLAW_TOKEN 是否有效）",
             )

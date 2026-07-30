@@ -193,7 +193,7 @@ _SSE_BODY = (
                     "size_bytes": 20_000_000_000,
                     "free": True,
                     "download_url": "https://a/dl/1",
-                    "attrs": {"resolution": "2160p", "title": "沙丘", "year": 2021},
+                    "attrs": {"resolution": "2160p", "titles_zh": ["沙丘"], "year": 2021},
                 },
                 {
                     "site_id": "a",
@@ -204,7 +204,7 @@ _SSE_BODY = (
                     "size_bytes": 8_000_000_000,
                     "free": False,
                     "download_url": "https://a/dl/2",
-                    "attrs": {"resolution": "1080p", "title": "沙丘", "year": 2021},
+                    "attrs": {"resolution": "1080p", "titles_zh": ["沙丘"], "year": 2021},
                 },
             ],
         },
@@ -339,7 +339,7 @@ def test_organize_with_yes_executes_and_waits(run_cli) -> None:
     paths = [c["path"] for c in calls]
     assert paths[:2] == ["/api/v1/libraries/1/organize/preview", "/api/v1/libraries/1/organize"]
     assert "/api/v1/libraries/1" in paths[2:]  # --wait 轮询到 organize_progress 为 null
-    assert "任务已完成" in err
+    assert "任务已结束" in err
 
 
 # ---------------------------------------------------------------------------
@@ -435,3 +435,87 @@ def test_logs_tail_prints_latest_day(run_cli) -> None:
     code, out, _err = run_cli(["logs", "tail", "--lines", "5"], transport)
     assert code == 0
     assert out.splitlines() == ["行1", "行2"]
+
+
+# ---------------------------------------------------------------------------
+# 审查修复的回归用例
+# ---------------------------------------------------------------------------
+
+
+def test_search_premature_close_exits_4_without_snapshot(run_cli, tmp_path) -> None:
+    """流在 done 前闭合：部分结果绝不能当完整结果输出/落快照。"""
+    partial = _SSE_BODY.split("event: done")[0]  # 去掉 done 帧
+    calls: list[dict] = []
+    transport = _transport(
+        {
+            ("GET", "/api/v1/search/stream"): httpx.Response(
+                200, content=partial.encode(), headers={"content-type": "text/event-stream"}
+            )
+        },
+        calls,
+    )
+    code, out, err = run_cli(["search", "沙丘", "-o", "json"], transport)
+    assert code == 4
+    assert "结果不完整" in err
+    assert out.strip() == ""  # 不输出部分结果
+
+
+def test_download_rejects_snapshot_from_other_server(run_cli, monkeypatch) -> None:
+    calls: list[dict] = []
+    run_cli(["search", "沙丘", "-o", "json"], _search_transport(calls))
+    # 换服务器后用旧快照的行号下载：必须拒绝
+    monkeypatch.setenv("MOVIECLAW_SERVER", "http://another")
+    code, _out, err = run_cli(["download", "1"], _search_transport(calls))
+    assert code == 2
+    assert "另一台服务器" in err
+
+
+def test_wrong_password_shows_server_message(run_cli) -> None:
+    """401 透传服务端具体原因，而不是笼统的「未登录」。"""
+    transport = _transport(
+        {
+            ("POST", "/api/v1/auth/bootstrap"): httpx.Response(
+                200, json=_envelope({"initialized": True})
+            ),
+            ("GET", "/api/v1/auth/bootstrap"): httpx.Response(
+                200, json=_envelope({"initialized": True})
+            ),
+            ("POST", "/api/v1/auth/login"): httpx.Response(
+                401,
+                json={"success": False, "code": "UNAUTHORIZED", "message": "用户名或密码错误"},
+            ),
+        },
+        [],
+    )
+    code, _out, err = run_cli(["login", "--username", "admin", "--password", "wrong"], transport)
+    assert code == 3
+    assert "用户名或密码错误" in err
+
+
+def test_agent_stream_reconnects_after_interruption(run_cli, monkeypatch) -> None:
+    """事件流中断（含服务重启的连接拒绝形态）应重连续传，而不是立刻放弃。"""
+    monkeypatch.setattr("time.sleep", lambda _s: None)
+    attempts: list[int] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/api/v1/agent/start":
+            return httpx.Response(200, json=_envelope({"run_id": "r1", "session_id": "s1"}))
+        attempts.append(1)
+        if len(attempts) == 1:
+            # 第一次连接：发一半就断（无终态）
+            return httpx.Response(
+                200,
+                content=b'id: 1\nevent: text_delta\ndata: {"delta": "part"}\n\n',
+                headers={"content-type": "text/event-stream"},
+            )
+        assert request.headers.get("Last-Event-ID") == "1"  # 续传游标
+        return httpx.Response(
+            200,
+            content=b'id: 2\nevent: agent_done\ndata: {"result": {"steps": 1}}\n\n',
+            headers={"content-type": "text/event-stream"},
+        )
+
+    code, out, err = run_cli(["agent", "run", "任务"], httpx.MockTransport(handler))
+    assert code == 0, err
+    assert len(attempts) == 2
+    assert "part" in out

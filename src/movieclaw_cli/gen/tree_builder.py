@@ -309,6 +309,12 @@ def wait_long_task(
     done_field = task.get("done_field")
     started = time.monotonic()
     last_line = ""
+    # 启动竞态防护：服务端是「响应先回、后台任务随后注册状态」，立刻轮询会把
+    # 「还没开始」误判成「已结束」。先小睡一拍；此后若从未观测到运行态，需要
+    # 连续多次读到终态才下结论（快任务确实可能在首次轮询前就跑完）。
+    time.sleep(1.0)
+    saw_running = False
+    done_streak = 0
     try:
         while True:
             elapsed = time.monotonic() - started
@@ -323,8 +329,19 @@ def wait_long_task(
             progress = (data or {}).get(field) if field else data
             done = (progress is None) if field else not (data or {}).get(done_field)
             if done:
-                print("任务已完成", file=sys.stderr)
-                return
+                if saw_running:
+                    # 注意：进度接口不区分成功/失败，这里只能断言「已结束」；
+                    # 若怀疑失败可查系统日志（mclaw logs tail）
+                    print("任务已结束", file=sys.stderr)
+                    return
+                done_streak += 1
+                if done_streak >= 3:
+                    print("任务已结束（未观测到运行状态，可能启动后瞬间完成）", file=sys.stderr)
+                    return
+                time.sleep(2)
+                continue
+            saw_running = True
+            done_streak = 0
             line = json.dumps(progress, ensure_ascii=False, default=str)
             if line != last_line:
                 print(f"进行中：{line}", file=sys.stderr)

@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import tomllib
 from pathlib import Path
 from typing import Any
@@ -55,15 +56,19 @@ def load_config() -> dict[str, Any]:
 
 
 def save_config(config: dict[str, Any]) -> None:
-    """写回配置。结构固定且简单，手写 TOML 序列化避免引入写库依赖。"""
+    """写回配置。结构固定且简单，手写 TOML 序列化避免引入写库依赖。
+
+    字符串值用 json.dumps 序列化——JSON 字符串转义是合法的 TOML 基本
+    字符串，含引号/反斜杠的值不会写出损坏的配置文件。
+    """
     lines: list[str] = []
     if current := config.get("current_context"):
-        lines.append(f'current_context = "{current}"')
+        lines.append(f"current_context = {json.dumps(current, ensure_ascii=False)}")
         lines.append("")
     for name, ctx in (config.get("contexts") or {}).items():
         lines.append(f"[contexts.{name}]")
         for key, value in ctx.items():
-            lines.append(f'{key} = "{value}"')
+            lines.append(f"{key} = {json.dumps(value, ensure_ascii=False)}")
         lines.append("")
     path = _config_path()
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -97,8 +102,17 @@ def resolve_server(flag_server: str | None, flag_context: str | None) -> str:
     )
 
 
+_CONTEXT_NAME_RE = re.compile(r"^[A-Za-z0-9_-]+$")
+
+
 def save_context(server: str, name: str = "default") -> None:
     """登录成功后把服务器记进上下文；首个上下文自动设为当前。"""
+    if not _CONTEXT_NAME_RE.match(name):
+        raise CliError(
+            f"上下文名不合法：{name}",
+            exit_code=ExitCode.USAGE,
+            hint="只允许字母、数字、连字符与下划线（TOML 表名约束）",
+        )
     config = load_config()
     contexts = config.setdefault("contexts", {})
     contexts[name] = {"server": server}
@@ -126,19 +140,24 @@ def load_session_cookie(server: str) -> str | None:
     return entry.get("session_cookie") if isinstance(entry, dict) else None
 
 
+def _write_credentials(creds: dict[str, Any]) -> None:
+    """凭证落盘：以 0600 权限打开后再写入，不留「先写后 chmod」的可读窗口。"""
+    path = _credentials_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as f:
+        f.write(json.dumps(creds, ensure_ascii=False, indent=2))
+    path.chmod(0o600)  # 已存在的旧文件也收紧权限
+
+
 def save_session_cookie(server: str, cookie: str) -> None:
     creds = _load_credentials()
     creds[server] = {"session_cookie": cookie}
-    path = _credentials_path()
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(creds, ensure_ascii=False, indent=2), encoding="utf-8")
-    path.chmod(0o600)
+    _write_credentials(creds)
 
 
 def delete_session_cookie(server: str) -> None:
     creds = _load_credentials()
     if server in creds:
         del creds[server]
-        _credentials_path().write_text(
-            json.dumps(creds, ensure_ascii=False, indent=2), encoding="utf-8"
-        )
+        _write_credentials(creds)
