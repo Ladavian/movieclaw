@@ -1,229 +1,195 @@
-# 产品内 Agent 集成 mclaw：知识分层与提示词设计
+# 产品内 Agent 集成 mclaw：独立工具设计（tool 描述 + 提示词思路）
 
 > 背景：movieclaw_agent 已有 bash/read/write/edit 四个基础工具，P1 已完成
-> 工作区自动授权（每次运行注入 MOVIECLAW_SERVER / MOVIECLAW_TOKEN，bash 里
-> `mclaw ...` 直接可用）。**缺的最后一环是让模型「知道并正确使用」mclaw**
-> ——这是纯提示词与工具描述工程，本文细化到可逐段评审的文案。
+> 工作区自动授权。**集成方式定为：新增一个独立的 `mclaw` 工具**——不在 bash
+> 描述上捎带，而是让模型在「选工具」这一层就看见一个明确的产品操作入口，
+> 工具描述本身携带一级服务目录（有哪些 router/命令族可用）。
 >
-> 集成形态沿用 docs/design/cli.md §6.1 的决策：形态 A（bash + 提示词）先行，
-> 形态 B（命令注册为一等工具）预留，文末附简要展望。
+> 这与现有提示词架构完全同构：`prompts.py` 的既有原则是「正文只写通用行为
+> 准则，**领域语义由各工具的 description 承载**」——mclaw 的一切知识都放进
+> 它自己的工具描述，系统提示词正文**零改动**。
 
 ---
 
-## 0. 设计约束（来自现有提示词架构）
+## 0. 为什么独立工具优于 bash 捎带（本设计的三个硬收益）
 
-`movieclaw_agent/prompts.py` 的既有原则必须遵守：
-
-1. **正文只写通用行为准则**，不含领域词汇；
-2. **领域语义由工具 description 与运行时环境段承载**；
-3. **会变的事实绝不写死**，由 `build_system_prompt(extra_environment)` 运行时拼接。
-
-由此推出本设计的核心问题：mclaw 的知识（它存在、怎么发现用法、怎么判读结果、
-什么能做什么不能做）应该**拆开放在哪几层**，每层怎么防漂移。
+1. **选择面清晰**：模型决定「用什么做这件事」时看的是工具列表。独立的
+   `mclaw` 工具让「操作产品 → 选 mclaw」一步成立，不需要模型先想到 bash
+   再想起里面装了个 CLI；bash 回归纯粹的通用 shell 定位。
+2. **令牌隔离（安全升级）**：MOVIECLAW_TOKEN 只注入 mclaw 工具的子进程，
+   **不再进 bash 的环境**——bash 里 `env`/`echo $MOVIECLAW_TOKEN` 从此拿不到
+   凭证，泄漏面从「整个 shell」收窄到「一个不透传环境的专用工具」。
+3. **硬闸位点**：递归禁令（不允许在工具里再调 `mclaw agent ...`）从提示词
+   软约束升级为工具 handler 里的代码硬闸，模型绕不过去。
 
 ---
 
-## 1. 知识分层：四层各放什么
+## 1. 工具定义（评审点 ①：参数面与执行语义）
+
+```python
+# movieclaw_agent/tools/mclaw.py
+def make_mclaw_tool(
+    workdir: Path,
+    extra_env: dict[str, str],      # MOVIECLAW_SERVER / MOVIECLAW_TOKEN（只给本工具）
+    service_map: str,               # 一级服务目录文本，由 API 层从 spec 渲染后传入
+) -> AgentTool: ...
+```
+
+参数 schema（刻意最小——mclaw 自身就是完整的参数体系，工具不再重复建模）：
+
+```json
+{
+  "type": "object",
+  "properties": {
+    "args": {
+      "type": "string",
+      "description": "mclaw 后面的完整参数串（不含 mclaw 本身），如 'sub list' 或 'search \"沙丘2\" --resolution 2160p'"
+    },
+    "timeout": {
+      "type": "number",
+      "description": "超时秒数（可选，默认 300；长任务等待时适当调大）"
+    }
+  },
+  "required": ["args"]
+}
+```
+
+执行语义：
+
+- **`shlex.split(args)` 后以 argv 直接执行 mclaw 可执行文件，不经 shell**
+  ——没有管道/重定向/变量展开，注入面为零；需要组合处理输出时，模型把
+  JSON 结果交给 bash/read 等其他工具，职责分明。
+- 子进程环境 = 进程环境 + extra_env（令牌仅此处注入）；cwd = 工作区。
+- **硬闸**：`args` 的首个 token 为 `agent` 时直接返回错误文本
+  「不能在工具里调用 mclaw agent——那是你自己的运行入口（禁止递归）。
+  请直接在当前会话完成任务」，不执行子进程。`login`/`logout` 同样拦截
+  （授权已配置，执行只会破坏凭证状态）。
+- 输出组装（复用 bash 工具的截断实现）：
 
 ```
-L1 bash 工具 description     「mclaw 存在且已授权」——一句话（模型选工具时必看的位置）
-L2 系统提示词「mclaw 规程」段  稳定的使用协议：发现/判读/危险/长任务/禁区（纯准则，零命令清单）
-L3 运行时环境段               动态事实：命令族清单 + 精选捷径（渲染自 spec，永不漂移）
-L4 按需发现（不占提示词）      参数细节靠 mclaw <域> <命令> --help 现查
+<stdout 截断后内容>
+[stderr]
+<stderr 截断后内容>
+[退出码 7：结果有歧义——stdout 是候选清单，选定后按提示重跑]
 ```
 
-分层的判断标准，与「什么进提示词、什么靠发现」的取舍：
+  **退出码语义标注是本工具独有的运行时教学**：handler 按退出码契约附一行
+  中文解读（0 不标注；1 业务错误看 stderr；2 用法错误先 --help；3 授权失效
+  应停止并报告用户；5 需要 --yes；6 等待超时任务仍在后台；7 歧义待选）。
+  模型即使没读过任何文档，也能从工具结果本身学会正确的下一步。
 
-| 知识 | 放哪 | 理由 |
+## 2. 工具 description 全文草案（评审点 ②：一级服务目录 + 使用协议）
+
+description = 静态协议文本 + 动态服务目录（`service_map` 拼接）。全文如下：
+
+```text
+movieclaw 的官方命令行工具。对本产品的一切操作——搜索资源、订阅、媒体库、
+下载、站点/下载器/规则等全部设置——都用本工具完成，不要用 bash 直接调 API。
+授权已自动配置，永远不需要 login。
+
+可用服务（一级目录，参数细节用 --help 现查，如 args="sub --help"）：
+- search   站点资源搜索：search "关键词" 流式聚合出带行号的结果
+- download 下载：download <行号> 提交上次搜索的某行（或 --site-id + --url）
+- sub      订阅：sub create 一步完成消歧/预检/创建；list/show/update/pause/delete
+- lib      媒体库：库管理、scan 扫描、organize 整理、items 条目、
+           unidentified 待识别认领、missing 缺失重下、review 身份复核
+- site     PT 站点接入与验证 ｜ dl 下载器接入与默认设置
+- watch    监听导入规则 ｜ rules 订阅过滤规则组
+- discover 影视元数据与榜单 ｜ people 影人档案（本地库）
+- llm      AI 模型供应商 ｜ net 网络与代理 ｜ logs 系统日志
+- auth     账号/API 令牌 ｜ status 一眼看部署与登录状态
+
+使用协议：
+- 输出即数据：stdout 是 JSON（默认），stderr 是过程提示与错误原因。
+- 参数拿不准就先 --help（域级和命令级都有，含示例），不要凭记忆猜。
+- 列表默认有条数上限、长字段有截断；下结论前确认没有被截断（--limit 可调）。
+- 带 ⚠ 的命令需要 --yes 确认。其中 lib items delete 会删除磁盘上的媒体文件：
+  必须先用只读命令查清将删除的具体条目、向用户复述并取得本轮明确同意后才能
+  执行；用户泛泛说「清理/整理」不构成删除文件的同意。其余 ⚠ 命令（删配置、
+  清记录）在用户任务明确要求时可直接 --yes。
+- 扫描/整理/元数据刷新默认阻塞等待完成；预计超过 4 分钟的任务用 --no-wait
+  启动，再用对应查询命令轮询进度，或调大本工具的 timeout 参数。
+```
+
+设计取舍说明（供评审）：
+
+- **一级目录进 description，二级以下坚决不进**：目录 17 行 ≈ 300 token，让
+  模型「知道去哪个域找」；126 条命令的参数细节交给 --help 现查（L4），
+  否则 description 膨胀到数千 token 且必然漂移。
+- **目录不是手写的**：`service_map` 段由 API 层从 CLI 内置 spec +
+  `tree_builder.DOMAIN_HELP` 渲染（含每个域的一行说明与关键子能力），
+  同仓构建保证与真实命令面严格同版；上面草案即渲染目标格式。
+- **危险规约放 description 而非系统提示词**：这是 mclaw 的领域语义，按
+  现有架构归工具承载；且模型每次调用工具时 description 都在注意力窗口里，
+  比相隔很远的系统提示词更「贴现场」。
+- **退出码表不进 description**：由工具结果的运行时标注承载（§1），
+  省 token 且教在事发现场。
+
+## 3. 系统提示词与其他工具：几乎零改动（评审点 ③）
+
+- `prompts.py` 正文：**不改**。通用准则（先查证、并行调用、工作循环）
+  已经覆盖 mclaw 的使用姿势；领域语义全部在工具 description。
+- 环境段：**不改**（仍只有日期）。部署状态一条 `status` 就能查，不预注入。
+- bash 工具：**revert P1 的 extra_env 注入**（令牌改为只进 mclaw 工具），
+  description 不加任何 mclaw 内容。bash/read/write/edit 回归纯工作区定位。
+- 装配（`routes/agent.py`）：
+
+```python
+def get_agent_tools(cli_env: dict[str, str]) -> list[AgentTool]:
+    workdir = ...
+    return [
+        *builtin_tools(workdir),                      # bash 不再携带 cli_env
+        make_mclaw_tool(workdir, cli_env, render_service_map()),
+    ]
+```
+
+`render_service_map()` 放 `movieclaw_api/services/mclaw_tool.py`：数据源为
+`movieclaw_cli.gen.spec_loader.load_baseline()` + `tree_builder`（域 →
+DOMAIN_HELP 简介 + 关键子命令），进程内缓存一次。
+
+## 4. 安全设计（双硬闸 + 令牌收窄）
+
+| 防线 | 位置 | 拦什么 |
 |---|---|---|
-| mclaw 存在、已授权 | L1 + L2 开头 | 不告知则模型根本不会想到用；授权已配好必须显式说，否则模型会先跑 login |
-| 使用协议（退出码/stdout-stderr 分工/--yes 规约） | L2 | 稳定不变、每次任务都用到，值得常驻；写成准则而非清单 |
-| 有哪些命令族、精选捷径 | L3 | 会随版本变 → 必须从 spec 生成；只给「地图」不给「说明书」，控制 token |
-| 每条命令的参数细节 | L4 | 126 条命令全量进提示词 ≈ 上万 token，而 --help 一次现查 ≈ 数百 token 且永远准确 |
-| 部署状态（站点/下载器/库接入情况） | 不进（一期） | 模型一条 `mclaw status` / `mclaw site list` 就能查到，预注入是重复投资；二期可选 |
+| 工具 handler 硬闸 | `make_mclaw_tool` | `agent` 子命令（递归）、`login/logout`（破坏凭证） |
+| 服务端硬闸 | `agent.start` 路由 | 持 `agent:` 身份令牌的再发起（防绕过工具直接 curl） |
+| 令牌收窄 | 只注入 mclaw 工具子进程 | bash 里 `env` 再也看不到 MOVIECLAW_TOKEN |
 
-**防漂移机制**：L3 由代码从内置 spec 渲染（同仓构建 → 与服务器严格同版）；
-L2/L1 里**禁止出现任何具体命令清单**（守护测试断言 L2 文案不含「mclaw <域> <动词>」
-形态的枚举），改版本时无需同步维护提示词。
-
-Token 预算：L1 一句（~30 token）+ L2（~450 token）+ L3（~220 token）≈ 700 token，
-一次性成本，换掉的是模型每次任务开头的多轮盲目探索。
-
----
-
-## 2. L1：bash 工具 description 修改稿（评审点 ①）
-
-bash 工具属于通用的 movieclaw_agent 包，不能写死领域内容——给工厂加一个可选
-`extra_note` 参数，由 API 层（知道 mclaw 存在的那一层）传入：
+服务端硬闸实现（同前版设计）：
 
 ```python
-# movieclaw_agent/tools/bash.py
-def make_bash_tool(workdir, extra_env=None, extra_note: str | None = None): ...
-# description = _DESCRIPTION + ("\n" + extra_note if extra_note else "")
-
-# movieclaw_api/api/routes/agent.py 传入：
-_MCLAW_NOTE = (
-    "工作区已安装本产品的命令行工具 mclaw（授权已自动配置）："
-    "对 movieclaw 本身的一切操作——搜索、订阅、媒体库、下载、设置——都通过执行 mclaw 完成。"
-)
-```
-
-> 为什么放工具描述而不只放提示词：模型决定「用哪个工具做这件事」时，
-> 权重最高的上下文就是各工具的 description；这一句让「操作产品 → 选 bash → 跑
-> mclaw」的链路在选择工具那一刻就成立。
-
-## 3. L2：系统提示词「mclaw 规程」段全文草案（评审点 ②）
-
-追加为 `prompts.py` 的独立常量 `MCLAW_PROMPT`，拼在通用正文之后。全文如下，
-每一条的设计理由用引用块标注（正式文案不含引用块）：
-
-```markdown
-# movieclaw 操作规程（mclaw）
-工作区已安装 mclaw，你对本产品的一切操作都通过在 bash 里执行它完成。
-授权已自动配置：绝不要执行 mclaw login / logout，绝不要设置或打印任何令牌与环境变量。
-```
-
-> 「绝不打印令牌」：MOVIECLAW_TOKEN 在工作区环境变量里，必须显式禁止回显，
-> 否则一句 `env` 就会把凭证吐进对话转录。
-
-```markdown
-## 用法发现
-- 可用命令族见「环境」段。参数细节永远用 `mclaw <域> --help`、`mclaw <域> <命令> --help` 现查，不要凭记忆猜参数或猜取值。
-- 优先用一条命令完成一个意图：搜索用 `mclaw search "关键词"`，下载搜索结果用 `mclaw download <行号>`，订阅用 `mclaw sub create`——这些命令内置了多步编排（消歧、预检、确认），比自己拼多个底层命令更不容易出错。
-```
-
-> 「现查不猜」对应实测痛点：模型最常见的失败是臆造参数名；
-> 「优先精选命令」把 cli.md §7 的编排价值显式告知，否则模型可能自己串底层接口。
-
-```markdown
-## 结果判读
-- stdout 是数据（此环境下默认 JSON），stderr 是过程提示与错误说明——判断成败看退出码，找原因看 stderr。
-- 退出码约定：0 成功；1 业务错误（stderr 有中文原因与提示）；2 用法错误（先 --help 纠正再试）；3 授权失效（不要重试，直接向用户报告）；5 该操作需要 --yes 确认；6 等待超时但任务仍在后台执行；7 歧义——stdout 里是候选清单，向用户确认或据上下文选定后带 --tmdb 重跑。
-- 列表输出默认有条数上限且长字段会截断；需要完整数据时按 help 里的 --limit / --all 调整，不要基于截断结果下结论。
-```
-
-> 退出码逐条展开是值得的：它把「试错学习」变成「查表决策」，尤其 7（歧义）
-> 和 5（要确认）各自蕴含明确的下一步动作。
-
-```markdown
-## 危险操作（带 ⚠ 的命令）
-- 普通确认级（删除配置、清理记录等）：当用户的任务明确要求这件事时，直接加 --yes 执行；任务只是隐含或顺带涉及时，先向用户确认。
-- 破坏级（`mclaw lib items delete`，会删除磁盘上的媒体文件）：必须先执行只读命令查清将被删除的具体条目，把片名与文件数报给用户，取得**本轮对话中的明确同意**后才能加 --yes 执行。「清理一下」「整理媒体库」这类泛指授权不构成删除文件的同意。
-- 拿不准影响面时，先用 list / show / preview / --dry-run 类只读命令确认。
-```
-
-> 两级规约与 x-cli-dangerous 的 confirm/destructive 一一对应；「泛指授权不构成
-> 同意」这句是给模型的裁决标准，避免「用户说了整理，所以我删了」的事故。
-
-```markdown
-## 长任务
-- 扫描 / 整理 / 元数据刷新默认会阻塞等待到完成。预计耗时超过 4 分钟的（大库首扫、整库刷新），改用 --no-wait 启动，随后用对应的查询命令轮询进度——bash 单条命令有执行超时，别让等待撞上它。
-```
-
-> 4 分钟阈值 = bash 工具 300s 默认超时留 20% 余量；轮询命令名不写死
-> （lib show / lib refresh progress 会出现在 --help 与错误 hint 里）。
-
-```markdown
-## 禁区
-- 不要执行 mclaw agent 域的任何命令——那是你自己的运行入口，会造成递归。
-- 不要修改 ~/.config/movieclaw 下的任何文件。
-```
-
-> 递归禁令是提示词层的软约束，服务端还有硬闸（见 §5）；配置目录禁改防止
-> 模型「帮忙修配置」把凭证与上下文改坏。
-
-## 4. L3：运行时环境段生成器（评审点 ③）
-
-新增 `movieclaw_api/services/agent_env.py`，从 **CLI 内置 spec** 渲染命令族
-清单（进程内缓存一次；数据源与 mclaw 自身完全同源，天然不漂移）：
-
-```python
-def render_mclaw_environment() -> str:
-    """渲染 mclaw 命令族清单，追加到系统提示词的「环境」段。"""
-    # 数据源：movieclaw_cli.gen.spec_loader.load_baseline() +
-    #        tree_builder.iter_operations()（域 → 生成命令计数）
-    #        tree_builder.DOMAIN_HELP（域的一行中文简介）
-```
-
-渲染输出示例（~220 token，供评审格式）：
-
-```markdown
-## mclaw 命令族（详情用 --help 现查）
-- search 站点资源搜索 ｜ sub 订阅 ｜ lib 媒体库 ｜ discover 发现与元数据
-- site PT 站点配置 ｜ dl 下载器 ｜ watch 监听导入 ｜ rules 订阅规则组
-- llm AI 模型 ｜ net 网络与代理 ｜ logs 系统日志 ｜ people 影人档案
-- auth 账号与 API 令牌 ｜ appearance 外观 ｜ extension 插件同步 ｜ fs 目录浏览
-- 常用捷径：mclaw status（部署状态）｜ mclaw search "关键词" ｜ mclaw download <行号> ｜ mclaw sub create ｜ mclaw lib organize <库id>
-```
-
-接线（`routes/agent.py` 的 start_agent）：
-
-```python
-params = AgentStartParams(
-    input=payload.input,
-    history=history,
-    model=payload.model,
-    system_prompt=build_system_prompt(extra_environment=render_mclaw_environment()),
-)
-```
-
-不做的事（按简洁原则）：不预注入站点/下载器/库的接入状态（`mclaw status`、
-`mclaw site list` 一步可查）；不注入任何命令的参数说明（L4 职责）；不做
-「常见任务示例库」（先看真实使用暴露的痛点再定）。
-
-## 5. 安全硬闸：服务端禁止 Agent 递归（评审点 ④）
-
-提示词禁令之外加服务端硬闸——`agent.start` 拒绝来自 Agent 工作区令牌的调用：
-
-```python
-# routes/agent.py
-async def start_agent(
-    payload: AgentStartPayload,
-    identity: str = Depends(require_login),   # Bearer 验签后 agent 令牌返回 "agent:<sid>"
-    ...
-):
+async def start_agent(payload, identity: str = Depends(require_login), ...):
     if identity.startswith("agent:"):
-        raise BadRequestException(
-            "Agent 工作区内不能再发起新的 Agent 运行（禁止递归）；"
-            "请直接在当前会话中完成任务"
-        )
+        raise BadRequestException("Agent 工作区内不能再发起新的 Agent 运行（禁止递归）")
 ```
 
-依赖缓存保证 require_login 不会重复验签。同理由（对称性）不拦其余 agent 域
-读接口——工作区里查会话列表无害；只有 start 会制造递归。
-
-## 6. 落点与测试
+## 5. 落点与测试
 
 | 改动 | 文件 | 性质 |
 |---|---|---|
-| `MCLAW_PROMPT` 常量 + 拼接 | `movieclaw_agent/prompts.py` | 新增一段，正文不动 |
-| bash `extra_note` 参数 | `movieclaw_agent/tools/bash.py`、`tools/__init__.py` | 可选参数，默认行为不变 |
-| 环境段生成器 | `movieclaw_api/services/agent_env.py`（新） | 渲染自 CLI 内置 spec |
-| start_agent 接线 + 递归硬闸 | `movieclaw_api/api/routes/agent.py` | 两处小改 |
+| mclaw 工具（schema/描述/handler/硬闸/退出码标注） | `movieclaw_agent/tools/mclaw.py`（新） | 核心 |
+| 截断工具函数抽公用 | `tools/bash.py` → `tools/_output.py` | 小重构 |
+| bash 撤销 extra_env | `tools/bash.py`、`tools/__init__.py` | revert |
+| 服务目录渲染器 | `movieclaw_api/services/mclaw_tool.py`（新） | 渲染自 spec |
+| 装配 + 递归服务端硬闸 | `movieclaw_api/api/routes/agent.py` | 两处小改 |
 
 测试：
-1. **提示词快照测试**：`build_system_prompt(render_mclaw_environment())` 全文快照
-   ——提示词是产品行为，改动必须显式过评审（快照 diff 即评审入口）；
-2. **同步守护**：环境段里的域集合 == spec 生成命令的域集合（新增域忘了配
-   DOMAIN_HELP 即红）；
-3. **禁枚举守护**：断言 MCLAW_PROMPT 不含具体子命令枚举（防止后来人往 L2 塞清单）；
-4. **递归硬闸测试**：持 agent 令牌调 `POST /agent/start` → 400 中文；
-5. **端到端冒烟（人工）**：真实模型跑三条 golden 任务——「我的订阅有哪些」
-   （只读）、「订阅沙丘2」（消歧+预检链路）、「把 1 号库整理一下」（危险确认
-   链路，验证模型先报影响面再执行）。
+1. **description 快照测试**：完整工具描述（含渲染目录）全文快照——描述是
+   模型行为的一部分，改动必须显式过评审；
+2. **目录同步守护**：service_map 覆盖的域集合 == spec 非 hidden 域集合；
+3. **硬闸测试**：`args="agent run xx"` / `args="login"` 返回拒绝文本且未起
+   子进程；服务端 agent 令牌调 start → 400；
+4. **令牌隔离测试**：bash 子进程 `echo $MOVIECLAW_TOKEN` 为空，mclaw 工具
+   子进程能成功调用（e2e：真实 uvicorn + 真实 mclaw）；
+5. **退出码标注测试**：构造 5/7 退出码场景，断言工具结果含对应中文解读；
+6. **golden 任务（人工）**：「我的订阅有哪些」（只读）、「订阅沙丘2」
+   （消歧链路）、「整理 1 号库」（危险确认链路：验证模型先报影响面再执行）。
 
-## 7. 展望：形态 B（不在本期）
+## 6. 待你拍板的评审点汇总
 
-当形态 A 用出真实痛点（help 探索轮次过多、参数错误率高）时，升级路径已备好：
-Agent 模块读内置 spec + `tree_builder.iter_operations()` 直接生成工具注册表
-（每条命令一个 tool，input_schema 来自参数映射），执行器拼 argv 调 mclaw。
-注册期可按 x-cli-dangerous 做白名单（如不注册 destructive 命令）。届时 L2/L3
-大幅缩水（工具即目录），本文的分层原则依然成立。
-
-## 8. 待你拍板的评审点汇总
-
-① bash description 的 extra_note 措辞与注入方式；
-② MCLAW_PROMPT 六个小节的逐段文案（尤其危险操作的两级裁决标准、「泛指授权
-不构成同意」的表述）；
-③ 环境段的信息密度（现案只有域清单 + 捷径；要不要加部署状态摘要）；
-④ 递归硬闸只拦 start 不拦读接口，是否符合预期。
+① 参数面：单一 `args` 字符串（shlex 解析、无 shell）+ `timeout`，是否够用；
+② description 全文（尤其一级目录的取舍粒度、危险规约措辞、「不要用 bash
+直接调 API」的排他性表述）；
+③ bash 撤销令牌注入——bash 里将无法调 mclaw（没有授权），这是特性而非
+缺陷（一切产品操作走专用工具），确认接受；
+④ 退出码语义标注放工具结果（运行时教学）而非 description，确认此取舍。
