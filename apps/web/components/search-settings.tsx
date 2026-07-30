@@ -16,6 +16,7 @@ import {
 } from "@/lib/categories";
 import { HttpError } from "@/lib/http";
 import { useSearchPrefs } from "@/lib/search-prefs";
+import { nanoid } from "nanoid";
 
 /**
  * 拖拽排序的进行时状态。列表行数有限（8 个内置分类 + 至多 20 个预设），
@@ -235,7 +236,7 @@ export function SearchSection() {
           {
             type: "preset",
             // 前端生成短随机 id：偏好是整体覆盖式保存，后端无法区分新旧行
-            id: `p-${crypto.randomUUID().slice(0, 8)}`,
+            id: `p-${nanoid(8)}`,
             name: draft.name,
             visible: true,
             categories: draft.categories,

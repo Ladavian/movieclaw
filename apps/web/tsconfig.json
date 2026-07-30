@@ -38,6 +38,7 @@
     ".next-extinstall/types/**/*.ts",
     ".next-importbadge/types/**/*.ts",
     ".next-mapcopy/types/**/*.ts",
+    ".next-mobilechrome/types/**/*.ts",
     ".next-newtask/types/**/*.ts",
     ".next-preview-dense/types/**/*.ts",
     ".next-preview-dirpick/types/**/*.ts",
@@ -65,7 +66,7 @@
     ".next-wishbtn/types/**/*.ts",
     ".next/types/**/*.ts",
     "next-env.d.ts",
-    ".next-mobilechrome/types/**/*.ts"
+    ".next-nanoid-preview/types/**/*.ts"
   ],
   "exclude": [
     "node_modules"

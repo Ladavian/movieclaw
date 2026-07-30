@@ -40,6 +40,7 @@ import {
   streamAgentRun,
 } from "@/lib/api/agent";
 import { HttpError } from "@/lib/http";
+import { nanoid } from "nanoid";
 
 /** 一次工具调用及其执行回执（tool_call_start 创建、tool_call_delta 逐片
  * 追加参数、tool_call 定稿参数、tool_result 补全回执）。 */
@@ -525,7 +526,7 @@ export function AgentConversationsProvider({ children }: { children: React.React
       // 新建必须等服务端分配 session_id 才能得到路由地址，因此这一步是
       // 同步等待的；创建失败直接抛给调用方（如尚未配置模型供应商）。
       const { runId, sessionId } = await startAgentRun(input);
-      const turnId = crypto.randomUUID();
+      const turnId = nanoid();
       setConversations((previous) => [
         {
           id: sessionId,
@@ -546,7 +547,7 @@ export function AgentConversationsProvider({ children }: { children: React.React
 
   const send = useCallback(
     (conversationId: string, input: string) => {
-      const turnId = crypto.randomUUID();
+      const turnId = nanoid();
       setConversations((previous) =>
         previous.map((conversation) =>
           conversation.id === conversationId
