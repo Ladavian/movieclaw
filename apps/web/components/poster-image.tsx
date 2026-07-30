@@ -45,6 +45,7 @@ export function PosterImage({
       src={src}
       alt={alt}
       loading="lazy"
+      decoding="async"
       referrerPolicy="no-referrer"
       onError={() => setBroken(true)}
       className={`bg-[#141824] object-cover ${className}`}

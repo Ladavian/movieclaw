@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
@@ -58,6 +58,8 @@ import { listSubscriptions, type Subscription } from "@/lib/api/subscriptions";
 import { formatBytes } from "@/lib/format";
 import { formatRelativeTime } from "@/lib/time";
 import { cachedImageUrl, imageUrl } from "@/lib/image-proxy";
+import { keepIfEqual, reconcileList } from "@/lib/poll-reconcile";
+import { useVisiblePolling } from "@/lib/use-visible-polling";
 import {
   subscriptionProgressNote,
   subscriptionStatusMeta,
@@ -119,13 +121,16 @@ export function LibraryDetailView({ libraryId }: { libraryId: number }) {
       .then(([libs, libraryItems, unknown, reviewGroups, ignoredGroups, missingItems, subs]) => {
         if (seq !== reloadSeq.current) return;
         setFailed(false);
-        setLibraries(libs);
-        setItems(libraryItems);
-        setUnidentified(unknown);
-        setReview(reviewGroups);
-        setIgnored(ignoredGroups);
-        setMissing(missingItems);
-        setSubscriptions(subs);
+        // 轮询快照内容没变时复用旧引用：库存墙逐条目复用（配合 InventoryCell
+        // 的 memo，只有真正变化的格子重渲染），其余列表整体复用。否则扫描期间
+        // 每 3 秒就把几百个格子全部重画一遍，表现为周期性卡顿
+        setLibraries((prev) => (prev ? keepIfEqual(prev, libs) : libs));
+        setItems((prev) => reconcileList(prev, libraryItems, (i) => i.media_item_id));
+        setUnidentified((prev) => keepIfEqual(prev, unknown));
+        setReview((prev) => keepIfEqual(prev, reviewGroups));
+        setIgnored((prev) => keepIfEqual(prev, ignoredGroups));
+        setMissing((prev) => keepIfEqual(prev, missingItems));
+        setSubscriptions((prev) => keepIfEqual(prev, subs));
         // 整库刷新可能是别处（首页卡片/其他设备）发起的：库列表响应里带着
         // 状态，据此补种进度面板——否则只有挂载时那一次探测，之后发起的
         // 刷新这个页面永远看不见。已有进行中的状态时不覆盖（专用轮询更新鲜）
@@ -154,21 +159,21 @@ export function LibraryDetailView({ libraryId }: { libraryId: number }) {
   // 2 秒是"阶段文字跟得上"与"别把接口打太密"的折中：单部片的一个阶段
   // 常在数秒内走完，轮询再慢就只能看到最后一个阶段
   const refreshingMeta = Boolean(metaRefresh?.refreshing);
-  useEffect(() => {
-    if (!refreshingMeta) return;
-    const timer = setInterval(() => {
+  useVisiblePolling(
+    () => {
       getMetadataRefreshProgress(libraryId)
         .then((p) => {
-          setMetaRefresh(p);
+          // 阶段没推进时复用旧引用，别让 2 秒一次的轮询白白重渲染页面
+          setMetaRefresh((prev) => keepIfEqual(prev, p));
           if (!p.refreshing) reload();
         })
         // 瞬时失败保留旧状态、下一轮继续：这里一旦清空，refreshingMeta 变
         // false 会把本轮询连根停掉，后台还在跑的刷新从此在界面上失踪
         // （曾是线上实况）。刷新真结束时成功响应会带 refreshing=false 收尾
         .catch(() => {});
-    }, 2000);
-    return () => clearInterval(timer);
-  }, [refreshingMeta, libraryId, reload]);
+    },
+    refreshingMeta ? 2000 : null,
+  );
 
   const library = libraries?.find((l) => l.id === libraryId) ?? null;
   usePageTitle(library?.name);
@@ -190,15 +195,13 @@ export function LibraryDetailView({ libraryId }: { libraryId: number }) {
     const timer = setTimeout(() => setRecentlyBusy(false), 12_000);
     return () => clearTimeout(timer);
   }, [busy, recentlyBusy]);
-  useEffect(() => {
-    // 忙时快轮询；有文件入库中 / 元数据刷新中中速跟进（刷新会边跑边换海报，
-    // 让墙上的图逐步更新）；空闲低频兜底——后台自发的扫描（实时监控/定时
-    // 对账）页面开着不动也能感知到
-    const interval =
-      busy || recentlyBusy ? 3000 : importing > 0 || refreshingMeta ? 10_000 : 30_000;
-    const timer = setInterval(reload, interval);
-    return () => clearInterval(timer);
-  }, [busy, recentlyBusy, importing, refreshingMeta, reload]);
+  // 忙时快轮询；有文件入库中 / 元数据刷新中中速跟进（刷新会边跑边换海报，
+  // 让墙上的图逐步更新）；空闲低频兜底——后台自发的扫描（实时监控/定时
+  // 对账）页面开着不动也能感知到。页面隐藏时暂停、恢复可见立即补一次
+  useVisiblePolling(
+    reload,
+    busy || recentlyBusy ? 3000 : importing > 0 || refreshingMeta ? 10_000 : 30_000,
+  );
 
   // 待识别的文件总数（清单按条目目录分组，一组可能是一部剧的几十集）
   const unidentifiedFiles = unidentified.reduce((n, g) => n + g.file_count, 0);
@@ -723,8 +726,12 @@ function MetadataRefreshPanel({
 }
 
 /** 库存格：真实拥有的作品。点击进**媒体库条目详情**（本地刮削信息 +
- *  片源规格 + 条目操作），不再复用发现页的 TMDB 详情；格下标注库存概况。 */
-function InventoryCell({
+ *  片源规格 + 条目操作），不再复用发现页的 TMDB 详情；格下标注库存概况。
+ *
+ *  memo 化 + reload 的逐条目引用复用（见 lib/poll-reconcile.ts）：轮询快照
+ *  里没变化的条目沿用旧对象，这里比对通过就整格跳过——大库轮询时只有真正
+ *  变化的格子会重渲染。 */
+const InventoryCell = memo(function InventoryCell({
   item,
   libraryId,
   workingLabel,
@@ -761,7 +768,9 @@ function InventoryCell({
   if (dead) parts.splice(0, parts.length, "文件已全部缺失");
   else if (item.missing_count > 0) parts.push(`${item.missing_count} 个文件缺失`);
   return (
-    <div>
+    // content-visibility：视口外的格子跳过布局与绘制，大库海报墙的滚动/更新
+    // 成本只与可见格数相关；intrinsic-size 占住尺寸，滚动条不跳
+    <div className="[contain-intrinsic-size:auto_270px] [content-visibility:auto]">
       {/* 后台正在处理的那一格自己点亮：进度面板/胶囊列的是总数或片名，
           海报墙上也要能一眼看到"正在弄这部"，否则用户得在两处之间对片名 */}
       <div className="relative">
@@ -775,7 +784,8 @@ function InventoryCell({
         {workingLabel && (
           <>
             <span className="pointer-events-none absolute inset-0 rounded-xl ring-2 ring-[#7dd3fc] ring-offset-0" />
-            <span className="pointer-events-none absolute inset-x-0 bottom-0 flex items-center gap-1.5 rounded-b-xl bg-[rgba(7,12,20,0.82)] px-2 py-1.5 text-[10.5px] font-medium text-[#7dd3fc] backdrop-blur-sm">
+            {/* 不用 backdrop-blur：海报墙每格一个模糊合成层会放大滚动时的 GPU 压力，底色加实即可 */}
+            <span className="pointer-events-none absolute inset-x-0 bottom-0 flex items-center gap-1.5 rounded-b-xl bg-[rgba(7,12,20,0.92)] px-2 py-1.5 text-[10.5px] font-medium text-[#7dd3fc]">
               <span className="size-2.5 shrink-0 animate-spin rounded-full border-[1.5px] border-[#7dd3fc]/30 border-t-[#7dd3fc]" />
               <span className="truncate">{workingLabel}</span>
             </span>
@@ -794,7 +804,7 @@ function InventoryCell({
       )}
     </div>
   );
-}
+});
 
 /** 追踪中格：订阅状态行沿用订阅页语言，点击进订阅详情。 */
 function PendingCell({ sub }: { sub: Subscription }) {
@@ -1503,6 +1513,8 @@ function ReviewGroupRow({ group, onChanged }: { group: ReviewGroup; onChanged: (
         <img
           src={cachedImageUrl(info.poster_url)}
           alt=""
+          loading="lazy"
+          decoding="async"
           className="h-[54px] w-9 shrink-0 rounded-md object-cover"
         />
       ) : (
@@ -1700,6 +1712,8 @@ function ClaimConfirmPanel({
           <img
             src={posterUrl}
             alt={title}
+            loading="lazy"
+            decoding="async"
             className="h-[104px] w-[70px] shrink-0 rounded-lg bg-white/[0.05] object-cover"
           />
         ) : (
@@ -1874,9 +1888,11 @@ function ClaimSearchPanel({
                 className="flex w-full items-center gap-2.5 rounded-lg px-2 py-1.5 text-left transition hover:bg-white/[0.06]"
               >
                 {it.posterUrl ? (
-                          <img
+                  <img
                     src={it.posterUrl}
                     alt={it.title}
+                    loading="lazy"
+                    decoding="async"
                     className="h-12 w-8 shrink-0 rounded bg-white/[0.05] object-cover"
                   />
                 ) : (
