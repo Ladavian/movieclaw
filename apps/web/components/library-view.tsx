@@ -43,17 +43,24 @@ export const LIBRARY_KIND_META: Record<MediaType, { label: string; Icon: typeof 
   tv: { label: "剧集", Icon: TvIcon },
 };
 
+/** 收藏范围可选项的模块级缓存：这是后端静态常量，但 useRoutingOptions 被
+ *  每张库卡片和表单弹窗各自调用——不缓存的话库首页一次挂载就打出 N 个
+ *  相同请求。失败时清空缓存，下一个调用方重试。 */
+let routingOptionsPromise: Promise<RoutingOptions> | null = null;
+
 /** 收藏范围可选项（后端静态常量）；加载失败降级为 null（相关 UI 不渲染）。 */
 function useRoutingOptions(): RoutingOptions | null {
   const [options, setOptions] = useState<RoutingOptions | null>(null);
   useEffect(() => {
     let cancelled = false;
-    void getRoutingOptions()
+    routingOptionsPromise ??= getRoutingOptions();
+    void routingOptionsPromise
       .then((o) => {
         if (!cancelled) setOptions(o);
       })
       .catch(() => {
         /* 静默降级：收藏范围区显示加载失败提示 */
+        routingOptionsPromise = null;
       });
     return () => {
       cancelled = true;

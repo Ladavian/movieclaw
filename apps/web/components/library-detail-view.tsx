@@ -818,7 +818,9 @@ function PendingCell({ sub }: { sub: Subscription }) {
     posterUrl: sub.media.poster_url ? cachedImageUrl(sub.media.poster_url) : "",
   };
   return (
-    <div className="opacity-80 transition hover:opacity-100">
+    // content-visibility 与库存格同款：追踪中的订阅一多（批量订阅季播剧），
+    // 视口外的格子同样不该参与布局与绘制
+    <div className="opacity-80 transition [contain-intrinsic-size:auto_270px] [content-visibility:auto] hover:opacity-100">
       {/* 已是订阅产物，悬浮层不再给「订阅影片」重复入口 */}
       <PosterCardVisual item={visual} href={`/subscriptions/${sub.id}` as Route} action="none" />
       <p className="text-on-image mt-1.5 flex items-center gap-1.5 truncate text-[11px] text-[var(--text-muted)]">
