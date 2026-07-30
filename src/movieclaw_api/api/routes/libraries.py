@@ -240,6 +240,7 @@ async def _stats_by_library(session: AsyncSession) -> dict[int, LibraryStats]:
     "",
     response_model=ApiResponse[list[LibraryView]],
     summary="列出全部媒体库（含库存统计，可按类型过滤）",
+    operation_id="lib.list",
 )
 async def list_libraries(
     kind: str | None = Query(default=None, description="movie / tv，缺省全部"),
@@ -270,6 +271,7 @@ async def list_libraries(
     "/routing-options",
     response_model=ApiResponse[dict],
     summary="收藏范围的可选项（类型 chips 与区域预设，配置界面数据源）",
+    operation_id="lib.routing-options",
 )
 async def routing_options() -> ApiResponse[dict]:
     """genre ID↔中文名与区域预设的唯一真相源在后端（movieclaw_media.genres），
@@ -344,6 +346,7 @@ async def _group_by_entry_dir(
     "/unidentified",
     response_model=ApiResponse[list[UnidentifiedGroupView]],
     summary="待识别清单（按条目目录分组，不含已忽略，可按库过滤）",
+    operation_id="lib.unidentified.list",
 )
 async def list_unidentified(
     library_id: int | None = Query(default=None),
@@ -358,6 +361,7 @@ async def list_unidentified(
     "/ignored",
     response_model=ApiResponse[list[UnidentifiedGroupView]],
     summary="已忽略清单（用户说过「别再问」的文件，可恢复）",
+    operation_id="lib.ignored.list",
 )
 async def list_ignored(
     library_id: int | None = Query(default=None),
@@ -378,6 +382,7 @@ async def list_ignored(
     "/review",
     response_model=ApiResponse[list[ReviewGroupView]],
     summary="身份复核清单（识别器升级后的新旧结论分歧，可按库过滤）",
+    operation_id="lib.review.list",
 )
 async def list_identity_review(
     library_id: int | None = Query(default=None),
@@ -460,6 +465,7 @@ async def list_identity_review(
     "/review/resolve",
     response_model=ApiResponse[dict],
     summary="身份复核拍板：采纳建议或维持现状（整组）",
+    operation_id="lib.review.resolve",
 )
 async def resolve_identity_review(
     payload: ReviewResolvePayload,
@@ -482,6 +488,7 @@ async def resolve_identity_review(
     "/{library_id}",
     response_model=ApiResponse[LibraryView],
     summary="获取单个媒体库详情",
+    operation_id="lib.show",
 )
 async def get_library(
     library_id: int,
@@ -510,6 +517,7 @@ async def get_library(
     "",
     response_model=ApiResponse[LibraryView],
     summary="创建媒体库（该类型首个库自动成为默认，并自动开始首次扫描）",
+    operation_id="lib.create",
 )
 async def create_library(
     payload: LibraryPayload,
@@ -550,6 +558,7 @@ def _assert_not_busy(library_name: str, library_id: int) -> None:
     "/{library_id}",
     response_model=ApiResponse[LibraryView],
     summary="更新媒体库（名称与根路径；类型创建后不可改；扫描/整理中锁定）",
+    operation_id="lib.update",
 )
 async def update_library(
     library_id: int,
@@ -581,6 +590,7 @@ async def update_library(
     "/{library_id}/default",
     response_model=ApiResponse[LibraryView],
     summary="设为该类型的默认库",
+    operation_id="lib.default.set",
 )
 async def set_default_library(
     library_id: int,
@@ -597,6 +607,7 @@ async def set_default_library(
     "/{library_id}",
     response_model=ApiResponse[dict],
     summary="删除媒体库（不动磁盘文件；其订阅回落到该类型默认库；扫描/整理中锁定）",
+    operation_id="lib.delete",
 )
 async def delete_library(
     library_id: int,
@@ -639,6 +650,7 @@ async def delete_library(
     "/{library_id}/scan",
     response_model=ApiResponse[ScanResultView],
     summary="扫描该库的根路径，把存量文件识别入账（后台执行）",
+    operation_id="lib.scan.start",
 )
 async def start_scan(
     library_id: int,
@@ -665,6 +677,7 @@ async def start_scan(
     "/{library_id}/scan/stop",
     response_model=ApiResponse[dict],
     summary="停止进行中的扫描（已入账的保留，剩余文件下次扫描继续）",
+    operation_id="lib.scan.stop",
 )
 async def stop_scan(
     library_id: int,
@@ -691,6 +704,7 @@ async def stop_scan(
     "/{library_id}/metadata/refresh",
     response_model=ApiResponse[dict],
     summary="整库刷新元数据：全部已识别条目重新刮削（后台执行，串行）",
+    operation_id="lib.refresh.start",
 )
 async def start_metadata_refresh(
     library_id: int,
@@ -715,6 +729,7 @@ async def start_metadata_refresh(
     "/{library_id}/metadata/refresh/stop",
     response_model=ApiResponse[dict],
     summary="停止进行中的整库元数据刷新（已刷完的保留）",
+    operation_id="lib.refresh.stop",
 )
 async def stop_metadata_refresh(
     library_id: int,
@@ -732,6 +747,7 @@ async def stop_metadata_refresh(
     "/{library_id}/metadata/refresh/progress",
     response_model=ApiResponse[MetadataRefreshView],
     summary="整库元数据刷新的实时状态（进度 + 正在处理哪几部、各在什么阶段）",
+    operation_id="lib.refresh.progress",
 )
 async def metadata_refresh_progress(
     library_id: int,
@@ -747,6 +763,7 @@ async def metadata_refresh_progress(
     "/{library_id}/items/{media_item_id}/metadata/refresh",
     response_model=ApiResponse[dict],
     summary="刷新单个条目的元数据（强制重刮 TMDB 并重新下载图片，后台执行）",
+    operation_id="lib.items.refresh",
 )
 async def refresh_item_metadata(
     library_id: int,
@@ -770,6 +787,7 @@ async def refresh_item_metadata(
     "/{library_id}/items/{media_item_id}/artwork/candidates",
     response_model=ApiResponse[ArtworkCandidatesView],
     summary="条目的候选海报/背景（「更换图片」弹层数据源）",
+    operation_id="lib.items.artwork-candidates",
 )
 async def list_artwork_candidates_route(
     library_id: int,
@@ -801,6 +819,7 @@ async def list_artwork_candidates_route(
     "/{library_id}/items/{media_item_id}/artwork/select",
     response_model=ApiResponse[dict],
     summary="选定海报/背景（当场落盘并覆盖媒体目录；此后刷新不再覆盖）",
+    operation_id="lib.items.artwork-select",
 )
 async def select_artwork_route(
     library_id: int,
@@ -832,6 +851,7 @@ async def select_artwork_route(
     "/{library_id}/organize/preview",
     response_model=ApiResponse[OrganizePreviewView],
     summary="预览整理计划：每个文件改成什么名、哪些跳过及原因（只读，不动磁盘）",
+    operation_id="lib.organize.preview",
 )
 async def preview_organize(
     library_id: int,
@@ -873,6 +893,7 @@ async def preview_organize(
     "/{library_id}/organize",
     response_model=ApiResponse[OrganizeStartView],
     summary="开始整理：按规范命名批量改名归位（后台执行，与扫描互斥）",
+    operation_id="lib.organize.start",
 )
 async def start_organize(
     library_id: int,
@@ -899,6 +920,7 @@ async def start_organize(
     "/{library_id}/items",
     response_model=ApiResponse[list[LibraryItemView]],
     summary="库内媒体条目的库存聚合（单库海报墙数据源）",
+    operation_id="lib.items.list",
 )
 async def list_library_items(
     library_id: int,
@@ -1007,6 +1029,7 @@ def _file_view(row: LibraryFile, external_subs: list[str]) -> LibraryFileView:
     "/{library_id}/items/{media_item_id}",
     response_model=ApiResponse[LibraryItemDetailView],
     summary="条目详情：基本信息 + NFO 本地刮削元数据 + 逐文件真实介质规格",
+    operation_id="lib.items.show",
 )
 async def get_library_item(
     library_id: int,
@@ -1116,6 +1139,7 @@ async def get_library_item(
     "/{library_id}/items/{media_item_id}/episodes",
     response_model=ApiResponse[SeasonEpisodesView],
     summary="剧集条目一季的分集清单（集名/简介/剧照 + 拥有状态，分集横滚区数据源）",
+    operation_id="lib.items.episodes",
 )
 async def list_item_episodes(
     library_id: int,
@@ -1152,6 +1176,7 @@ async def list_item_episodes(
     "/files/{file_id}/thumb",
     response_class=FileResponse,
     summary="分集本地缩略图（视频同名 -thumb.jpg，Kodi 惯例）",
+    operation_id="lib.files.thumb",
 )
 async def get_file_thumb(
     file_id: int,
@@ -1171,6 +1196,7 @@ async def get_file_thumb(
     "/{library_id}/items/{media_item_id}/artwork",
     response_class=FileResponse,
     summary="条目目录里的本地美术图（poster/fanart，Kodi/Emby 命名惯例）",
+    operation_id="lib.items.artwork-download",
 )
 async def get_item_artwork(
     library_id: int,
@@ -1200,6 +1226,7 @@ async def get_item_artwork(
     "/{library_id}/items/{media_item_id}",
     response_model=ApiResponse[ItemDeleteResultView],
     summary="从磁盘彻底删除条目（整个刮削目录：视频+NFO+海报+字幕一起清除）",
+    operation_id="lib.items.delete",
 )
 async def delete_library_item(
     library_id: int,
@@ -1240,6 +1267,7 @@ async def delete_library_item(
     "/{library_id}/items/{media_item_id}/reidentify",
     response_model=ApiResponse[ReidentifyResultView],
     summary="重新识别条目：全部在位文件重走识别链（NFO → 名称解析 → TMDB 收敛）",
+    operation_id="lib.items.reidentify",
 )
 async def reidentify_library_item(
     library_id: int,
@@ -1297,6 +1325,7 @@ async def reidentify_library_item(
     "/{library_id}/missing",
     response_model=ApiResponse[list[MissingItemView]],
     summary="缺失清单：文件已不在磁盘的库存，按条目聚合",
+    operation_id="lib.missing.list",
 )
 async def list_missing(
     library_id: int,
@@ -1360,6 +1389,7 @@ async def list_missing(
     "/missing/clear",
     response_model=ApiResponse[dict],
     summary="清理缺失记录（只删台账，绝不动磁盘）；不带 media_item_id 清整库",
+    operation_id="lib.missing.clear",
 )
 async def clear_missing(
     payload: MissingClearPayload,
@@ -1377,6 +1407,7 @@ async def clear_missing(
     "/unidentified/clear",
     response_model=ApiResponse[dict],
     summary="批量忽略整库的待识别文件（只删台账，绝不动磁盘）",
+    operation_id="lib.unidentified.clear",
 )
 async def clear_unidentified(
     payload: UnidentifiedClearPayload,
@@ -1397,6 +1428,7 @@ async def clear_unidentified(
     "/missing/redownload",
     response_model=ApiResponse[dict],
     summary="重新下载缺失内容：缺失单元交回订阅管线（无订阅则按缺失季创建）",
+    operation_id="lib.missing.redownload",
 )
 async def redownload_missing(
     payload: RedownloadPayload,
@@ -1428,6 +1460,7 @@ async def redownload_missing(
     "/files/{file_id}/claim",
     response_model=ApiResponse[dict],
     summary="认领待识别文件：挂到指定的 TMDB 条目",
+    operation_id="lib.files.claim",
 )
 async def claim_file(
     file_id: int,
@@ -1451,6 +1484,7 @@ async def claim_file(
     "/files/claim-batch",
     response_model=ApiResponse[dict],
     summary="整组认领：把多个待识别文件一次挂到同一个 TMDB 条目",
+    operation_id="lib.files.claim-batch",
 )
 async def claim_files_batch(
     payload: ClaimBatchPayload,
@@ -1475,6 +1509,7 @@ async def claim_files_batch(
     "/files/{file_id}",
     response_model=ApiResponse[dict],
     summary="忽略一个待识别文件：以后扫描不再过问（不动磁盘）",
+    operation_id="lib.files.ignore",
 )
 async def ignore_file(
     file_id: int,
@@ -1497,6 +1532,7 @@ async def ignore_file(
     "/files/restore",
     response_model=ApiResponse[dict],
     summary="恢复已忽略的文件：重新参与识别",
+    operation_id="lib.files.restore",
 )
 async def restore_ignored_files(
     payload: RestorePayload,

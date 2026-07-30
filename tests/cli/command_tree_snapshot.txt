@@ -1,0 +1,50 @@
+agent sessions list
+agent sessions show
+appearance show
+auth bootstrap status
+auth me
+discover douban show
+discover page
+discover search
+discover show
+dl list
+dl show
+extension ping
+extension sites list
+extension token show
+fs browse
+lib ignored list
+lib items artwork-candidates
+lib items episodes
+lib items list
+lib items show
+lib list
+lib missing list
+lib refresh progress
+lib review list
+lib routing-options
+lib show
+lib unidentified list
+llm presets
+llm provider show
+logs days
+logs read
+net show
+people show
+rules list
+search history list
+search history media-snapshot
+search history snapshot
+search prefs show
+search run
+site catalog
+site list
+site show
+site stats
+sub activities
+sub dispatch-preview
+sub health
+sub list
+sub show
+ui prefs show
+watch list

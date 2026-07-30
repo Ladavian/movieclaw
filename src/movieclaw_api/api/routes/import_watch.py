@@ -86,6 +86,7 @@ async def _views(session: AsyncSession, rows: list[ImportWatch]) -> list[ImportW
     "",
     response_model=ApiResponse[list[ImportWatchView]],
     summary="列出全部监听导入规则",
+    operation_id="watch.list",
 )
 async def list_rules(
     session: AsyncSession = Depends(get_session),
@@ -98,6 +99,7 @@ async def list_rules(
     "",
     response_model=ApiResponse[ImportWatchView],
     summary="创建监听导入规则（硬链接策略保存即做同盘检测）",
+    operation_id="watch.create",
 )
 async def create_rule(
     payload: ImportWatchPayload,
@@ -118,6 +120,7 @@ async def create_rule(
     "/{rule_id}",
     response_model=ApiResponse[ImportWatchView],
     summary="更新监听导入规则",
+    operation_id="watch.update",
 )
 async def update_rule(
     rule_id: int,
@@ -140,6 +143,7 @@ async def update_rule(
     "/{rule_id}",
     response_model=ApiResponse[dict],
     summary="删除监听导入规则（不动磁盘，仅停止监听）",
+    operation_id="watch.delete",
 )
 async def delete_rule(
     rule_id: int,

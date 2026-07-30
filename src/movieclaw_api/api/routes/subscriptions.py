@@ -39,6 +39,7 @@ def _service(session: AsyncSession) -> SubscriptionService:
     "/prepare",
     response_model=ApiResponse[PrepareView],
     summary="订阅预检：建档条目并返回季集结构（弹层数据源）",
+    operation_id="sub.prepare",
 )
 async def prepare_subscription(
     payload: PreparePayload,
@@ -111,6 +112,7 @@ async def prepare_subscription(
     "",
     response_model=ApiResponse[SubscriptionDetailView],
     summary="创建订阅（生成初始工单；同条目重复订阅幂等返回已有）",
+    operation_id="sub.create",
 )
 async def create_subscription(
     payload: SubscriptionCreatePayload,
@@ -139,6 +141,7 @@ async def create_subscription(
     "/dispatch-preview",
     response_model=ApiResponse[DispatchPreviewView],
     summary="投递路由预检：按类型与目标库预演下载会落到哪、能否自动入库",
+    operation_id="sub.dispatch-preview",
 )
 async def dispatch_preview(
     kind: str = Query(description="movie / tv"),
@@ -163,6 +166,7 @@ async def dispatch_preview(
     "/pipeline-health",
     response_model=ApiResponse[PipelineHealthView],
     summary="订阅链路体检：逐库预演「投递 → 转移 → 入库」，联合约束一次亮清",
+    operation_id="sub.health",
 )
 async def pipeline_health_check(
     session: AsyncSession = Depends(get_session),
@@ -178,6 +182,7 @@ async def pipeline_health_check(
     "",
     response_model=ApiResponse[list[SubscriptionView]],
     summary="订阅列表（含工单进度）",
+    operation_id="sub.list",
 )
 async def list_subscriptions(
     kind: str | None = Query(default=None, description="movie / tv，缺省全部"),
@@ -192,6 +197,7 @@ async def list_subscriptions(
     "/{subscription_id}",
     response_model=ApiResponse[SubscriptionDetailView],
     summary="订阅详情（含工单明细）",
+    operation_id="sub.show",
 )
 async def get_subscription(
     subscription_id: int,
@@ -206,6 +212,7 @@ async def get_subscription(
     "/{subscription_id}/activities",
     response_model=ApiResponse[list[ActivityView]],
     summary="订阅活动时间线（系统对该订阅做过的每个动作，时间倒序）",
+    operation_id="sub.activities",
 )
 async def list_subscription_activities(
     subscription_id: int,
@@ -221,6 +228,7 @@ async def list_subscription_activities(
     "/{subscription_id}",
     response_model=ApiResponse[SubscriptionDetailView],
     summary="修改订阅（季选择/追新/规则组，diff 重算工单）",
+    operation_id="sub.update",
 )
 async def update_subscription(
     subscription_id: int,
@@ -243,6 +251,7 @@ async def update_subscription(
     "/{subscription_id}/pause",
     response_model=ApiResponse[SubscriptionDetailView],
     summary="暂停 / 恢复订阅",
+    operation_id="sub.pause",
 )
 async def pause_subscription(
     subscription_id: int,
@@ -260,6 +269,7 @@ async def pause_subscription(
     "/{subscription_id}",
     response_model=ApiResponse[dict],
     summary="删除订阅（不影响已下载内容）",
+    operation_id="sub.delete",
 )
 async def delete_subscription(
     subscription_id: int,

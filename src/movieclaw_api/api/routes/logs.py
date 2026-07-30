@@ -60,6 +60,7 @@ def _log_dir() -> Path:
     "",
     response_model=ApiResponse[LogDayList],
     summary="列出可查看的日志日期",
+    operation_id="logs.days",
 )
 async def list_log_days() -> ApiResponse[LogDayList]:
     """扫描日志目录，返回全部按天存档的日志文件（日期倒序，最新在前）。"""
@@ -78,6 +79,7 @@ async def list_log_days() -> ApiResponse[LogDayList]:
     "/{day}",
     response_model=ApiResponse[LogContent],
     summary="读取某天的日志内容",
+    operation_id="logs.read",
 )
 async def read_log_day(
     day: str = PathParam(pattern=r"^\d{4}-\d{2}-\d{2}$", description="日期，如 2026-07-18"),

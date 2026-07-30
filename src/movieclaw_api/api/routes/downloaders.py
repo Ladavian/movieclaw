@@ -33,6 +33,7 @@ def _mappings_to_rows(payload: DownloaderPayload) -> list[dict[str, str]] | None
     "/submit",
     response_model=ApiResponse[DownloadSubmitView],
     summary="把一条搜索结果种子提交到默认下载器",
+    operation_id="dl.submit",
 )
 async def submit_download(
     payload: DownloadSubmitPayload,
@@ -97,6 +98,7 @@ async def submit_download(
     "",
     response_model=ApiResponse[list[DownloaderView]],
     summary="列出已配置的下载器及连接状态",
+    operation_id="dl.list",
 )
 async def list_downloaders(
     session: AsyncSession = Depends(get_session),
@@ -110,6 +112,7 @@ async def list_downloaders(
     "/{downloader_id}",
     response_model=ApiResponse[DownloaderView],
     summary="获取单个下载器详情",
+    operation_id="dl.show",
 )
 async def get_downloader(
     downloader_id: int,
@@ -123,6 +126,7 @@ async def get_downloader(
     "",
     response_model=ApiResponse[DownloaderView],
     summary="添加一个下载器（保存后异步测试连接）",
+    operation_id="dl.add",
 )
 async def create_downloader_config(
     payload: DownloaderPayload,
@@ -155,6 +159,7 @@ async def create_downloader_config(
     "/{downloader_id}",
     response_model=ApiResponse[DownloaderView],
     summary="更新下载器配置（更新后重新测试连接）",
+    operation_id="dl.update",
 )
 async def update_downloader_config(
     downloader_id: int,
@@ -183,6 +188,7 @@ async def update_downloader_config(
     "/{downloader_id}/status",
     response_model=ApiResponse[DownloaderView],
     summary="启用 / 停用下载器",
+    operation_id="dl.status.set",
 )
 async def set_downloader_status(
     downloader_id: int,
@@ -198,6 +204,7 @@ async def set_downloader_status(
     "/{downloader_id}/default",
     response_model=ApiResponse[DownloaderView],
     summary="设为默认下载器",
+    operation_id="dl.default.set",
 )
 async def set_default_downloader(
     downloader_id: int,
@@ -215,6 +222,7 @@ async def set_default_downloader(
     "/{downloader_id}/verify",
     response_model=ApiResponse[DownloaderView],
     summary="手动重新测试连接",
+    operation_id="dl.verify",
 )
 async def reverify_downloader(
     downloader_id: int,
@@ -235,6 +243,7 @@ async def reverify_downloader(
     "/{downloader_id}",
     response_model=ApiResponse[dict],
     summary="删除下载器配置",
+    operation_id="dl.delete",
 )
 async def delete_downloader_config(
     downloader_id: int,

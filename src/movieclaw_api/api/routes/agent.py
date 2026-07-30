@@ -51,6 +51,7 @@ def get_agent_tools() -> list[AgentTool]:
     response_model=ApiResponse[AgentStartView],
     status_code=202,
     summary="创建一次异步 Agent 运行",
+    operation_id="agent.start",
 )
 async def start_agent(
     payload: AgentStartPayload,
@@ -116,6 +117,7 @@ async def start_agent(
     "/sessions",
     response_model=ApiResponse[list[AgentSessionListItem]],
     summary="最近会话列表（按最后活跃时间倒序）",
+    operation_id="agent.sessions.list",
 )
 async def list_agent_sessions(
     limit: int = 50,
@@ -134,6 +136,7 @@ async def list_agent_sessions(
     "/sessions/{session_id}",
     response_model=ApiResponse[AgentSessionDetailView],
     summary="会话详情（完整消息回放）",
+    operation_id="agent.sessions.show",
 )
 async def get_agent_session(
     session_id: str,
@@ -156,6 +159,7 @@ async def get_agent_session(
     "/sessions/{session_id}",
     response_model=ApiResponse[AgentSessionListItem],
     summary="重命名会话",
+    operation_id="agent.sessions.rename",
 )
 async def rename_agent_session(
     session_id: str,
@@ -173,6 +177,7 @@ async def rename_agent_session(
     "/sessions/{session_id}",
     response_model=ApiResponse[dict],
     summary="删除会话（转录文件与索引一并删除）",
+    operation_id="agent.sessions.delete",
 )
 async def delete_agent_session(
     session_id: str,
@@ -194,6 +199,7 @@ async def delete_agent_session(
 @router.get(
     "/runs/{run_id}/stream",
     summary="订阅 Agent 运行事件（SSE，支持断线续传）",
+    operation_id="agent.runs.stream",
 )
 async def stream_agent_run(
     run_id: str,
@@ -254,6 +260,7 @@ async def stream_agent_run(
     "/runs/{run_id}/cancel",
     response_model=ApiResponse[dict],
     summary="取消一次 Agent 运行",
+    operation_id="agent.runs.cancel",
 )
 async def cancel_agent_run(run_id: str) -> ApiResponse[dict]:
     """幂等请求取消后台任务；运行的 SSE 会以 agent_cancelled 事件收尾。"""

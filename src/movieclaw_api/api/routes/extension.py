@@ -41,6 +41,7 @@ router = APIRouter(prefix="/extension", tags=["extension"])
     response_model=ApiResponse[PingResult],
     summary="连接与令牌自检",
     dependencies=[Depends(require_sync_token)],
+    operation_id="extension.ping",
 )
 async def ping() -> ApiResponse[PingResult]:
     """插件"测试连接"按钮调用：能走到这里即代表地址可达且令牌有效。"""
@@ -52,6 +53,7 @@ async def ping() -> ApiResponse[PingResult]:
     response_model=ApiResponse[list[ExtensionSiteView]],
     summary="列出支持 Cookie 同步的站点及配置状态",
     dependencies=[Depends(require_sync_token)],
+    operation_id="extension.sites.list",
 )
 async def list_cookie_sites(
     session: AsyncSession = Depends(get_session),
@@ -87,6 +89,7 @@ async def list_cookie_sites(
     response_model=ApiResponse[CookieSyncResult],
     summary="推送某站点的 Cookie（保存后异步验证）",
     dependencies=[Depends(require_sync_token)],
+    operation_id="extension.cookies.push",
 )
 async def push_cookies(
     payload: CookiePushRequest,
@@ -149,6 +152,7 @@ async def push_cookies(
     response_model=ApiResponse[SyncTokenView],
     summary="查看当前同步令牌",
     dependencies=[Depends(require_login)],
+    operation_id="extension.token.show",
 )
 async def get_token() -> ApiResponse[SyncTokenView]:
     """返回当前令牌明文，供用户复制进插件；未启用时 enabled=False。"""
@@ -167,6 +171,7 @@ async def get_token() -> ApiResponse[SyncTokenView]:
     response_model=ApiResponse[SyncTokenView],
     summary="生成 / 重新生成同步令牌",
     dependencies=[Depends(require_login)],
+    operation_id="extension.token.create",
 )
 async def create_token() -> ApiResponse[SyncTokenView]:
     """生成新令牌；若已存在则重新生成，**旧令牌立即失效**（强制过期）。"""
@@ -182,6 +187,7 @@ async def create_token() -> ApiResponse[SyncTokenView]:
     response_model=ApiResponse[SyncTokenView],
     summary="关闭同步（撤销令牌）",
     dependencies=[Depends(require_login)],
+    operation_id="extension.token.revoke",
 )
 async def delete_token() -> ApiResponse[SyncTokenView]:
     """撤销令牌、关闭插件同步。此后插件侧接口一律 401。"""
