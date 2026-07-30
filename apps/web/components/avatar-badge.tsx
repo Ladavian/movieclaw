@@ -21,7 +21,12 @@ export function AvatarBadge({
       className={`brand-badge flex shrink-0 items-center justify-center overflow-hidden rounded-full font-bold ${className}`}
     >
       {avatarUrl ? (
-        <img src={avatarUrl} alt={`${nickname} 的头像`} className="h-full w-full object-cover" />
+        <img
+          src={avatarUrl}
+          alt={`${nickname} 的头像`}
+          decoding="async"
+          className="h-full w-full object-cover"
+        />
       ) : (
         initialsOf(nickname)
       )}

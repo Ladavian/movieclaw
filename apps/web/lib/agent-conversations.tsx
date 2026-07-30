@@ -409,10 +409,12 @@ export function AgentConversationsProvider({ children }: { children: React.React
         console.warn("加载 Agent 会话列表失败", error);
       });
     const activeControllers = controllers.current;
+    const activeFlushTimer = flushTimer;
     return () => {
       cancelled = true;
       for (const controller of activeControllers.values()) controller.abort();
       activeControllers.clear();
+      if (activeFlushTimer.current !== null) window.clearTimeout(activeFlushTimer.current);
     };
   }, []);
 
@@ -437,6 +439,64 @@ export function AgentConversationsProvider({ children }: { children: React.React
     [],
   );
 
+  /* —— SSE 事件的批量合并 ——
+   * 流式生成时 text_delta / thinking_delta 每秒可达几十次，逐个 setState 会让
+   * 所有 context 消费者（侧栏、会话页的整条时间线）以同样频率重渲染，生成一条
+   * 长回复就是数千次 React diff。这里按轮次缓冲事件、每 80ms 合并应用一次
+   * （视觉上仍是流畅的打字机效果）；终态事件（完成/出错/取消）立即冲刷，
+   * 状态切换不吃这 80ms 延迟。 */
+  const eventBuffers = useRef(
+    new Map<string, { conversationId: string; turnId: string; events: AgentEvent[] }>(),
+  );
+  const flushTimer = useRef<number | null>(null);
+
+  const flushEvents = useCallback(() => {
+    if (flushTimer.current !== null) {
+      window.clearTimeout(flushTimer.current);
+      flushTimer.current = null;
+    }
+    if (eventBuffers.current.size === 0) return;
+    const buffers = [...eventBuffers.current.values()];
+    eventBuffers.current.clear();
+    setConversations((previous) =>
+      previous.map((conversation) => {
+        const mine = buffers.filter((buffer) => buffer.conversationId === conversation.id);
+        if (mine.length === 0) return conversation;
+        let turns = conversation.turns;
+        for (const buffer of mine) {
+          turns = turns.map((turn) =>
+            turn.id === buffer.turnId ? buffer.events.reduce(applyAgentEvent, turn) : turn,
+          );
+        }
+        return {
+          ...conversation,
+          updatedAt: Date.now(),
+          running: turns.some((turn) => turn.status === "running"),
+          turns,
+        };
+      }),
+    );
+  }, []);
+
+  const enqueueEvent = useCallback(
+    (conversationId: string, turnId: string, event: AgentEvent) => {
+      const key = `${conversationId}:${turnId}`;
+      const buffer = eventBuffers.current.get(key) ?? { conversationId, turnId, events: [] };
+      buffer.events.push(event);
+      eventBuffers.current.set(key, buffer);
+      const terminal =
+        event.type === "agent_done" ||
+        event.type === "agent_error" ||
+        event.type === "agent_cancelled";
+      if (terminal) {
+        flushEvents();
+      } else if (flushTimer.current === null) {
+        flushTimer.current = window.setTimeout(flushEvents, 80);
+      }
+    },
+    [flushEvents],
+  );
+
   /** 连接一个已存在的后台运行；HTTP 错误才会结束，网络抖动由 API 层续传。 */
   const connectRun = useCallback(
     (conversationId: string, turnId: string, runId: string) => {
@@ -447,7 +507,7 @@ export function AgentConversationsProvider({ children }: { children: React.React
       void streamAgentRun(
         runId,
         (event) => {
-          updateTurn(conversationId, turnId, (turn) => applyAgentEvent(turn, event));
+          enqueueEvent(conversationId, turnId, event);
         },
         { signal: controller.signal },
       )
@@ -457,6 +517,8 @@ export function AgentConversationsProvider({ children }: { children: React.React
             error instanceof HttpError && error.status === 404
               ? "运行记录不存在或已过期，可能是服务已重启，请重新发起任务"
               : (error as Error).message;
+          // 先冲刷缓冲中的事件再落错误态，保证时间线不乱序
+          flushEvents();
           updateTurn(conversationId, turnId, (turn) => ({
             ...turn,
             status: "error",
@@ -469,7 +531,7 @@ export function AgentConversationsProvider({ children }: { children: React.React
           }
         });
     },
-    [updateTurn],
+    [enqueueEvent, flushEvents, updateTurn],
   );
 
   /** 打开会话：已加载则直接返回；否则拉详情回放，running 时重挂 SSE。

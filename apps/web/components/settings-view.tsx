@@ -566,6 +566,8 @@ function BackdropGroup() {
             <img
               src={backdrop}
               alt="当前首页背景预览"
+              loading="lazy"
+              decoding="async"
               className="h-full w-full object-cover transition-transform duration-500 ease-out group-hover:scale-[1.03]"
             />
             {/* 底部信息渐变 + 当前背景名 */}
@@ -909,7 +911,13 @@ function BackdropTile({
             : "cursor-pointer border-white/[0.14] group-hover/tile:border-white/[0.35]"
         }`}
       >
-        <img src={src} alt={`${label}背景缩略图`} className="h-full w-full object-cover" />
+        <img
+          src={src}
+          alt={`${label}背景缩略图`}
+          loading="lazy"
+          decoding="async"
+          className="h-full w-full object-cover"
+        />
         {active && (
           <span className="absolute right-1.5 top-1.5 flex size-[18px] items-center justify-center rounded-full bg-[var(--accent-strong)] text-[#141821] shadow">
             <CheckIcon className="size-3" />

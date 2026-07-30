@@ -45,6 +45,7 @@ import { resolveRequestUrl } from "@/lib/http";
 import { cachedImageUrl } from "@/lib/image-proxy";
 import { formatRelativeTime } from "@/lib/time";
 import { usePageTitle } from "@/lib/use-page-title";
+import { useVisiblePolling } from "@/lib/use-visible-polling";
 
 /**
  * 媒体库条目详情页（/library/[id]/item/[mediaItemId]）——与发现页详情
@@ -122,15 +123,14 @@ export function LibraryItemDetailView({
   // **无论刷新是从这个页面发起的、还是别处发起后你才打开这一页**，都会
   // 看到"正在刷新"并在结束时自动呈现新档案/新图；离开页面也不影响后台跑完
   const scrapingNow = Boolean(detail?.scraping) || kicking;
-  useEffect(() => {
-    if (!detail?.scraping) return;
-    const timer = setInterval(() => {
+  useVisiblePolling(
+    () => {
       getLibraryItemDetail(libraryId, mediaItemId)
         .then(setDetail)
         .catch(() => {});
-    }, 2000);
-    return () => clearInterval(timer);
-  }, [detail?.scraping, libraryId, mediaItemId]);
+    },
+    detail?.scraping ? 2000 : null,
+  );
 
   // 介质规格的静默补拉：后端把 ffprobe 补探挪到了响应之后的后台任务
   // （网络挂载上探测是秒级/文件，不能拖首屏），"尚未探测"的文件在页面

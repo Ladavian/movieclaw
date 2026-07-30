@@ -35,6 +35,7 @@ import type { Subscription } from "@/lib/api/subscriptions";
 import { formatBytes } from "@/lib/format";
 import { imageUrl } from "@/lib/image-proxy";
 import type { MediaItem, MediaType } from "@/lib/media-types";
+import { useVisiblePolling } from "@/lib/use-visible-polling";
 
 /** 库类型 → 展示名与图标 */
 export const LIBRARY_KIND_META: Record<MediaType, { label: string; Icon: typeof FilmIcon }> = {
@@ -201,13 +202,20 @@ export function LibraryView() {
   // 轮询乱序守卫：扫描期间后端响应时间抖动大，上一轮的慢响应可能晚于
   // 下一轮到达，不作废就会用旧快照覆盖新状态（进度回跳、卡片状态闪烁）
   const reloadSeq = useRef(0);
+  // 上一轮已拉过条目时的库列表快照：库状态（扫描/整理/入账数/刷新进度）
+  // 没有任何变化，说明库存也不会变，封面拼图不必再逐库全量拉一遍条目
+  // ——否则空闲时每 30 秒也要打出 1 + N 个请求
+  const lastLibsSnapshot = useRef<string | null>(null);
   const reload = useCallback(() => {
     const seq = ++reloadSeq.current;
     listLibraries()
       .then(async (libs) => {
         if (seq !== reloadSeq.current) return;
         setFailed(false);
-        setLibraries(libs);
+        const snapshot = JSON.stringify(libs);
+        // 内容没变就复用旧引用，跳过整页卡片的无谓重渲染
+        setLibraries((prev) => (prev && JSON.stringify(prev) === snapshot ? prev : libs));
+        if (snapshot === lastLibsSnapshot.current) return;
         // 封面拼图需要各库的条目海报；库的数量级很小，并发拉取即可
         const entries = await Promise.all(
           libs.map(
@@ -215,6 +223,7 @@ export function LibraryView() {
           ),
         );
         if (seq !== reloadSeq.current) return;
+        lastLibsSnapshot.current = snapshot;
         setItemsByLibrary(new Map(entries));
       })
       // 瞬时失败不清已有数据：failed 只决定提示条，卡片继续用上一份快照，
@@ -253,12 +262,11 @@ export function LibraryView() {
     const timer = setTimeout(() => setRecentlyBusy(false), 12_000);
     return () => clearTimeout(timer);
   }, [busyAny, recentlyBusy]);
-  useEffect(() => {
-    const interval =
-      busyAny || recentlyBusy ? 3000 : refreshingAny ? 5000 : importingAny ? 10_000 : 30_000;
-    const timer = setInterval(reload, interval);
-    return () => clearInterval(timer);
-  }, [busyAny, recentlyBusy, refreshingAny, importingAny, reload]);
+  // 页面隐藏时暂停轮询、恢复可见立即补一次（useVisiblePolling）
+  useVisiblePolling(
+    reload,
+    busyAny || recentlyBusy ? 3000 : refreshingAny ? 5000 : importingAny ? 10_000 : 30_000,
+  );
 
   // 新建的库进入列表后滚进视野（依赖 libraries：创建到列表刷新之间隔着
   // 一次请求，元素这时才存在），高亮 2.5 秒后自行褪去
@@ -747,12 +755,13 @@ function LibraryCardMenu({
     if (!open) return;
     const close = () => setMenuPos(null);
     document.addEventListener("mousedown", close);
-    document.addEventListener("scroll", close, true);
+    // passive：只做关闭动作、不会 preventDefault，别让浏览器为它放弃滚动快路径
+    document.addEventListener("scroll", close, { capture: true, passive: true });
     const onKey = (e: KeyboardEvent) => e.key === "Escape" && close();
     document.addEventListener("keydown", onKey);
     return () => {
       document.removeEventListener("mousedown", close);
-      document.removeEventListener("scroll", close, true);
+      document.removeEventListener("scroll", close, { capture: true });
       document.removeEventListener("keydown", onKey);
     };
   }, [open]);

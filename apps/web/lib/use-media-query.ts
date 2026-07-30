@@ -17,10 +17,26 @@ import { useCallback, useSyncExternalStore } from "react";
  * 用 useSyncExternalStore 而非 useEffect + useState：订阅外部数据源的标准做法，
  * 服务端快照恒为 false（按桌面渲染），客户端首帧即读到真实值，不会闪一帧错版式。
  */
+/**
+ * MediaQueryList 按查询串缓存：getSnapshot 在每次渲染（以及 React 校验 store
+ * 时）都会被调用，每次都 window.matchMedia() 会不停新建 MQL 对象——海报墙
+ * 里几百张卡片同时用 useMediaQuery 时尤其浪费。同一查询串全站共享一个实例。
+ */
+const mqlCache = new Map<string, MediaQueryList>();
+
+function mediaQueryList(query: string): MediaQueryList {
+  let mql = mqlCache.get(query);
+  if (!mql) {
+    mql = window.matchMedia(query);
+    mqlCache.set(query, mql);
+  }
+  return mql;
+}
+
 export function useMediaQuery(query: string): boolean {
   const subscribe = useCallback(
     (onChange: () => void) => {
-      const mql = window.matchMedia(query);
+      const mql = mediaQueryList(query);
       mql.addEventListener("change", onChange);
       return () => mql.removeEventListener("change", onChange);
     },
@@ -28,7 +44,7 @@ export function useMediaQuery(query: string): boolean {
   );
   return useSyncExternalStore(
     subscribe,
-    () => window.matchMedia(query).matches,
+    () => mediaQueryList(query).matches,
     () => false, // SSR：按桌面渲染
   );
 }

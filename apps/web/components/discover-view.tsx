@@ -269,6 +269,8 @@ const HERO_INTERVAL = 8000;
  * Hero 大横幅：精选影片自动轮播。
  * 所有帧常驻 DOM 叠放，靠 opacity 交叉淡入淡出（避免切换时图片重新加载闪白）；
  * 文字区跟随当前帧一起淡入。两侧箭头与右下角圆点均可手动切换并重置计时。
+ * 图片按需装载：帧壳常驻，但 w1280 大图只有轮到（当前帧/下一帧）才写入 src，
+ * 首屏不必一次下载解码全部 6 张；已展示过的帧保持已加载，交叉淡出不闪白。
  */
 function HeroBanner({ items }: { items: MediaItem[] }) {
   const [index, setIndex] = useState(0);
@@ -280,16 +282,19 @@ function HeroBanner({ items }: { items: MediaItem[] }) {
   useEffect(() => {
     if (items.length <= 1) return;
     const timer = setInterval(() => {
+      // 后台标签页不推进轮播：推进了也没人看，白白解码下一张大图并重渲染
+      if (document.hidden) return;
       setIndex((i) => (i + 1) % items.length);
     }, HERO_INTERVAL);
     return () => clearInterval(timer);
     // index 作为依赖：手动切换后重置轮播计时，避免刚点完就被自动切走
   }, [items.length, index]);
 
+  const next = (index + 1) % items.length;
   return (
     <div className="group relative h-[46vh] min-h-[320px] w-full overflow-hidden rounded-2xl shadow-[0_24px_70px_-18px_rgba(0,0,0,0.62)] ring-1 ring-white/10 max-md:h-[38vh] max-md:min-h-[230px]">
       {items.map((item, i) => (
-        <HeroSlide key={item.id} item={item} active={i === index} />
+        <HeroSlide key={item.id} item={item} active={i === index} preload={i === index || i === next} />
       ))}
 
       {/* 手动切换按钮：首尾相连，触摸设备也保留足够大的点击区域。 */}
@@ -334,8 +339,22 @@ function HeroBanner({ items }: { items: MediaItem[] }) {
   );
 }
 
-function HeroSlide({ item, active }: { item: MediaItem; active: boolean }) {
+function HeroSlide({
+  item,
+  active,
+  preload,
+}: {
+  item: MediaItem;
+  active: boolean;
+  /** 是否该装载大图（当前帧或下一帧）；一旦装载过就保持，淡出时不闪白 */
+  preload: boolean;
+}) {
   const { open } = useMediaDetail();
+  // 「粘性」装载：轮到过一次就永久保留 src（浏览器已缓存，重复挂载无成本）
+  const [revealed, setRevealed] = useState(preload);
+  useEffect(() => {
+    if (preload) setRevealed(true);
+  }, [preload]);
   // Hero 占满首屏，手机上「向下滑看海报墙」几乎必然从这块起手，
   // 「更多信息」正落在起手区里，同样过一遍误触判定。
   const tapGuard = useTapGuard(() => open(item));
@@ -348,7 +367,7 @@ function HeroSlide({ item, active }: { item: MediaItem; active: boolean }) {
     >
       {/* 宽幅剧照 + 双层渐变蒙版：左侧压暗保文字可读，底部渐隐融入页面 */}
       <PosterImage
-        src={item.backdropUrl}
+        src={revealed ? item.backdropUrl : undefined}
         alt={`${item.title} 剧照`}
         className={`absolute inset-0 size-full object-cover object-top transition-transform duration-[9000ms] ease-linear ${
           active ? "scale-[1.06]" : "scale-100"

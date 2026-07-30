@@ -1048,14 +1048,19 @@ body.cmdk-open .app-shell {
   /* 各骨架行通过 --stagger 错峰，扫光斜向依次掠过，比整片同步呼吸更有"加载中"的动感 */
   animation-delay: var(--stagger, 0ms);
 }
+/* 扫光动画走 transform 而非 left：left 是布局属性，每帧都要重排重绘；
+   transform 在合成器上执行，搜索期间常驻的动画不该持续占用主线程。
+   translateX 以自身宽度（父宽 40%）为基准：-100% 自身 = 原 left:-40%，
+   250% 自身 = 原 left:100%。 */
 @keyframes search-progress-sweep {
   from {
-    left: -40%;
+    transform: translateX(-100%);
   }
   to {
-    left: 100%;
+    transform: translateX(250%);
   }
 }
 .progress-sweep {
+  left: 0;
   animation: search-progress-sweep 1.1s ease-in-out infinite;
 }

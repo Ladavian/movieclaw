@@ -457,19 +457,28 @@ function PhotoWall({
   const scrollerRef = useRef<HTMLDivElement>(null);
   const [canLeft, setCanLeft] = useState(false);
   const [canRight, setCanRight] = useState(false);
+  const edgeFrame = useRef(0);
 
-  /** 与 MediaRow 同款的边缘检测：到达两端时隐藏对应方向的翻页钮 */
+  /** 与 HScroller 同款的边缘检测：到达两端时隐藏对应方向的翻页钮。
+   *  测量合并进 rAF：scroll 回调里直接读布局会强制同步布局（见 h-scroller.tsx） */
   const updateEdges = useCallback(() => {
-    const el = scrollerRef.current;
-    if (!el) return;
-    setCanLeft(el.scrollLeft > 1);
-    setCanRight(el.scrollLeft + el.clientWidth < el.scrollWidth - 1);
+    if (edgeFrame.current) return;
+    edgeFrame.current = window.requestAnimationFrame(() => {
+      edgeFrame.current = 0;
+      const el = scrollerRef.current;
+      if (!el) return;
+      setCanLeft(el.scrollLeft > 1);
+      setCanRight(el.scrollLeft + el.clientWidth < el.scrollWidth - 1);
+    });
   }, []);
 
   useEffect(() => {
     updateEdges();
     window.addEventListener("resize", updateEdges);
-    return () => window.removeEventListener("resize", updateEdges);
+    return () => {
+      window.removeEventListener("resize", updateEdges);
+      window.cancelAnimationFrame(edgeFrame.current);
+    };
   }, [updateEdges, activeId]);
 
   const page = (dir: -1 | 1) => {

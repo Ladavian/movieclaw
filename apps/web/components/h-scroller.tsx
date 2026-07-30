@@ -25,23 +25,34 @@ export function HScroller({
   const scrollerRef = useRef<HTMLDivElement>(null);
   const [canLeft, setCanLeft] = useState(false);
   const [canRight, setCanRight] = useState(false);
+  const edgeFrame = useRef(0);
 
-  /** 根据当前滚动位置更新两侧按钮的可用性（含 1px 容差，避免亚像素误差） */
+  /** 根据当前滚动位置更新两侧按钮的可用性（含 1px 容差，避免亚像素误差）。
+   *  测量合并进下一帧统一执行：scroll 事件每帧可触发多次，事件回调里直接读
+   *  scrollLeft/clientWidth 会强制同步布局；发现页一屏多个横滚行叠加起来，
+   *  滑动时的布局抖动很可感。rAF 内读取则每帧至多量一次、且在布局干净时执行 */
   const updateEdges = useCallback(() => {
-    const el = scrollerRef.current;
-    if (!el) return;
-    setCanLeft(el.scrollLeft > 1);
-    setCanRight(el.scrollLeft + el.clientWidth < el.scrollWidth - 1);
+    if (edgeFrame.current) return;
+    edgeFrame.current = window.requestAnimationFrame(() => {
+      edgeFrame.current = 0;
+      const el = scrollerRef.current;
+      if (!el) return;
+      setCanLeft(el.scrollLeft > 1);
+      setCanRight(el.scrollLeft + el.clientWidth < el.scrollWidth - 1);
+    });
   }, []);
 
   // 无依赖数组：子项异步加载（如媒体库列表）后内容宽度会变，每次渲染后都重量
   // 一次最省心；两个 state 未变时 React 自行短路，不会引起额外渲染
   useEffect(updateEdges);
 
-  // 视口尺寸变化会改变可视宽度，跟着重算
+  // 视口尺寸变化会改变可视宽度，跟着重算；卸载时取消未执行的测量帧
   useEffect(() => {
     window.addEventListener("resize", updateEdges);
-    return () => window.removeEventListener("resize", updateEdges);
+    return () => {
+      window.removeEventListener("resize", updateEdges);
+      window.cancelAnimationFrame(edgeFrame.current);
+    };
   }, [updateEdges]);
 
   const page = (dir: -1 | 1) => {

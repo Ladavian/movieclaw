@@ -329,11 +329,12 @@ function RunRow({
     };
     document.addEventListener("mousedown", onPointer);
     document.addEventListener("keydown", onKey);
-    document.addEventListener("scroll", close, true);
+    // passive：只做关闭动作、不会 preventDefault，别让浏览器为它放弃滚动快路径
+    document.addEventListener("scroll", close, { capture: true, passive: true });
     return () => {
       document.removeEventListener("mousedown", onPointer);
       document.removeEventListener("keydown", onKey);
-      document.removeEventListener("scroll", close, true);
+      document.removeEventListener("scroll", close, { capture: true });
     };
   }, [open]);
 

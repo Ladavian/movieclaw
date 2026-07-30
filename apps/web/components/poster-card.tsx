@@ -222,15 +222,17 @@ function PosterCardContent({
             className="absolute inset-0 size-full transition-transform duration-500 ease-out group-hover/card:scale-[1.06]"
           />
 
-          {/* 左上：资源最高清晰度徽章（无资源信息时不渲染） */}
+          {/* 左上：资源最高清晰度徽章（无资源信息时不渲染）。
+              徽章不用 backdrop-blur：海报墙每张卡 2~3 个模糊合成层会显著放大
+              滚动时的 GPU 压力（几百张卡叠加），加实底色观感几乎无差 */}
           {badges[0] && (
-            <span className="absolute left-2 top-2 rounded-md bg-black/55 px-1.5 py-0.5 text-[10px] font-bold tracking-wide text-[var(--accent)] backdrop-blur-sm">
+            <span className="absolute left-2 top-2 rounded-md bg-black/70 px-1.5 py-0.5 text-[10px] font-bold tracking-wide text-[var(--accent)]">
               {badges[0]}
             </span>
           )}
           {/* 右上：评分徽章（暂无评分时不渲染，避免展示 0.0） */}
           {item.rating > 0 && (
-            <span className="tnum absolute right-2 top-2 flex items-center gap-1 rounded-md bg-black/55 px-1.5 py-0.5 text-[11px] font-semibold text-white backdrop-blur-sm">
+            <span className="tnum absolute right-2 top-2 flex items-center gap-1 rounded-md bg-black/70 px-1.5 py-0.5 text-[11px] font-semibold text-white">
               <StarIcon className="size-3 text-[#f5c451]" />
               {item.rating.toFixed(1)}
             </span>
@@ -306,7 +308,7 @@ function PosterCardActionButton({
   if (!subscribeMeta) {
     // 已入库标识：非交互，与库存格下方的绿点语言一致。
     return (
-      <span className="flex h-7 items-center gap-1.5 rounded-full bg-white/[0.14] px-3 text-[11px] font-semibold text-white/90 backdrop-blur-sm">
+      <span className="flex h-7 items-center gap-1.5 rounded-full bg-white/[0.18] px-3 text-[11px] font-semibold text-white/90">
         <span className="size-1.5 rounded-full bg-[#4ade80]" />
         已入库
       </span>
@@ -341,7 +343,7 @@ function PosterCardActionButton({
       }}
       className={
         existingSub
-          ? "flex h-7 items-center gap-1.5 rounded-full bg-white/[0.14] px-3 text-[11px] font-semibold text-white/90 backdrop-blur-sm transition-colors hover:bg-white/[0.22]"
+          ? "flex h-7 items-center gap-1.5 rounded-full bg-white/[0.18] px-3 text-[11px] font-semibold text-white/90 transition-colors hover:bg-white/[0.26]"
           : "btn-accent flex h-7 items-center gap-1 rounded-full px-3 text-[11px] font-semibold"
       }
     >

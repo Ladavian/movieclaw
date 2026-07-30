@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { memo, useEffect, useMemo, useRef, useState } from "react";
 
 import { ImageLightbox } from "@/components/image-lightbox";
 import { LayersIcon, ListIcon, PhotoIcon } from "@/components/icons";
@@ -413,9 +413,17 @@ function collectFacetMaps(items: TorrentHit[], filters: Filters | null): FacetMa
     // only 非空 = 这条结果只挂在该维度上，仅计入它；全通过时保持 null（计入所有维度）
     let only: FilterDim | null = null;
     if (filters) {
-      const failed = FILTER_DIMENSIONS.filter((d) => !d.pass(hit, filters));
-      if (failed.length > 1) continue;
-      if (failed.length === 1) only = failed[0].dim;
+      // 手写循环而非 filter()：这里在每条结果上执行，千条结果 × 每批流式
+      // 重算,避免每条都分配一个临时数组;失败超过 1 个维度即可提前退出
+      let failedCount = 0;
+      for (const d of FILTER_DIMENSIONS) {
+        if (d.pass(hit, filters)) continue;
+        failedCount += 1;
+        if (failedCount > 1) break;
+        only = d.dim;
+      }
+      if (failedCount > 1) continue;
+      if (failedCount === 0) only = null;
     }
     const want = (dim: FilterDim) => only === null || only === dim;
 
@@ -664,14 +672,16 @@ export function SearchResults({ query, onResearch }: SearchResultsProps) {
   );
   const sorted = useMemo(() => {
     const dir = sort.dir === "asc" ? 1 : -1;
-    return [...filtered].sort((x, y) => {
-      const vx = sortVector(x, sort.key);
-      const vy = sortVector(y, sort.key);
-      for (let i = 0; i < vx.length; i++) {
-        if (vx[i] !== vy[i]) return (vx[i] - vy[i]) * dir;
+    // 先逐条算好排序向量再排序：比较函数里现算会在 N·logN 次比较中反复
+    // 分配数组（千条结果约数万次），流式进结果期间每批都要全量重排，很可感
+    const decorated = filtered.map((hit) => ({ hit, vector: sortVector(hit, sort.key) }));
+    decorated.sort((x, y) => {
+      for (let i = 0; i < x.vector.length; i++) {
+        if (x.vector[i] !== y.vector[i]) return (x.vector[i] - y.vector[i]) * dir;
       }
       return 0;
     });
+    return decorated.map((d) => d.hit);
   }, [filtered, sort]);
 
   // 智能排序键的动态注入：按全量结果（而非筛选后）的类型构成决定——
@@ -923,23 +933,27 @@ function GroupedResults({
   const [collapsed, setCollapsed] = useState<Set<string>>(() => new Set());
   const [uncapped, setUncapped] = useState<Set<string>>(() => new Set());
 
-  const buckets: { key: string; rows: TorrentHit[] }[] = [];
-  const indexOf = new Map<string, number>();
-  for (const hit of hits) {
-    const key = entityKeyOf(hit);
-    const i = indexOf.get(key);
-    if (i === undefined) {
-      indexOf.set(key, buckets.length);
-      buckets.push({ key, rows: [hit] });
-    } else {
-      buckets[i].rows.push(hit);
+  // 分桶按 hits 缓存：折叠/展开等本地状态变化不必重新遍历全量结果
+  const buckets = useMemo(() => {
+    const buckets: { key: string; rows: TorrentHit[] }[] = [];
+    const indexOf = new Map<string, number>();
+    for (const hit of hits) {
+      const key = entityKeyOf(hit);
+      const i = indexOf.get(key);
+      if (i === undefined) {
+        indexOf.set(key, buckets.length);
+        buckets.push({ key, rows: [hit] });
+      } else {
+        buckets[i].rows.push(hit);
+      }
     }
-  }
-  const unparsedAt = indexOf.get(ENTITY_UNPARSED);
-  if (unparsedAt !== undefined && unparsedAt !== buckets.length - 1) {
-    const [u] = buckets.splice(unparsedAt, 1);
-    buckets.push(u);
-  }
+    const unparsedAt = indexOf.get(ENTITY_UNPARSED);
+    if (unparsedAt !== undefined && unparsedAt !== buckets.length - 1) {
+      const [u] = buckets.splice(unparsedAt, 1);
+      buckets.push(u);
+    }
+    return buckets;
+  }, [hits]);
 
   return (
     <div className="space-y-4">
@@ -1786,8 +1800,13 @@ function SiteStatusSummary({
  * 全部结果都无海报时不渲染空网格，整页自然退化为普通列表。
  */
 function PosterResults({ hits }: { hits: TorrentHit[] }) {
-  const withPoster = hits.filter((h) => h.poster_url);
-  const withoutPoster = hits.filter((h) => !h.poster_url);
+  // 流式期间每批结果都重渲染本组件，分桶结果按 hits 缓存
+  const { withPoster, withoutPoster } = useMemo(() => {
+    const withPoster: TorrentHit[] = [];
+    const withoutPoster: TorrentHit[] = [];
+    for (const h of hits) (h.poster_url ? withPoster : withoutPoster).push(h);
+    return { withPoster, withoutPoster };
+  }, [hits]);
   return (
     <div className="space-y-5">
       {withPoster.length > 0 && (
@@ -1826,8 +1845,9 @@ function PosterResults({ hits }: { hits: TorrentHit[] }) {
 /**
  * 海报卡片左上角的促销徽标（免费 / 折扣 / 双倍上传 / H&R）。
  *
- * 与列表模式的 PromoBadges 同一判断口径，但样式为海报适配：用较实的底色 +
- * backdrop-blur，保证叠在明亮海报上依然清晰；免费最醒目（实绿底深字），
+ * 与列表模式的 PromoBadges 同一判断口径，但样式为海报适配：用较实的底色
+ * 保证叠在明亮海报上依然清晰（不用 backdrop-blur——海报墙每张卡多个模糊
+ * 合成层会放大滚动 GPU 压力）；免费最醒目（实绿底深字），
  * 因为「是否免费」是海报模式下用户最关心的下载决策依据。
  */
 function posterPromoBadges(hit: TorrentHit): { text: string; cls: string }[] {
@@ -1857,7 +1877,8 @@ function posterPromoBadges(hit: TorrentHit): { text: string; cls: string }[] {
   return badges;
 }
 
-function TorrentPosterCard({ hit }: { hit: TorrentHit }) {
+// memo：与 TorrentRow 同理，流式进结果时已有卡片的 hit 引用不变，整卡跳过
+const TorrentPosterCard = memo(function TorrentPosterCard({ hit }: { hit: TorrentHit }) {
   const [viewerOpen, setViewerOpen] = useState(false);
   const size = hit.size ?? formatBytes(hit.size_bytes);
   const name = parsedName(hit);
@@ -1903,7 +1924,7 @@ function TorrentPosterCard({ hit }: { hit: TorrentHit }) {
             {posterPromoBadges(hit).map((b) => (
               <span
                 key={b.text}
-                className={`rounded-md px-1.5 py-0.5 text-[10px] font-semibold backdrop-blur-sm ${b.cls}`}
+                className={`rounded-md px-1.5 py-0.5 text-[10px] font-semibold ${b.cls}`}
               >
                 {b.text}
               </span>
@@ -1912,7 +1933,7 @@ function TorrentPosterCard({ hit }: { hit: TorrentHit }) {
           {/* 张数常显（含 1 张）：点开前就知道里面有几张图，只有一张时不必特意点开 */}
           <span
             title={`共 ${gallery.length} 张图片，点击卡片浏览`}
-            className="tnum flex shrink-0 items-center gap-1 rounded-md bg-black/55 px-1.5 py-0.5 text-[10px] font-medium text-white/85 backdrop-blur-sm"
+            className="tnum flex shrink-0 items-center gap-1 rounded-md bg-black/70 px-1.5 py-0.5 text-[10px] font-medium text-white/85"
           >
             <PhotoIcon className="size-3" />
             {gallery.length}
@@ -1977,7 +1998,7 @@ function TorrentPosterCard({ hit }: { hit: TorrentHit }) {
       )}
     </li>
   );
-}
+});
 
 /* —— 单条种子 —— */
 
@@ -2100,8 +2121,11 @@ function specSummary(attrs: TorrentAttrs): string | null {
  * 体积/做种/完成/时间锁定在固定宽度的 2×2 网格里右对齐，跨行位置完全一致——
  * 眼睛沿一条垂直线扫下来即可完成全列表对比（Kayak/qBittorrent 式扫描列），
  * 不再混在自由流动的 meta 文本里逐行找数字。
+ *
+ * memo 化：流式搜索每批新结果都会重渲染整个列表，已有行的 hit 引用不变，
+ * 比对通过即整行跳过——上千行时这是流式期间卡顿与否的分界。
  */
-function TorrentRow({
+const TorrentRow = memo(function TorrentRow({
   hit,
   grouped = false,
   showRawTitles = false,
@@ -2118,7 +2142,11 @@ function TorrentRow({
   const asSpecRow = grouped && name !== null;
   const spec = asSpecRow && hit.attrs ? specSummary(hit.attrs) : null;
   return (
-    <li className="group relative rounded-2xl border border-white/[0.06] bg-[rgba(14,16,22,0.42)] px-4 py-3.5 backdrop-blur-xl transition-all hover:-translate-y-px hover:border-white/[0.13] hover:bg-[rgba(20,23,31,0.58)] hover:shadow-[0_12px_30px_-18px_rgba(0,0,0,0.8)]">
+    // 行底不用 backdrop-filter：结果动辄上千行，每行一个独立的实时模糊合成层，
+    // 滚动时 GPU 要逐层重采样背后内容，是搜索页掉帧的主因；页面蒙版本就压暗了
+    // 背景，行底改用更实的半透明底色，观感几乎一致。content-visibility 让
+    // 视口外的行跳过布局与绘制，长列表滚动/更新只付可见行的成本。
+    <li className="group relative rounded-2xl border border-white/[0.06] bg-[rgba(16,18,25,0.82)] px-4 py-3.5 transition-all [contain-intrinsic-size:auto_72px] [content-visibility:auto] hover:-translate-y-px hover:border-white/[0.13] hover:bg-[rgba(22,25,33,0.9)] hover:shadow-[0_12px_30px_-18px_rgba(0,0,0,0.8)]">
       <div className="flex items-center gap-5">
         {/* 标题优先，来源和属性下沉为辅助信息，避免徽标抢走首屏注意力。 */}
         <div className="min-w-0 flex-1">
@@ -2211,7 +2239,7 @@ function TorrentRow({
       </div>
     </li>
   );
-}
+});
 
 /** 列表指标单元：固定标签 + 数值的两级层次，让密集数字仍然可快速扫读。 */
 function Metric({
