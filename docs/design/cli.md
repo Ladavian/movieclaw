@@ -50,12 +50,14 @@
 ┌ 后端（唯一事实源）────────────────────────────────┐
 │ FastAPI 路由: summary/description/operation_id     │
 │ Pydantic schemas · x-cli-* 扩展元数据              │
-│ → GET /api/v1/spec（鉴权后可访问的 openapi.json）  │
-└──────────────┬────────────────────────────────────┘
-               ↓ 拉取 + 按 hash 本地缓存
+└──────┬────────────────────────────┬───────────────┘
+       │ 构建期：CI 从代码导出 spec │ 运行时：GET /api/v1/spec
+       │ 随 CLI 包分发（内置基线）  │ 按 hash 协商增量刷新
+       ↓                            ↓
 ┌ CLI ──────────────────────────────────────────────┐
 │ core/   config·auth·http·sse·task·output·errors   │
-│ gen/    spec 加载 → 命令树构建 → 参数映射 → 调用   │
+│ gen/    spec 装载（内置基线 ∨ 刷新缓存）           │
+│         → 命令树构建 → 参数映射 → 调用             │
 │ overlay/ 精选命令注册（同名覆盖生成命令）          │
 └───────────────────────────────────────────────────┘
 ```
@@ -67,18 +69,31 @@
 help、参数、校验、示例全部从 spec 来，等价于「API 文档写好，CLI 文档就写好了」。
 后端需要一次性补齐并用 CI 守护（模式对标现有的 `test_auth.py` 全路由匿名扫描守护测试）：
 
-### 2.1 生产环境暴露 spec（带鉴权）
+### 2.1 spec 的产出与分发：构建期导出为主，运行时刷新为辅
 
-现在 openapi.json 只在 `APP_ENV=local` 开放，原因是防匿名暴露接口面。方案不是
-重开匿名 openapi.json，而是新增一个**受 `require_login` 保护**的等价端点：
+**主通道（构建期导出，不需要起服务器）**：FastAPI 的 spec 可以离线导出——
+`create_app().openapi()` 就是全量 openapi.json。新增一个导出脚本
+（`python -m movieclaw_api.export_openapi`），CI 里执行并把产物作为**包数据
+随 CLI 分发**（对标 AWS CLI/botocore 分发服务模型 JSON 的做法）。由于 CLI
+与服务端同仓同镜像构建，**镜像内的 CLI 与服务器永远严格同版**——「新 API
+自动支持」由同仓构建直接保证，不依赖任何网络拉取。
+
+**辅通道（运行时刷新，服务偏斜时才用）**：远程安装的 CLI（pipx）可能与
+服务器版本不一致。为此保留一个**受 `require_login` 保护**的刷新端点：
 
 ```
-GET /api/v1/spec        # 返回 app.openapi()，响应头带 ETag（spec 内容 hash）
+GET  /api/v1/spec       # 返回 app.openapi()，响应头带 ETag（内容 hash）
+GET  /health            # 响应中附 spec_hash，探活时顺带完成偏斜检测（零额外请求）
 ```
 
-CLI 登录后拉取，按 ETag 协商缓存到 `~/.cache/movieclaw/spec-<server>.json`；
-命中缓存时启动零网络开销。**版本漂移自动解决**：CLI 永远和它面对的那台服务器
-的 spec 一致，服务器升级加了接口，CLI 下次拉取即见。
+CLI 每次调用时比对内置基线 hash 与 `/health` 返回的 `spec_hash`：一致（绝大
+多数情况）→ 直接用内置基线，零拉取；不一致 → 拉取 `/spec` 缓存到
+`~/.cache/movieclaw/spec-<server>.json` 并优先使用，同时提示版本偏斜。
+刷新失败或新 spec 含生成器不认识的形态 → **回退内置基线 + 明确警告
+「服务器较新，建议升级 CLI」**，绝不半瘫。
+
+现有「生产关闭 openapi.json 防匿名暴露」的安全立场不变：`/spec` 在鉴权后，
+匿名可见面零增加。
 
 ### 2.2 operation_id 命名约定 → 命令名
 
@@ -107,6 +122,7 @@ spec 标准字段表达不了的 CLI 语义，用少量扩展字段声明（声�
 | `x-cli-stream` | SSE 端点标记 + 终态事件名 | 搜索流 / Agent 流 |
 | `x-cli-hidden` | 不生成命令（纯 Web 基础设施，如图片代理），CI 快照中显式记为豁免 | `/images/proxy` |
 | `x-cli-paged` | 分页参数名，驱动统一 `--limit/--all` | `/agent/sessions` |
+| `x-cli-alias` | operation_id 改名时保留旧命令名（兼容一个大版本） | `sub.remove → sub.delete` |
 
 **CI 守护测试**（新 API 自动支持 CLI 的强制机制）：遍历 OpenAPI 全部路由，
 校验 ① summary 非空（已满足）② operation_id 合规 ③ 写操作有 description
@@ -125,19 +141,28 @@ dangerous 声明，除非显式豁免）。**漏标即 CI 红**——这一条�
 
 ## 3. 动态生成机制：spec → 命令树
 
-### 3.1 运行时生成 vs 构建期生成（权衡）
+### 3.1 三种方案的权衡：选「内置基线 + 运行时刷新」混合
 
-| | 运行时（推荐） | 构建期代码生成 |
-|---|---|---|
-| 新 API 生效 | 服务器升级即生效，CLI 零发布 | 必须重发 CLI |
-| 版本漂移 | 不存在（spec 来自对端服务器） | CLI 与服务器版本要配对 |
-| 启动开销 | 首次拉 spec（~100KB），此后 ETag 缓存命中 | 无 |
-| 静态检查 | 弱（映射逻辑要靠测试保证） | 强 |
-| 离线 --help | 需有缓存（首次必须连过一次服务器） | 天然支持 |
+| | 纯运行时拉取 | 纯构建期代码生成 | **混合：内置基线 spec + 按 hash 刷新（选定）** |
+|---|---|---|---|
+| 新 API 生效 | 服务器升级即生效 | 必须重发 CLI | 同仓同镜像构建 → 镜像内天然同步；远程 CLI 靠刷新跟上 |
+| 冷启动 `--help` | ✗ 没连过服务器就没有任何命令，且 spec 在登录后面，探索顺序被倒置 | ✓ | ✓ 内置基线离线可用 |
+| 服务器不可达 | ✗ 无缓存时全瘫 | ✓ help 可用 | ✓ help 可用，调用报退出码 4 |
+| 新老搭配 | ✗ 老 CLI 解析新 spec，运行时才炸 | ✗ 静默不匹配 | ✓ hash 比对显式发现偏斜，解析失败回退基线 + 提示升级 |
+| 每次调用开销 | 首次拉取 + 每次解析 | 零 | 常态零网络（hash 随 /health 捎带），仅偏斜时拉取 |
+| 生成器正确性验证时机 | 用户运行时 | CI | CI（对着导出 spec 做命令树快照测试） |
+| 业界先例 | kubectl（为 CRD 动态资源所迫，付出 ±1 版本偏斜策略的代价） | gcloud / Azure CLI | **AWS CLI（botocore 随包分发服务模型 JSON）** |
 
-选**运行时**：它是「每个新 API 自动支持 CLI」的唯一彻底解，启动开销靠缓存
-消化；映射逻辑的正确性用「对着真实 app 导出的 spec 做快照测试」保证——后端
-CI 里生成一次命令树快照，路由变更时快照 diff 一目了然。
+选**混合**的决定性理由是本产品的部署形态：CLI 与服务端同仓、打进同一个
+Docker 镜像，第一消费者（产品内 Agent 工作区）面对的永远是同版本服务器——
+「新 API 自动支持」由同仓构建直接保证，运行时拉取只需要解决「远程 pipx
+安装的 CLI 落后于服务器」这一个次要场景。注意仍然**没有构建期代码生成**：
+构建期产出的只是 spec 数据文件，命令树永远在启动时由装载的 spec 动态构建
+——「数据随包走，逻辑不分叉」，两条通道共用同一个生成器。
+
+**接口稳定性契约**（生成命令是脚本与 Agent 提示词的依赖，不能漂移）：
+operation_id 视为公开 API——改名即破坏性变更，CI 用命令树快照 diff 强制
+显式确认；确需改名时用 `x-cli-alias` 保留旧名一个大版本。
 
 ### 3.2 参数映射规则（生成器的全部约定，刻意保持少）
 
@@ -339,14 +364,18 @@ CLI 的第一消费者是产品自带的 AI 助手（movieclaw_agent，隔离工
 src/movieclaw_cli/
 ├── __main__.py        # movieclaw / mc 入口
 ├── core/              # config.py auth.py http.py sse.py task.py output.py errors.py
-├── gen/               # spec_loader.py（拉取+ETag缓存） tree_builder.py（映射规则）
-│                      # invoker.py（参数→请求） helpgen.py（spec→help渲染）
+├── gen/               # spec_loader.py（内置基线装载 + hash 偏斜检测/刷新）
+│                      # tree_builder.py（映射规则） invoker.py（参数→请求）
+│                      # helpgen.py（spec→help渲染）
+├── data/spec.json     # 构建期由 export_openapi 导出的内置基线 spec
+
 └── overlay/           # 精选命令，每条一个模块
 tests/cli/             # respx 测 core；对真实 app 导出 spec 做命令树快照测试
 ```
 
-后端改动集中且小：`GET /api/v1/spec`、operation_id 约定、x-cli-* 标注、
-CI 守护测试、（P1）PAT 端点。全部是元数据与鉴权层面，不动业务逻辑。
+后端改动集中且小：spec 导出脚本、operation_id 约定、x-cli-* 标注、
+CI 守护测试、`/health` 附带 spec_hash、`GET /api/v1/spec` 刷新端点、
+（P1）PAT 端点。全部是元数据与鉴权层面，不动业务逻辑。
 
 ---
 
@@ -354,8 +383,8 @@ CI 守护测试、（P1）PAT 端点。全部是元数据与鉴权层面，不�
 
 | 阶段 | 内容 | 验证标准 |
 |---|---|---|
-| **P0 地基 + 生成层雏形** | 后端：`/spec` 端点 + operation_id 约定 + CI 守护测试。CLI：core 全套、`mc login`(Cookie)、`mc status`、生成器先覆盖「纯 GET + path/query 参数」类端点 | 命令树快照测试跑通；`mc login && mc sub list -o json` 远程全通；退出码契约测试通过 |
-| **P1 生成层全量 + Token** | gen/ 映射规则全量落地（requestBody/上传/下载/分页）；x-cli-* 标注铺完 129 端点；后端 PAT + Agent 工作区令牌注入；长任务 `--wait`、危险确认 | 命令树快照 = 全部非 hidden 端点；产品内 Agent 工作区里 `mc sub list` 零配置跑通；漏标元数据 CI 红 |
+| **P0 地基 + 生成层雏形** | 后端：spec 导出脚本 + operation_id 约定 + CI 守护测试。CLI：core 全套、内置基线 spec 装载、`mc login`(Cookie)、`mc status`、生成器先覆盖「纯 GET + path/query 参数」类端点 | 断网状态 `mc --help` 全树可浏览；命令树快照测试跑通；`mc login && mc sub list -o json` 远程全通；退出码契约测试通过 |
+| **P1 生成层全量 + Token** | gen/ 映射规则全量落地（requestBody/上传/下载/分页）；x-cli-* 标注铺完 129 端点；`/health` spec_hash + `/spec` 刷新通道；后端 PAT + Agent 工作区令牌注入；长任务 `--wait`、危险确认 | 命令树快照 = 全部非 hidden 端点；产品内 Agent 工作区里 `mc sub list` 零配置跑通；偏斜场景（老 CLI × 新服务器）刷新与回退路径有测试覆盖；漏标元数据 CI 红 |
 | **P2 精选层 + 流式** | 精选八条命令（sub create 消歧流 / search+download / organize / agent run…）；SSE 两处 | 「搜索→下载→订阅→扫描入库」全流程由 Agent 通过 bash 调 CLI 完成，全程零交互 |
 | **P3 打磨** | 错误 hint 全覆盖、编辑距离建议、shell 补全、`logs -f`、README/示例扩充 | 抽样端点的 --help 含示例率 100%；退出码契约回归测试全绿 |
 
