@@ -8,8 +8,9 @@
 > 3. **每个命令自带 help（描述 + 示例）供探索发现**——尽可能复用 OpenAPI 文档，
 >    不另外维护第二份说明。
 >
-> 结论先行：**以 OpenAPI spec 为唯一事实源，CLI 在运行时从服务器拉取 spec、
-> 动态生成命令树与 help；再叠一层很薄的「精选命令」处理跨接口工作流。**
+> 结论先行：**以 OpenAPI spec 为唯一事实源——构建期导出、随包内置基线，
+> 运行时按 hash 偏斜刷新——CLI 启动时由 spec 动态生成命令树与 help；
+> 再叠一层很薄的「精选命令」处理跨接口工作流。**
 > 后端已具备关键条件：129 个端点全部带中文 `summary`、参数带 `description`、
 > 请求/响应全部是 Pydantic schema——原材料已经在代码里，缺的只是暴露与约定。
 
@@ -21,7 +22,11 @@
 2. **首要运行形态**：movieclaw 自带 AI 助手（movieclaw_agent）在隔离工作区执行
    bash——CLI 会被放进这个工作区，成为 Agent 操作产品本身的工具集；其次才是
    用户在自己终端远程使用。因此**非交互（non-TTY）是主形态，不是降级形态**。
-3. 工具名 `movieclaw`，短别名 `mc`，Python 实现（与后端同栈同仓，见 §9）。
+3. 命令名唯一且只有一个：`movieclaw`，**不注册短别名**。曾考虑的 `mc` 与
+   Midnight Commander、MinIO Client 撞名——目标用户（NAS 自部署人群）恰是
+   这两个工具的高密度人群，PATH 撞名是事故；且对模型而言，独特全名不会与
+   任何已有工具的用法产生世界知识混淆。help/示例/x-cli-examples 统一用全名，
+   人类嫌长可自行 `alias`（README 提一句）。Python 实现（同栈同仓，见 §9）。
 4. 现状硬约束（盘点结论）：认证只有 Cookie 会话（无通用 API Token）；
    2 个 SSE 端点（搜索流、Agent 运行流）；长任务全部「POST 启动 + 轮询」；
    响应统一 `ApiResponse{success,code,message,data}` 信封；敏感字段保存后不回读；
@@ -32,15 +37,15 @@
 ## 1. 总体架构：两层命令面（less is more）
 
 ```
-精选命令（overlay，手写，个位数）  mc sub create / mc download / mc search ...
+精选命令（overlay，手写，个位数）  movieclaw sub create / movieclaw download / movieclaw search ...
    跨接口工作流、长任务 --wait、SSE 聚合 —— 覆盖「多步才能完成一件事」的场景
 ─────────────────────────────────────────────────────────────
-生成命令（gen，自动，=接口数）     mc sub list / mc lib scan / mc site add ...
+生成命令（gen，自动，=接口数）     movieclaw sub list / movieclaw lib scan / movieclaw site add ...
    运行时由 OpenAPI spec 生成：命令名、参数、校验、help、示例全部来自 spec
    —— 新 API 合入后端即自动出现，CLI 零改动
 ```
 
-刻意**不设** `mc api call` 式的裸调逃生舱，也不设结构化目录命令——模型面对的
+刻意**不设** `movieclaw api call` 式的裸调逃生舱，也不设结构化目录命令——模型面对的
 每一条命令都是有正规名字、正规 help 的命令，工具面越小越干净，模型的选择
 就越稳。「新 API 自动支持」不靠留后门保证，靠 §2.3 的 CI 守护独力保证：
 生成器不认识的端点形态直接 CI 红，逼着当场扩映射规则或收进精选层，
@@ -101,10 +106,10 @@ FastAPI 默认 operation_id 冗长（函数名+路径+方法）。统一改为
 `<域>.<动作>` 两段式，直接决定命令树：
 
 ```
-operation_id = "sub.list"        →  mc sub list
-operation_id = "sub.pause"       →  mc sub pause <id>
-operation_id = "lib.scan"        →  mc lib scan <id>
-operation_id = "lib.items.claim" →  mc lib items claim <file_id>
+operation_id = "sub.list"        →  movieclaw sub list
+operation_id = "sub.pause"       →  movieclaw sub pause <id>
+operation_id = "lib.scan"        →  movieclaw lib scan <id>
+operation_id = "lib.items.claim" →  movieclaw lib items claim <file_id>
 ```
 
 实现上用一个自定义 `generate_unique_id_function` 兜底 + 路由处显式声明，
@@ -116,7 +121,7 @@ spec 标准字段表达不了的 CLI 语义，用少量扩展字段声明（声�
 
 | 扩展字段 | 含义 | 示例 |
 |---|---|---|
-| `x-cli-examples` | help 里的示范用法（命令行形态，≥1 条） | `mc sub create --tmdb 693134 --seasons 1,2` |
+| `x-cli-examples` | help 里的示范用法（命令行形态，≥1 条） | `movieclaw sub create --tmdb 693134 --seasons 1,2` |
 | `x-cli-dangerous` | 破坏性等级：`confirm`（需 --yes）/ `destructive`（删磁盘，需 --yes 且回显影响面） | 删条目、删库 |
 | `x-cli-long-task` | 声明这是长任务启动端点 + 进度从哪读（端点或字段路径），驱动统一 `--wait` | `{"progress": "lib.show#scan_progress"}` |
 | `x-cli-stream` | SSE 端点标记 + 终态事件名 | 搜索流 / Agent 流 |
@@ -168,7 +173,7 @@ operation_id 视为公开 API——改名即破坏性变更，CI 用命令树快
 
 | OpenAPI 元素 | CLI 形态 |
 |---|---|
-| path 参数 | 位置参数，按路径顺序（`/subscriptions/{id}` → `mc sub show <id>`） |
+| path 参数 | 位置参数，按路径顺序（`/subscriptions/{id}` → `movieclaw sub show <id>`） |
 | query 参数 | `--kebab-case` 标志，类型/枚举/默认值/必填照搬 schema |
 | requestBody（对象） | 顶层字段拍平成 `--标志`；嵌套对象/数组字段收折为 `--<字段>-json '<json>'`；整体替代形态 `--input body.json`（`-` 表示 stdin）三选一 |
 | multipart 上传 | `--file <path>` |
@@ -187,10 +192,10 @@ operation_id 视为公开 API——改名即破坏性变更，CI 用命令树快
 ### 4.1 `--help` 逐级探索——对人和模型是同一套
 
 ```
-mc --help                # 域列表（来自 tags + 中文描述）
-mc sub --help            # 该域全部命令 + 一行简介（来自 summary）
-mc sub create --help     # 长说明(description) + 全部标志(参数 description)
-                         # + 示例(x-cli-examples) + 关联命令(同域推荐)
+movieclaw --help                # 域列表（来自 tags + 中文描述）
+movieclaw sub --help            # 该域全部命令 + 一行简介（来自 summary）
+movieclaw sub create --help     # 长说明(description) + 全部标志(参数 description)
+                                # + 示例(x-cli-examples) + 关联命令(同域推荐)
 ```
 
 **不为「模型发现能力」单设任何机制。** Agent 在工作区跑 bash 时，逐级 help
@@ -206,7 +211,7 @@ Agent 最常见的「学习方式」是试错。因此错误输出必须携带�
 ```json
 {"success": false, "code": "VALIDATION_ERROR",
  "message": "缺少必填参数 --tmdb",
- "hint": "用法示例：mc sub create --tmdb 693134 --seasons 1,2；详见 mc sub create --help"}
+ "hint": "用法示例：movieclaw sub create --tmdb 693134 --seasons 1,2；详见 movieclaw sub create --help"}
 ```
 
 参数校验错、404、业务错（服务端中文 message 直接透传）都附 `hint`；
@@ -224,10 +229,10 @@ Agent 最常见的「学习方式」是试错。因此错误输出必须携带�
    任何「表格列怎么排」的调整都不影响它。TTY 下默认 table（人类副产品）。
 3. **一次调用 = 一个完整结果（阻塞语义优先）。** 与人类 CLI 相反：
    - 长任务默认 `--wait`（轮询到终态才返回，超时可控，`--no-wait` 才立即返回）；
-   - `mc search` 内部走 SSE，但默认输出**聚合完成后的稳定结果**，站点进度
+   - `movieclaw search` 内部走 SSE，但默认输出**聚合完成后的稳定结果**，站点进度
      打到 stderr；`--stream-events` 才逐帧输出 NDJSON（给需要增量的调用方）。
    Agent 的心智是「调用工具 → 拿到结果」，不是「盯着进度条」。
-4. **歧义是数据，不是对话。** `mc sub create --title "沙丘"` 命中多个 TMDB
+4. **歧义是数据，不是对话。** `movieclaw sub create --title "沙丘"` 命中多个 TMDB
    候选时，返回退出码 7 + 候选清单 JSON（id/标题/年份/简介摘要）+
    hint「重跑并指定 --tmdb <id>」。多轮消歧靠 Agent 的多次工具调用完成，
    每次调用自身保持无状态。
@@ -299,14 +304,14 @@ CLI 的第一消费者是产品自带的 AI 助手（movieclaw_agent，隔离工
 
 | 命令 | 编排内容 |
 |---|---|
-| `mc sub create` | prepare（歧义→退出码 7 候选清单）→ dispatch-preview（投递预检结论回显）→ create |
-| `mc search "关键词"` | SSE 聚合 + 客户端侧筛选排序标志（--resolution/--sort…，对应前端筛选弹层）+ 结果快照落本地供 `mc download` 引用 |
-| `mc download <行号|site:url>` | 读上次搜索快照 → `POST /downloaders/submit`，回显三级兜底路由结论（会/不会自动入库） |
-| `mc lib organize <id>` | `--dry-run` 走 preview；正式执行强制先 preview 回显影响面再执行 |
-| `mc agent run "任务"` | start → SSE 渲染（工具调用逐行）→ 终态定退出码；`--detach`/`attach`（Last-Event-ID 续传）/`cancel` |
-| `mc login` | bootstrap 探测 → 密码登录 → （P1 起）自动换取长期 Token |
-| `mc status` | health + auth/me + spec 版本，一眼看部署状态 |
-| `mc logs -f` | 轮询模拟 follow |
+| `movieclaw sub create` | prepare（歧义→退出码 7 候选清单）→ dispatch-preview（投递预检结论回显）→ create |
+| `movieclaw search "关键词"` | SSE 聚合 + 客户端侧筛选排序标志（--resolution/--sort…，对应前端筛选弹层）+ 结果快照落本地供 `movieclaw download` 引用 |
+| `movieclaw download <行号|site:url>` | 读上次搜索快照 → `POST /downloaders/submit`，回显三级兜底路由结论（会/不会自动入库） |
+| `movieclaw lib organize <id>` | `--dry-run` 走 preview；正式执行强制先 preview 回显影响面再执行 |
+| `movieclaw agent run "任务"` | start → SSE 渲染（工具调用逐行）→ 终态定退出码；`--detach`/`attach`（Last-Event-ID 续传）/`cancel` |
+| `movieclaw login` | bootstrap 探测 → 密码登录 → （P1 起）自动换取长期 Token |
+| `movieclaw status` | health + auth/me + spec 版本，一眼看部署状态 |
+| `movieclaw logs -f` | 轮询模拟 follow |
 
 预计 8 条左右。**准入标准：需要编排或本地状态才收进精选层；单接口的便利包装
 一律不收**（那是生成层 + x-cli 元数据该解决的事）。
@@ -317,7 +322,7 @@ CLI 的第一消费者是产品自带的 AI 助手（movieclaw_agent，隔离工
 
 ### 8.1 认证（唯一需要后端新增的功能点）
 
-- **P0**：`mc login` 走 Cookie 会话（后端零改动），凭证落
+- **P0**：`movieclaw login` 走 Cookie 会话（后端零改动），凭证落
   `~/.config/movieclaw/credentials`（0600）。
 - **P1**：后端新增 PAT——`POST/GET/DELETE /auth/tokens`，`require_login` 扩展为
   「Cookie 或 `Authorization: Bearer <token>`」，实现直接复用插件同步令牌的
@@ -362,7 +367,7 @@ CLI 的第一消费者是产品自带的 AI 助手（movieclaw_agent，隔离工
 
 ```
 src/movieclaw_cli/
-├── __main__.py        # movieclaw / mc 入口
+├── __main__.py        # 唯一入口 movieclaw（不注册短别名）
 ├── core/              # config.py auth.py http.py sse.py task.py output.py errors.py
 ├── gen/               # spec_loader.py（内置基线装载 + hash 偏斜检测/刷新）
 │                      # tree_builder.py（映射规则） invoker.py（参数→请求）
@@ -383,8 +388,8 @@ CI 守护测试、`/health` 附带 spec_hash、`GET /api/v1/spec` 刷新端点�
 
 | 阶段 | 内容 | 验证标准 |
 |---|---|---|
-| **P0 地基 + 生成层雏形** | 后端：spec 导出脚本 + operation_id 约定 + CI 守护测试。CLI：core 全套、内置基线 spec 装载、`mc login`(Cookie)、`mc status`、生成器先覆盖「纯 GET + path/query 参数」类端点 | 断网状态 `mc --help` 全树可浏览；命令树快照测试跑通；`mc login && mc sub list -o json` 远程全通；退出码契约测试通过 |
-| **P1 生成层全量 + Token** | gen/ 映射规则全量落地（requestBody/上传/下载/分页）；x-cli-* 标注铺完 129 端点；`/health` spec_hash + `/spec` 刷新通道；后端 PAT + Agent 工作区令牌注入；长任务 `--wait`、危险确认 | 命令树快照 = 全部非 hidden 端点；产品内 Agent 工作区里 `mc sub list` 零配置跑通；偏斜场景（老 CLI × 新服务器）刷新与回退路径有测试覆盖；漏标元数据 CI 红 |
+| **P0 地基 + 生成层雏形** | 后端：spec 导出脚本 + operation_id 约定 + CI 守护测试。CLI：core 全套、内置基线 spec 装载、`movieclaw login`(Cookie)、`movieclaw status`、生成器先覆盖「纯 GET + path/query 参数」类端点 | 断网状态 `movieclaw --help` 全树可浏览；命令树快照测试跑通；`movieclaw login && movieclaw sub list -o json` 远程全通；退出码契约测试通过 |
+| **P1 生成层全量 + Token** | gen/ 映射规则全量落地（requestBody/上传/下载/分页）；x-cli-* 标注铺完 129 端点；`/health` spec_hash + `/spec` 刷新通道；后端 PAT + Agent 工作区令牌注入；长任务 `--wait`、危险确认 | 命令树快照 = 全部非 hidden 端点；产品内 Agent 工作区里 `movieclaw sub list` 零配置跑通；偏斜场景（老 CLI × 新服务器）刷新与回退路径有测试覆盖；漏标元数据 CI 红 |
 | **P2 精选层 + 流式** | 精选八条命令（sub create 消歧流 / search+download / organize / agent run…）；SSE 两处 | 「搜索→下载→订阅→扫描入库」全流程由 Agent 通过 bash 调 CLI 完成，全程零交互 |
 | **P3 打磨** | 错误 hint 全覆盖、编辑距离建议、shell 补全、`logs -f`、README/示例扩充 | 抽样端点的 --help 含示例率 100%；退出码契约回归测试全绿 |
 
