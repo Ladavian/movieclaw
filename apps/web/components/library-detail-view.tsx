@@ -250,11 +250,11 @@ export function LibraryDetailView({ libraryId }: { libraryId: number }) {
       <div className="flex-1">
         <PageNav items={fallbackTrail} />
         <CenteredNote>
-          <p className="text-[13.5px] text-[var(--text-muted)]">媒体库加载失败</p>
+          <p className="text-ui text-[var(--text-muted)]">媒体库加载失败</p>
           <button
             type="button"
             onClick={reload}
-            className="btn-glass px-4 py-2 text-[13px] font-medium text-[var(--text)]"
+            className="btn-glass px-4 py-2 text-ui font-medium text-[var(--text)]"
           >
             重试
           </button>
@@ -269,7 +269,7 @@ export function LibraryDetailView({ libraryId }: { libraryId: number }) {
         <PageNav items={fallbackTrail} />
         <CenteredNote>
           <span className="size-4 animate-spin rounded-full border-2 border-white/20 border-t-white/70" />
-          <p className="text-[13px] text-[var(--text-muted)]">正在加载媒体库…</p>
+          <p className="text-ui text-[var(--text-muted)]">正在加载媒体库…</p>
         </CenteredNote>
       </div>
     );
@@ -280,8 +280,8 @@ export function LibraryDetailView({ libraryId }: { libraryId: number }) {
       <div className="flex-1">
         <PageNav items={fallbackTrail} />
         <CenteredNote>
-          <p className="text-[13.5px] text-[var(--text-muted)]">这个媒体库不存在（可能已被删除）</p>
-          <Link href={"/library" as Route} className="btn-glass px-4 py-2 text-[13px] font-medium">
+          <p className="text-ui text-[var(--text-muted)]">这个媒体库不存在（可能已被删除）</p>
+          <Link href={"/library" as Route} className="btn-glass px-4 py-2 text-ui font-medium">
             返回媒体库
           </Link>
         </CenteredNote>
@@ -368,13 +368,13 @@ export function LibraryDetailView({ libraryId }: { libraryId: number }) {
             {library.name}
           </h2>
           {library.is_default && (
-            <span className="shrink-0 rounded-full border border-white/[0.14] bg-white/[0.12] px-2 py-0.5 text-[11px] font-semibold text-white/90">
+            <span className="shrink-0 rounded-full border border-white/[0.14] bg-white/[0.12] px-2 py-0.5 text-caption font-semibold text-white/90">
               默认
             </span>
           )}
         </div>
         <p
-          className="text-on-image mt-1.5 truncate text-[13px] text-[var(--text-muted)] max-md:text-[12px]"
+          className="text-on-image mt-1.5 truncate text-ui text-[var(--text-muted)] max-md:text-sub"
           title={library.root_paths.join("\n")}
         >
           {meta.label}库 · {stats.item_count} 部作品 · {stats.file_count} 个文件 ·{" "}
@@ -382,7 +382,7 @@ export function LibraryDetailView({ libraryId }: { libraryId: number }) {
           {library.primary_root ? ` · ${library.primary_root}` : ""}
         </p>
         {library.last_scan && !busy && (
-          <p className="mt-1 text-[12px] text-white/45">
+          <p className="mt-1 text-sub text-white/45">
             最近扫描 {formatRelativeTime(library.last_scan.finished_at)}
             {library.last_scan.cancelled ? "（手动停止，未扫完）" : ""} · 新入账{" "}
             {library.last_scan.scanned}（识别 {library.last_scan.identified} / 待识别{" "}
@@ -410,7 +410,7 @@ export function LibraryDetailView({ libraryId }: { libraryId: number }) {
           busy) && (
           <div className="mt-2.5 flex flex-wrap items-center gap-2">
             {busy && (
-              <span className="flex items-center gap-1.5 rounded-full border border-[#7dd3fc]/35 bg-[#7dd3fc]/[0.12] px-3 py-1 text-[12px] font-semibold text-[#7dd3fc]">
+              <span className="flex items-center gap-1.5 rounded-full border border-[#7dd3fc]/35 bg-[#7dd3fc]/[0.12] px-3 py-1 text-sub font-semibold text-[#7dd3fc]">
                 <span className="size-3 animate-spin rounded-full border-[1.5px] border-[#7dd3fc]/30 border-t-[#7dd3fc]" />
                 {busyText(
                   library.scanning ? library.scan_progress : library.organize_progress,
@@ -420,7 +420,7 @@ export function LibraryDetailView({ libraryId }: { libraryId: number }) {
             {/* 刷新元数据的按钮已收进 ⋯ 菜单；它是全量重刷、耗时长，
                 进度另用下方的面板完整展示（到哪部了、在做什么） */}
             {importing > 0 && (
-              <span className="flex items-center gap-1.5 rounded-full border border-[#7dd3fc]/35 bg-[#7dd3fc]/[0.12] px-3 py-1 text-[12px] font-semibold text-[#7dd3fc]">
+              <span className="flex items-center gap-1.5 rounded-full border border-[#7dd3fc]/35 bg-[#7dd3fc]/[0.12] px-3 py-1 text-sub font-semibold text-[#7dd3fc]">
                 <span className="size-1.5 animate-pulse rounded-full bg-[#7dd3fc]" />
                 已发现 {importing} 个新文件 · 写入完成后自动入库
               </span>
@@ -429,7 +429,7 @@ export function LibraryDetailView({ libraryId }: { libraryId: number }) {
               <button
                 type="button"
                 onClick={() => setIssueTab("missing")}
-                className="flex items-center gap-1.5 rounded-full border border-white/[0.14] bg-white/[0.06] px-3 py-1 text-[12px] font-semibold text-white/75 transition hover:bg-white/[0.12] hover:text-white"
+                className="flex items-center gap-1.5 rounded-full border border-white/[0.14] bg-white/[0.06] px-3 py-1 text-sub font-semibold text-white/75 transition hover:bg-white/[0.12] hover:text-white"
               >
                 <span className="size-1.5 rounded-full bg-white/40" />
                 {missing.length} 个条目缺失
@@ -439,7 +439,7 @@ export function LibraryDetailView({ libraryId }: { libraryId: number }) {
               <button
                 type="button"
                 onClick={() => setIssueTab("unidentified")}
-                className="flex items-center gap-1.5 rounded-full border border-[#f5c451]/35 bg-[#f5c451]/[0.12] px-3 py-1 text-[12px] font-semibold text-[#f5c451] transition hover:bg-[#f5c451]/[0.22]"
+                className="flex items-center gap-1.5 rounded-full border border-[#f5c451]/35 bg-[#f5c451]/[0.12] px-3 py-1 text-sub font-semibold text-[#f5c451] transition hover:bg-[#f5c451]/[0.22]"
               >
                 <span className="size-1.5 rounded-full bg-[#f5c451]" />
                 {unidentifiedFiles} 个文件待识别
@@ -450,7 +450,7 @@ export function LibraryDetailView({ libraryId }: { libraryId: number }) {
               <button
                 type="button"
                 onClick={() => setIssueTab("review")}
-                className="flex items-center gap-1.5 rounded-full border border-[#c4b5fd]/35 bg-[#c4b5fd]/[0.12] px-3 py-1 text-[12px] font-semibold text-[#c4b5fd] transition hover:bg-[#c4b5fd]/[0.22]"
+                className="flex items-center gap-1.5 rounded-full border border-[#c4b5fd]/35 bg-[#c4b5fd]/[0.12] px-3 py-1 text-sub font-semibold text-[#c4b5fd] transition hover:bg-[#c4b5fd]/[0.22]"
               >
                 <span className="size-1.5 rounded-full bg-[#c4b5fd]" />
                 {review.length} 个条目待复核身份
@@ -475,12 +475,12 @@ export function LibraryDetailView({ libraryId }: { libraryId: number }) {
           />
         )}
         {failed && (
-          <p className="mt-3 rounded-lg border border-amber-400/25 bg-amber-500/10 px-3.5 py-2 text-[12.5px] text-amber-200">
+          <p className="mt-3 rounded-lg border border-amber-400/25 bg-amber-500/10 px-3.5 py-2 text-sub text-amber-200">
             与后端通信失败，正在自动重试；下方显示的是最近一次成功加载的数据
           </p>
         )}
         {notice && (
-          <p className="mt-3 rounded-lg border border-red-400/25 bg-red-500/10 px-3.5 py-2 text-[12.5px] text-red-200">
+          <p className="mt-3 rounded-lg border border-red-400/25 bg-red-500/10 px-3.5 py-2 text-sub text-red-200">
             {notice}
           </p>
         )}
@@ -502,7 +502,7 @@ export function LibraryDetailView({ libraryId }: { libraryId: number }) {
 
       {/* —— 库存海报墙 —— */}
       {items.length === 0 && unidentified.length === 0 ? (
-        <p className="mt-16 text-center text-[13.5px] leading-7 text-[var(--text-muted)]">
+        <p className="mt-16 text-center text-ui leading-7 text-[var(--text-muted)]">
           这个库还没有内容。
           <br />
           点右上角 ⋯ 里的「扫描库」把根路径下已有的影片识别入库；订阅的内容下载完成后也会自动进来。
@@ -526,9 +526,9 @@ export function LibraryDetailView({ libraryId }: { libraryId: number }) {
       {/* —— 追踪中（订阅已指向本库、文件未落地）—— */}
       {pending.length > 0 && (
         <div className="mt-10 px-6 max-md:mt-7 max-md:px-4">
-          <h3 className="text-on-image text-[15px] font-semibold text-white/85">
+          <h3 className="text-on-image text-body-lg font-semibold text-white/85">
             追踪中
-            <span className="ml-2 text-[12px] font-normal text-[var(--text-faint)]">
+            <span className="ml-2 text-sub font-normal text-[var(--text-faint)]">
               已订阅、资源到位后自动入库
             </span>
           </h3>
@@ -598,7 +598,7 @@ function LibraryActionsMenu({
   // 与站点配置一致用 Radix DropdownMenu：Portal 到 body + 碰撞检测，
   // 不会被头部容器裁切；开合/外部点击/键盘导航全交给 Radix。
   const itemClass =
-    "glass-row nav-item cursor-pointer px-3 py-2 text-[13px] font-medium outline-none " +
+    "glass-row nav-item cursor-pointer px-3 py-2 text-ui font-medium outline-none " +
     "data-[highlighted]:!bg-[var(--glass-fill-hover)] data-[highlighted]:!text-[var(--text)] " +
     "data-[disabled]:pointer-events-none data-[disabled]:opacity-40";
   const running = scanning || organizing || refreshingMeta;
@@ -683,7 +683,7 @@ function MetadataRefreshPanel({
   return (
     <div className="mt-3 rounded-xl border border-[#7dd3fc]/25 bg-[#7dd3fc]/[0.07] px-4 py-3">
       <div className="flex items-center justify-between gap-3">
-        <div className="flex min-w-0 items-center gap-2 text-[12.5px] font-semibold text-[#7dd3fc]">
+        <div className="flex min-w-0 items-center gap-2 text-sub font-semibold text-[#7dd3fc]">
           <span className="size-3 shrink-0 animate-spin rounded-full border-[1.5px] border-[#7dd3fc]/30 border-t-[#7dd3fc]" />
           <span className="truncate">
             {state.stopping ? "正在停止刷新" : "正在刷新元数据"}
@@ -695,7 +695,7 @@ function MetadataRefreshPanel({
           type="button"
           onClick={onStop}
           disabled={state.stopping}
-          className="shrink-0 text-[12px] font-medium text-white/70 transition hover:text-white disabled:opacity-50"
+          className="shrink-0 text-sub font-medium text-white/70 transition hover:text-white disabled:opacity-50"
         >
           {state.stopping ? "收尾中…" : "停止"}
         </button>
@@ -710,14 +710,14 @@ function MetadataRefreshPanel({
       {state.active.length > 0 && (
         <div className="mt-2.5 space-y-1">
           {state.active.map((a) => (
-            <p key={a.media_item_id} className="flex gap-2 text-[12px] text-white/70">
+            <p key={a.media_item_id} className="flex gap-2 text-sub text-white/70">
               <span className="min-w-0 flex-1 truncate">{a.title}</span>
               <span className="shrink-0 text-white/45">{a.phase}</span>
             </p>
           ))}
         </div>
       )}
-      <p className="mt-2 text-[11.5px] text-white/40">
+      <p className="mt-2 text-caption text-white/40">
         全量重刷：重拉 TMDB 档案、按当前尺寸重下图片、覆盖媒体目录镜像；
         你手动选定的图不受影响
       </p>
@@ -785,7 +785,7 @@ const InventoryCell = memo(function InventoryCell({
           <>
             <span className="pointer-events-none absolute inset-0 rounded-xl ring-2 ring-[#7dd3fc] ring-offset-0" />
             {/* 不用 backdrop-blur：海报墙每格一个模糊合成层会放大滚动时的 GPU 压力，底色加实即可 */}
-            <span className="pointer-events-none absolute inset-x-0 bottom-0 flex items-center gap-1.5 rounded-b-xl bg-[rgba(7,12,20,0.92)] px-2 py-1.5 text-[10.5px] font-medium text-[#7dd3fc]">
+            <span className="pointer-events-none absolute inset-x-0 bottom-0 flex items-center gap-1.5 rounded-b-xl bg-[rgba(7,12,20,0.92)] px-2 py-1.5 text-micro font-medium text-[#7dd3fc]">
               <span className="size-2.5 shrink-0 animate-spin rounded-full border-[1.5px] border-[#7dd3fc]/30 border-t-[#7dd3fc]" />
               <span className="truncate">{workingLabel}</span>
             </span>
@@ -793,7 +793,7 @@ const InventoryCell = memo(function InventoryCell({
         )}
       </div>
       {parts.length > 0 && (
-        <p className="text-on-image mt-1.5 flex items-center gap-1.5 truncate text-[11px] text-[var(--text-muted)]">
+        <p className="text-on-image mt-1.5 flex items-center gap-1.5 truncate text-caption text-[var(--text-muted)]">
           {abnormal && (
             <span
               className={`size-1.5 shrink-0 rounded-full ${dead ? "bg-white/30" : "bg-[#f5c451]"}`}
@@ -823,7 +823,7 @@ function PendingCell({ sub }: { sub: Subscription }) {
     <div className="opacity-80 transition [contain-intrinsic-size:auto_270px] [content-visibility:auto] hover:opacity-100">
       {/* 已是订阅产物，悬浮层不再给「订阅影片」重复入口 */}
       <PosterCardVisual item={visual} href={`/subscriptions/${sub.id}` as Route} action="none" />
-      <p className="text-on-image mt-1.5 flex items-center gap-1.5 truncate text-[11px] text-[var(--text-muted)]">
+      <p className="text-on-image mt-1.5 flex items-center gap-1.5 truncate text-caption text-[var(--text-muted)]">
         <span
           className="size-1.5 shrink-0 rounded-full"
           style={{ backgroundColor: meta.color }}
@@ -920,7 +920,7 @@ function IssueDrawer({
   );
 
   const tabClass = (active: boolean) =>
-    `rounded-full px-3.5 py-1.5 text-[12.5px] font-semibold transition ${
+    `rounded-full px-3.5 py-1.5 text-sub font-semibold transition ${
       active ? "bg-white/[0.14] text-white" : "text-[var(--text-muted)] hover:text-white"
     }`;
 
@@ -985,7 +985,7 @@ function IssueDrawer({
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             placeholder={open === "missing" ? "按片名过滤…" : "按文件名过滤…"}
-            className="min-w-0 flex-1 rounded-lg border border-white/[0.08] bg-white/[0.04] px-3 py-1.5 text-[12.5px] text-[var(--text)] outline-none placeholder:text-white/30 focus:border-[var(--accent)]/60"
+            className="min-w-0 flex-1 rounded-lg border border-white/[0.08] bg-white/[0.04] px-3 py-1.5 text-sub text-[var(--text)] outline-none placeholder:text-white/30 focus:border-[var(--accent)]/60"
           />
           {open === "missing" && missing.length > 0 && (
             <button
@@ -1004,7 +1004,7 @@ function IssueDrawer({
                   .catch(() => {})
                   .finally(() => setBusy(false));
               }}
-              className="btn-glass shrink-0 px-3 py-1.5 text-[12px] font-medium disabled:opacity-50"
+              className="btn-glass shrink-0 px-3 py-1.5 text-sub font-medium disabled:opacity-50"
             >
               全部清理
             </button>
@@ -1026,7 +1026,7 @@ function IssueDrawer({
                   .catch(() => {})
                   .finally(() => setBusy(false));
               }}
-              className="btn-glass shrink-0 px-3 py-1.5 text-[12px] font-medium disabled:opacity-50"
+              className="btn-glass shrink-0 px-3 py-1.5 text-sub font-medium disabled:opacity-50"
             >
               全部忽略
             </button>
@@ -1034,7 +1034,7 @@ function IssueDrawer({
         </div>
 
         {/* 说明行 */}
-        <p className="px-5 pt-3 text-[11.5px] leading-5 text-[var(--text-muted)]">
+        <p className="px-5 pt-3 text-caption leading-5 text-[var(--text-muted)]">
           {open === "missing"
             ? "文件已不在磁盘；「重新下载」交给订阅管线补回，「清理记录」只删台账（都不动磁盘）；文件回归会自动恢复。"
             : open === "unidentified"
@@ -1046,7 +1046,7 @@ function IssueDrawer({
 
         {/* 「放错库了」修复引导：认领解决不了这一类，不给引导用户会在认领里打转 */}
         {open === "unidentified" && kindMismatchFiles > 0 && (
-          <p className="mx-5 mt-3 rounded-lg bg-[#f5c451]/[0.1] px-3 py-2 text-[11.5px] leading-5 text-[#f5c451]">
+          <p className="mx-5 mt-3 rounded-lg bg-[#f5c451]/[0.1] px-3 py-2 text-caption leading-5 text-[#f5c451]">
             有 {kindMismatchFiles} 个文件的实际类型与本库不符（
             {movie ? "剧集文件在电影库" : "电影文件在剧集库"}
             ），认领无法解决。个别文件放错了：把文件移到对应类型的库即可；整库类型建错了：
@@ -1086,7 +1086,7 @@ function IssueDrawer({
             (open === "unidentified" && unidentifiedShown.length === 0) ||
             (open === "review" && reviewShown.length === 0) ||
             (open === "ignored" && ignoredShown.length === 0)) && (
-            <p className="mt-12 text-center text-[13px] text-[var(--text-muted)]">
+            <p className="mt-12 text-center text-ui text-[var(--text-muted)]">
               {keyword
                 ? "没有匹配的条目"
                 : open === "ignored"
@@ -1140,13 +1140,13 @@ function MissingRow({
   return (
     <div className="rounded-xl bg-white/[0.03] px-3.5 py-2.5">
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
-        <span className="min-w-0 flex-1 truncate text-[13px] font-medium text-white/85">
+        <span className="min-w-0 flex-1 truncate text-ui font-medium text-white/85">
           {item.title}
           {item.year ? ` (${item.year})` : ""}
-          <span className="ml-2 text-[12px] font-normal text-[var(--text-muted)]">{summary}</span>
+          <span className="ml-2 text-sub font-normal text-[var(--text-muted)]">{summary}</span>
         </span>
         {done ? (
-          <span className="text-[12px] text-[#4ade80]">{done}</span>
+          <span className="text-sub text-[#4ade80]">{done}</span>
         ) : (
           <span className="flex shrink-0 items-center gap-2">
             <button
@@ -1159,7 +1159,7 @@ function MissingRow({
                   }),
                 )
               }
-              className="btn-accent rounded-full px-3 py-1.5 text-[12px] font-semibold disabled:opacity-50"
+              className="btn-accent rounded-full px-3 py-1.5 text-sub font-semibold disabled:opacity-50"
             >
               重新下载
             </button>
@@ -1173,7 +1173,7 @@ function MissingRow({
                 if (!window.confirm(warning)) return;
                 act(() => clearMissing(libraryId, item.media_item_id));
               }}
-              className="btn-glass px-3 py-1.5 text-[12px] font-medium disabled:opacity-50"
+              className="btn-glass px-3 py-1.5 text-sub font-medium disabled:opacity-50"
             >
               清理记录
             </button>
@@ -1181,9 +1181,9 @@ function MissingRow({
         )}
       </div>
       {item.subscription_id && !done && (
-        <p className="mt-1 text-[11.5px] text-[#f5c451]/80">该条目有订阅在追踪</p>
+        <p className="mt-1 text-caption text-[#f5c451]/80">该条目有订阅在追踪</p>
       )}
-      {error && <p className="mt-1 text-[11.5px] text-red-300">{error}</p>}
+      {error && <p className="mt-1 text-caption text-red-300">{error}</p>}
     </div>
   );
 }
@@ -1246,7 +1246,7 @@ function GroupMoreMenu({
   onToggleFiles: () => void;
 }) {
   const itemClass =
-    "glass-row nav-item cursor-pointer px-3 py-2 text-[13px] font-medium outline-none " +
+    "glass-row nav-item cursor-pointer px-3 py-2 text-ui font-medium outline-none " +
     "data-[highlighted]:!bg-[var(--glass-fill-hover)] data-[highlighted]:!text-[var(--text)] " +
     "data-[disabled]:pointer-events-none data-[disabled]:opacity-40";
   return (
@@ -1296,7 +1296,7 @@ function StatusBadge({ group }: { group: UnidentifiedGroup }) {
   return (
     <span
       title={group.reason ?? undefined}
-      className={`shrink-0 rounded-md px-1.5 py-0.5 text-[11px] ${
+      className={`shrink-0 rounded-md px-1.5 py-0.5 text-caption ${
         meta.tone === "warn"
           ? "bg-[#f5c451]/[0.16] text-[#f5c451]"
           : "bg-white/[0.07] text-[var(--text-muted)]"
@@ -1355,13 +1355,13 @@ function UnidentifiedGroupRow({
           title，次要动作收进 ⋯ 菜单——组多起来时这一行就是全部扫读内容 */}
       <div className="flex items-center gap-2">
         <span
-          className="min-w-0 flex-1 truncate text-[13px] font-medium text-white/85"
+          className="min-w-0 flex-1 truncate text-ui font-medium text-white/85"
           title={`${group.label}\n${group.key}`}
         >
           {group.label}
         </span>
         <StatusBadge group={group} />
-        <span className="shrink-0 text-[11px] text-[var(--text-faint)]">
+        <span className="shrink-0 text-caption text-[var(--text-faint)]">
           {group.file_count} 个 · {formatBytes(group.total_size_bytes)}
         </span>
         {/* TMDB 不可达有确定解法，直接给按钮；其余给搜索入口 */}
@@ -1370,7 +1370,7 @@ function UnidentifiedGroupRow({
             type="button"
             disabled={busy}
             onClick={() => act(() => startLibraryScan(group.library_id))}
-            className="btn-glass shrink-0 px-2.5 py-1 text-[12px] font-medium disabled:opacity-40"
+            className="btn-glass shrink-0 px-2.5 py-1 text-sub font-medium disabled:opacity-40"
           >
             重新扫描
           </button>
@@ -1379,7 +1379,7 @@ function UnidentifiedGroupRow({
             type="button"
             disabled={busy}
             onClick={() => setPanel((p) => (p?.view === "search" ? null : { view: "search" }))}
-            className={`shrink-0 rounded-full px-2.5 py-1 text-[12px] font-medium transition disabled:opacity-40 ${
+            className={`shrink-0 rounded-full px-2.5 py-1 text-sub font-medium transition disabled:opacity-40 ${
               searchOpen ? "bg-white/[0.14] text-white" : "btn-glass"
             }`}
           >
@@ -1399,7 +1399,7 @@ function UnidentifiedGroupRow({
           （待识别行每次扫描本就自动重试），等不及可以自己去补录。不写清楚，
           用户会以为搜不到就只剩忽略一条路 */}
       {group.code === "no_match" && (
-        <p className="mt-1 text-[11px] leading-relaxed text-[var(--text-faint)]">
+        <p className="mt-1 text-caption leading-relaxed text-[var(--text-faint)]">
           每次扫描会自动重试识别。TMDB 是社区维护的数据库，确认缺这个条目可以
           <a
             href={`https://www.themoviedb.org/${movie ? "movie" : "tv"}/new`}
@@ -1437,7 +1437,7 @@ function UnidentifiedGroupRow({
                       },
                 )
               }
-              className={`rounded-lg border px-2.5 py-1 text-[12px] transition disabled:opacity-40 ${
+              className={`rounded-lg border px-2.5 py-1 text-sub transition disabled:opacity-40 ${
                 selectedId === c.tmdb_id
                   ? "border-[var(--accent)] bg-[var(--accent)]/[0.28] text-white"
                   : "border-[var(--accent)]/40 bg-[var(--accent)]/[0.12] text-white/90 hover:bg-[var(--accent)]/[0.24]"
@@ -1446,7 +1446,7 @@ function UnidentifiedGroupRow({
               {c.title}
               {c.year ? ` (${c.year})` : ""}
               {c.episode_count ? (
-                <span className="ml-1.5 text-[11px] text-[var(--text-muted)]">
+                <span className="ml-1.5 text-caption text-[var(--text-muted)]">
                   {c.episode_count} 集
                 </span>
               ) : null}
@@ -1455,7 +1455,7 @@ function UnidentifiedGroupRow({
         </div>
       )}
 
-      {error && <p className="mt-1.5 text-[11.5px] text-red-300">{error}</p>}
+      {error && <p className="mt-1.5 text-caption text-red-300">{error}</p>}
 
       {panel?.view === "search" && (
         <ClaimSearchPanel
@@ -1481,7 +1481,7 @@ function UnidentifiedGroupRow({
           {group.files.map((f) => (
             <li
               key={f.id}
-              className="truncate font-mono text-[11px] text-[var(--text-faint)]"
+              className="truncate font-mono text-caption text-[var(--text-faint)]"
               title={f.file_path}
             >
               {f.file_path}
@@ -1523,11 +1523,11 @@ function ReviewGroupRow({ group, onChanged }: { group: ReviewGroup; onChanged: (
         <div className="h-[54px] w-9 shrink-0 rounded-md bg-white/[0.06]" />
       )}
       <div className="min-w-0">
-        <p className="text-[10.5px] font-semibold uppercase tracking-wide text-[var(--text-faint)]">
+        <p className="text-micro font-semibold uppercase tracking-wide text-[var(--text-faint)]">
           {tone === "current" ? "现身份" : "新识别结论"}
         </p>
         <p
-          className={`truncate text-[13px] font-medium ${
+          className={`truncate text-ui font-medium ${
             tone === "suggestion" ? "text-[#c4b5fd]" : "text-white/85"
           }`}
           title={info.title}
@@ -1536,7 +1536,7 @@ function ReviewGroupRow({ group, onChanged }: { group: ReviewGroup; onChanged: (
           {info.year ? ` (${info.year})` : ""}
         </p>
         {info.tmdb_id != null && (
-          <p className="text-[11px] text-[var(--text-faint)]">tmdb {info.tmdb_id}</p>
+          <p className="text-caption text-[var(--text-faint)]">tmdb {info.tmdb_id}</p>
         )}
       </div>
     </div>
@@ -1545,10 +1545,10 @@ function ReviewGroupRow({ group, onChanged }: { group: ReviewGroup; onChanged: (
   return (
     <div className="rounded-xl bg-white/[0.03] px-3.5 py-3">
       <div className="flex items-baseline gap-2">
-        <span className="min-w-0 flex-1 truncate text-[13px] font-medium text-white/85" title={group.key}>
+        <span className="min-w-0 flex-1 truncate text-ui font-medium text-white/85" title={group.key}>
           {group.label}
         </span>
-        <span className="shrink-0 text-[11px] text-[var(--text-faint)]">
+        <span className="shrink-0 text-caption text-[var(--text-faint)]">
           {group.file_count} 个文件 · {formatBytes(group.total_size_bytes)}
         </span>
       </div>
@@ -1556,7 +1556,7 @@ function ReviewGroupRow({ group, onChanged }: { group: ReviewGroup; onChanged: (
       {/* 两个身份并排：看清是谁 vs 该是谁 */}
       <div className="mt-2.5 flex items-center gap-3">
         {side(group.current, "current")}
-        <span className="shrink-0 text-[15px] text-[var(--text-faint)]">→</span>
+        <span className="shrink-0 text-body-lg text-[var(--text-faint)]">→</span>
         {side(group.suggestion, "suggestion")}
       </div>
 
@@ -1565,7 +1565,7 @@ function ReviewGroupRow({ group, onChanged }: { group: ReviewGroup; onChanged: (
           type="button"
           disabled={busy}
           onClick={() => act(true)}
-          className="rounded-full border border-[#c4b5fd]/45 bg-[#c4b5fd]/[0.14] px-3.5 py-1.5 text-[12px] font-semibold text-[#c4b5fd] transition hover:bg-[#c4b5fd]/[0.26] disabled:opacity-40"
+          className="rounded-full border border-[#c4b5fd]/45 bg-[#c4b5fd]/[0.14] px-3.5 py-1.5 text-sub font-semibold text-[#c4b5fd] transition hover:bg-[#c4b5fd]/[0.26] disabled:opacity-40"
         >
           采纳新结论
         </button>
@@ -1573,11 +1573,11 @@ function ReviewGroupRow({ group, onChanged }: { group: ReviewGroup; onChanged: (
           type="button"
           disabled={busy}
           onClick={() => act(false)}
-          className="btn-glass px-3.5 py-1.5 text-[12px] font-medium disabled:opacity-40"
+          className="btn-glass px-3.5 py-1.5 text-sub font-medium disabled:opacity-40"
         >
           维持现状
         </button>
-        {error && <span className="text-[11.5px] text-red-300">{error}</span>}
+        {error && <span className="text-caption text-red-300">{error}</span>}
       </div>
     </div>
   );
@@ -1600,12 +1600,12 @@ function IgnoredGroupRow({
     <div className="rounded-xl bg-white/[0.02] px-3.5 py-2.5">
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
         <span
-          className="min-w-0 flex-1 truncate text-[13px] text-white/70"
+          className="min-w-0 flex-1 truncate text-ui text-white/70"
           title={group.key}
         >
           {group.label}
         </span>
-        <span className="shrink-0 text-[11px] text-[var(--text-faint)]">
+        <span className="shrink-0 text-caption text-[var(--text-faint)]">
           {group.file_count} 个文件 · {formatBytes(group.total_size_bytes)}
         </span>
         <button
@@ -1619,7 +1619,7 @@ function IgnoredGroupRow({
               .catch((e) => setError((e as Error).message))
               .finally(() => setBusy(false));
           }}
-          className="btn-glass shrink-0 px-3 py-1.5 text-[12px] font-medium disabled:opacity-40"
+          className="btn-glass shrink-0 px-3 py-1.5 text-sub font-medium disabled:opacity-40"
         >
           恢复
         </button>
@@ -1627,19 +1627,19 @@ function IgnoredGroupRow({
           <button
             type="button"
             onClick={() => setExpanded((v) => !v)}
-            className="text-[11.5px] text-[var(--text-muted)] transition hover:text-white/80"
+            className="text-caption text-[var(--text-muted)] transition hover:text-white/80"
           >
             {expanded ? "收起文件" : "查看文件"}
           </button>
         )}
       </div>
-      {error && <p className="mt-1 text-[11.5px] text-red-300">{error}</p>}
+      {error && <p className="mt-1 text-caption text-red-300">{error}</p>}
       {expanded && (
         <ul className="mt-2 space-y-1 border-t border-white/[0.06] pt-2">
           {group.files.map((f) => (
             <li
               key={f.id}
-              className="truncate font-mono text-[11px] text-[var(--text-faint)]"
+              className="truncate font-mono text-caption text-[var(--text-faint)]"
               title={f.file_path}
             >
               {f.file_path}
@@ -1723,38 +1723,38 @@ function ClaimConfirmPanel({
         )}
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
-            <span className="text-[13.5px] font-semibold text-white/95">{title}</span>
-            {year ? <span className="text-[12px] text-[var(--text-muted)]">{year}</span> : null}
+            <span className="text-ui font-semibold text-white/95">{title}</span>
+            {year ? <span className="text-sub text-[var(--text-muted)]">{year}</span> : null}
             {item?.extent ? (
-              <span className="text-[12px] text-[var(--text-muted)]">{item.extent}</span>
+              <span className="text-sub text-[var(--text-muted)]">{item.extent}</span>
             ) : null}
             {seed.episodeCount ? (
-              <span className="text-[12px] text-[var(--text-muted)]">
+              <span className="text-sub text-[var(--text-muted)]">
                 对应季 {seed.episodeCount} 集
               </span>
             ) : null}
             {item && item.rating > 0 ? (
-              <span className="text-[12px] text-[#f5c451]">★ {item.rating.toFixed(1)}</span>
+              <span className="text-sub text-[#f5c451]">★ {item.rating.toFixed(1)}</span>
             ) : null}
           </div>
           {seed.reasons && seed.reasons.length > 0 && (
-            <p className="mt-0.5 text-[11px] text-[var(--text-faint)]">
+            <p className="mt-0.5 text-caption text-[var(--text-faint)]">
               与本地文件的佐证：{seed.reasons.join("、")}
             </p>
           )}
           {item?.overview ? (
-            <p className="mt-1 line-clamp-3 text-[11.5px] leading-[1.55] text-[var(--text-muted)]">
+            <p className="mt-1 line-clamp-3 text-caption leading-[1.55] text-[var(--text-muted)]">
               {item.overview}
             </p>
           ) : failed ? (
-            <p className="mt-1 text-[11.5px] text-[var(--text-faint)]">
+            <p className="mt-1 text-caption text-[var(--text-faint)]">
               详情加载失败（不影响认领，可打开 TMDB 页面核对）
             </p>
           ) : (
-            <p className="mt-1 text-[11.5px] text-[var(--text-faint)]">正在加载详情…</p>
+            <p className="mt-1 text-caption text-[var(--text-faint)]">正在加载详情…</p>
           )}
           {credits && (
-            <p className="mt-1 truncate text-[11px] text-[var(--text-faint)]" title={credits}>
+            <p className="mt-1 truncate text-caption text-[var(--text-faint)]" title={credits}>
               {credits}
             </p>
           )}
@@ -1765,22 +1765,22 @@ function ClaimConfirmPanel({
           href={`https://www.themoviedb.org/${kind}/${seed.tmdbId}`}
           target="_blank"
           rel="noreferrer"
-          className="text-[11.5px] text-[var(--text-muted)] underline decoration-white/20 underline-offset-2 transition hover:text-white/80"
+          className="text-caption text-[var(--text-muted)] underline decoration-white/20 underline-offset-2 transition hover:text-white/80"
         >
           在 TMDB 打开核对 ↗
         </a>
         <span className="flex-1" />
         {movie && fileCount > 1 && (
-          <span className="text-[11px] text-[var(--text-faint)]">整组视为同一部片的多个版本</span>
+          <span className="text-caption text-[var(--text-faint)]">整组视为同一部片的多个版本</span>
         )}
-        <button type="button" disabled={busy} onClick={onCancel} className="btn-glass px-3 py-1.5 text-[12px] font-medium disabled:opacity-40">
+        <button type="button" disabled={busy} onClick={onCancel} className="btn-glass px-3 py-1.5 text-sub font-medium disabled:opacity-40">
           取消
         </button>
         <button
           type="button"
           disabled={busy}
           onClick={onConfirm}
-          className="btn-accent rounded-full px-3.5 py-1.5 text-[12px] font-semibold disabled:opacity-40"
+          className="btn-accent rounded-full px-3.5 py-1.5 text-sub font-semibold disabled:opacity-40"
         >
           认领{fileCount > 1 ? `全部 ${fileCount} 个文件` : ""}
         </button>
@@ -1835,13 +1835,13 @@ function ClaimSearchPanel({
           }}
           placeholder="片名关键词，或直接粘 TMDB ID"
           autoFocus
-          className="min-w-0 flex-1 rounded-lg border border-white/[0.08] bg-white/[0.04] px-3 py-1.5 text-[12.5px] text-[var(--text)] outline-none placeholder:text-white/30 focus:border-[var(--accent)]/60"
+          className="min-w-0 flex-1 rounded-lg border border-white/[0.08] bg-white/[0.04] px-3 py-1.5 text-sub text-[var(--text)] outline-none placeholder:text-white/30 focus:border-[var(--accent)]/60"
         />
         {idOnly ? (
           <button
             type="button"
             onClick={() => onPick({ tmdbId: Number(query.trim()), title: `TMDB #${query.trim()}` })}
-            className="btn-accent shrink-0 rounded-full px-3.5 py-1.5 text-[12px] font-semibold"
+            className="btn-accent shrink-0 rounded-full px-3.5 py-1.5 text-sub font-semibold"
           >
             查看该 ID
           </button>
@@ -1850,16 +1850,16 @@ function ClaimSearchPanel({
             type="button"
             disabled={searching || !query.trim()}
             onClick={search}
-            className="btn-glass shrink-0 px-3.5 py-1.5 text-[12px] font-medium disabled:opacity-40"
+            className="btn-glass shrink-0 px-3.5 py-1.5 text-sub font-medium disabled:opacity-40"
           >
             {searching ? "搜索中…" : "搜索"}
           </button>
         )}
       </div>
 
-      {error && <p className="mt-2 text-[11.5px] text-red-300">{error}</p>}
+      {error && <p className="mt-2 text-caption text-red-300">{error}</p>}
       {results !== null && results.length === 0 && !error && (
-        <p className="mt-2 text-[11.5px] leading-relaxed text-[var(--text-muted)]">
+        <p className="mt-2 text-caption leading-relaxed text-[var(--text-muted)]">
           没有找到{movie ? "电影" : "剧集"}结果，换个关键词试试（TMDB 对中文名支持有限时可试英文/原名）。
           确认 TMDB 没收录的话，可以
           <a
@@ -1900,14 +1900,14 @@ function ClaimSearchPanel({
                 ) : (
                   <div className="h-12 w-8 shrink-0 rounded bg-white/[0.05]" />
                 )}
-                <span className="min-w-0 flex-1 truncate text-[12.5px] text-white/90">
+                <span className="min-w-0 flex-1 truncate text-sub text-white/90">
                   {it.title}
                   {it.year ? (
-                    <span className="ml-1.5 text-[11.5px] text-[var(--text-muted)]">{it.year}</span>
+                    <span className="ml-1.5 text-caption text-[var(--text-muted)]">{it.year}</span>
                   ) : null}
                 </span>
                 {it.rating > 0 && (
-                  <span className="shrink-0 text-[11px] text-[var(--text-faint)]">
+                  <span className="shrink-0 text-caption text-[var(--text-faint)]">
                     ★ {it.rating.toFixed(1)}
                   </span>
                 )}

@@ -125,13 +125,13 @@ export function Top250View() {
       <header className="mx-auto max-w-[1500px]">
         <div className="mt-1 flex flex-col justify-between gap-5 sm:flex-row sm:items-end">
           <div>
-            <p className="text-xs font-semibold tracking-[0.18em] text-[var(--accent-2)]">
+            <p className="text-sub font-semibold tracking-[0.18em] text-[var(--accent-2)]">
               DOUBAN RANKING
             </p>
             <h1 className="mt-1 text-3xl font-bold tracking-[-0.03em] text-[var(--text)]">
               豆瓣电影 Top 250
             </h1>
-            <p className="mt-2 text-sm text-[var(--text-muted)]">
+            <p className="mt-2 text-body text-[var(--text-muted)]">
               {items ? `完整收录 ${items.length} 部影片` : "正在读取完整榜单…"}
             </p>
           </div>
@@ -142,18 +142,18 @@ export function Top250View() {
               onChange={(event) => updateQuery(event.target.value)}
               placeholder="搜索片名"
               aria-label="搜索 Top 250 片名"
-              className="min-w-0 flex-1 bg-transparent text-sm text-[var(--text)] outline-none placeholder:text-[var(--text-muted)]"
+              className="min-w-0 flex-1 bg-transparent text-body text-[var(--text)] outline-none placeholder:text-[var(--text-muted)]"
             />
           </label>
         </div>
         {genres.length > 0 && (
           <div className="mt-6 flex flex-wrap items-center gap-2 max-md:mt-4">
-            <span className="mr-1 text-xs font-semibold text-[var(--text-muted)]">类型</span>
+            <span className="mr-1 text-sub font-semibold text-[var(--text-muted)]">类型</span>
             <button
               type="button"
               aria-pressed={selectedGenres.length === 0}
               onClick={clearGenres}
-              className={`rounded-full border px-3 py-1.5 text-xs font-semibold transition ${
+              className={`rounded-full border px-3 py-1.5 text-sub font-semibold transition ${
                 selectedGenres.length === 0
                   ? "border-white/20 bg-white/15 text-white"
                   : "border-white/[0.07] bg-black/20 text-[var(--text-muted)] hover:border-white/15 hover:text-white"
@@ -167,21 +167,21 @@ export function Top250View() {
                 type="button"
                 aria-pressed={selectedGenres.includes(name)}
                 onClick={() => toggleGenre(name)}
-                className={`rounded-full border px-3 py-1.5 text-xs font-semibold transition ${
+                className={`rounded-full border px-3 py-1.5 text-sub font-semibold transition ${
                   selectedGenres.includes(name)
                     ? "border-white/20 bg-white/15 text-white"
                     : "border-white/[0.07] bg-black/20 text-[var(--text-muted)] hover:border-white/15 hover:text-white"
                 }`}
               >
                 {name}
-                <span className="tnum ml-1 text-[10px] opacity-55">{count}</span>
+                <span className="tnum ml-1 text-micro opacity-55">{count}</span>
               </button>
             ))}
             {selectedGenres.length > 0 && (
               <button
                 type="button"
                 onClick={clearGenres}
-                className="ml-1 rounded-full px-2 py-1.5 text-xs font-semibold text-[var(--accent-2)] transition hover:text-white"
+                className="ml-1 rounded-full px-2 py-1.5 text-sub font-semibold text-[var(--accent-2)] transition hover:text-white"
               >
                 清除筛选（{selectedGenres.length}）
               </button>
@@ -191,7 +191,7 @@ export function Top250View() {
       </header>
 
       {error && (
-        <div className="mx-auto mt-16 max-w-md rounded-2xl border border-white/10 bg-black/25 p-8 text-center text-sm text-[var(--text-muted)]">
+        <div className="mx-auto mt-16 max-w-md rounded-2xl border border-white/10 bg-black/25 p-8 text-center text-body text-[var(--text-muted)]">
           {error}
         </div>
       )}
@@ -201,7 +201,7 @@ export function Top250View() {
       {items && (
         <main className="mx-auto mt-8 max-w-[1500px]">
           {filtered.length === 0 ? (
-            <div className="py-20 text-center text-sm text-[var(--text-muted)]">
+            <div className="py-20 text-center text-body text-[var(--text-muted)]">
               没有找到匹配的影片
             </div>
           ) : (
@@ -220,7 +220,7 @@ export function Top250View() {
 
           <div
             ref={loadMoreRef}
-            className="mt-8 flex h-10 items-center justify-center text-xs text-[var(--text-muted)]"
+            className="mt-8 flex h-10 items-center justify-center text-sub text-[var(--text-muted)]"
             aria-live="polite"
           >
             {hasMore
@@ -246,7 +246,7 @@ function RankBadge({ rank }: { rank: number }) {
           : "bg-black/70 text-white";
   return (
     <span
-      className={`tnum absolute -left-1.5 -top-1.5 z-10 min-w-8 rounded-lg px-2 py-1 text-center text-xs font-black shadow-lg ring-1 ring-white/15 ${tone}`}
+      className={`tnum absolute -left-1.5 -top-1.5 z-10 min-w-8 rounded-lg px-2 py-1 text-center text-sub font-black shadow-lg ring-1 ring-white/15 ${tone}`}
     >
       {rank}
     </span>

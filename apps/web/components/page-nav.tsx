@@ -189,7 +189,7 @@ export function PageNav({
             对读屏隐藏，避免同一个标题被念两遍。 */}
         <span
           aria-hidden="true"
-          className="min-w-0 truncate text-[15px] font-semibold tracking-[-0.01em] text-white/90"
+          className="min-w-0 truncate text-body-lg font-semibold tracking-[-0.01em] text-white/90"
           style={{
             opacity: "var(--nav-reveal, 0)",
             transform: "translateY(calc((1 - var(--nav-reveal, 0)) * 5px))",

@@ -165,13 +165,13 @@ export function LibraryItemDetailView({
       <div className="ambient-fallback flex h-full flex-col">
         <PageNav items={fallbackTrail} />
         <div className="flex flex-1 flex-col items-center justify-center gap-4 px-6 text-center">
-          <p className="text-[15px] font-semibold text-[var(--text)]">未能加载该条目</p>
-          <p className="max-w-sm text-[13px] leading-6 text-[var(--text-muted)]">
+          <p className="text-body-lg font-semibold text-[var(--text)]">未能加载该条目</p>
+          <p className="max-w-sm text-ui leading-6 text-[var(--text-muted)]">
             条目可能已被删除或重新识别为其他作品，请回库存页查看。
           </p>
           <Link
             href={`/library/${libraryId}` as Route}
-            className="btn-glass flex items-center gap-2 px-4 py-2 text-[13px] font-medium text-[var(--text)]"
+            className="btn-glass flex items-center gap-2 px-4 py-2 text-ui font-medium text-[var(--text)]"
           >
             <ArrowLeftIcon className="size-4" />
             回到库存页
@@ -185,7 +185,7 @@ export function LibraryItemDetailView({
     return (
       <div className="ambient-fallback flex h-full flex-col">
         <PageNav items={fallbackTrail} />
-        <div className="flex flex-1 items-center justify-center gap-2.5 text-[13px] text-[var(--text-muted)]">
+        <div className="flex flex-1 items-center justify-center gap-2.5 text-ui text-[var(--text-muted)]">
           <span className="size-4 animate-spin rounded-full border-2 border-white/20 border-t-white/70" />
           正在读取本地刮削信息…
         </div>
@@ -285,14 +285,14 @@ export function LibraryItemDetailView({
           <button
             type="button"
             onClick={() => setArtworkOpen(true)}
-            className="touch-reveal absolute inset-x-0 bottom-0 flex h-11 items-center justify-center bg-black/70 text-[12.5px] font-medium text-white opacity-0 backdrop-blur-sm transition group-hover/poster:opacity-100 max-md:h-8 max-md:text-[11px]"
+            className="touch-reveal absolute inset-x-0 bottom-0 flex h-11 items-center justify-center bg-black/70 text-sub font-medium text-white opacity-0 backdrop-blur-sm transition group-hover/poster:opacity-100 max-md:h-8 max-md:text-caption"
           >
             更换图片
           </button>
         </div>
 
         <div className="min-w-0 flex-1 pb-1">
-          <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-[var(--accent-2)]">
+          <p className="text-caption font-semibold uppercase tracking-[0.22em] text-[var(--accent-2)]">
             已入库 · {isMovie ? "电影" : "剧集"}
             {meta && meta.genres.length > 0 ? ` · ${meta.genres.join(" / ")}` : ""}
           </p>
@@ -300,16 +300,16 @@ export function LibraryItemDetailView({
             {detail.title}
           </h1>
           {detail.original_title && detail.original_title !== detail.title && (
-            <p className="text-on-image mt-1.5 truncate text-[14px] text-white/55">
+            <p className="text-on-image mt-1.5 truncate text-body text-white/55">
               {detail.original_title}
             </p>
           )}
 
-          <div className="tnum mt-3.5 flex flex-wrap items-center gap-x-3.5 gap-y-2 text-[13px] text-white/80 max-md:mt-2 max-md:gap-x-2.5 max-md:gap-y-1 max-md:text-[12px]">
+          <div className="tnum mt-3.5 flex flex-wrap items-center gap-x-3.5 gap-y-2 text-ui text-white/80 max-md:mt-2 max-md:gap-x-2.5 max-md:gap-y-1 max-md:text-sub">
             {meta?.rating != null && (
               <span className="flex items-center gap-1.5">
                 <StarIcon className="size-4 text-[#f5c451]" />
-                <span className="text-[16px] font-bold text-white">{meta.rating.toFixed(1)}</span>
+                <span className="text-title-sm font-bold text-white">{meta.rating.toFixed(1)}</span>
               </span>
             )}
             {detail.year && <span>{detail.year}</span>}
@@ -341,13 +341,13 @@ export function LibraryItemDetailView({
           {/* 刮削进行中的状态条：与库页的整库刷新面板同一套语言（阶段文案
               也同源），状态在服务端——离开页面/刷新浏览器回来照样看得到 */}
           {scrapingNow && (
-            <div className="mt-4 flex max-w-2xl items-center gap-2 rounded-xl border border-[#7dd3fc]/25 bg-[#7dd3fc]/[0.07] px-4 py-2.5 text-[12.5px] font-medium text-[#7dd3fc]">
+            <div className="mt-4 flex max-w-2xl items-center gap-2 rounded-xl border border-[#7dd3fc]/25 bg-[#7dd3fc]/[0.07] px-4 py-2.5 text-sub font-medium text-[#7dd3fc]">
               <span className="size-3 shrink-0 animate-spin rounded-full border-[1.5px] border-[#7dd3fc]/30 border-t-[#7dd3fc]" />
               <span className="truncate">
                 正在刷新元数据
                 {detail.scraping_phase ? ` · ${detail.scraping_phase}` : ""}
               </span>
-              <span className="ml-auto shrink-0 text-[11.5px] font-normal text-white/45">
+              <span className="ml-auto shrink-0 text-caption font-normal text-white/45">
                 完成后自动更新本页
               </span>
             </div>
@@ -355,7 +355,7 @@ export function LibraryItemDetailView({
 
           {/* 重新识别的结论横幅：结果与后续动作当场给出 */}
           {(reidentifyResult || reidentifyError) && (
-            <div className="mt-4 max-w-2xl rounded-xl border border-white/[0.1] bg-[rgba(14,16,22,0.6)] px-4 py-3 text-[12.5px] leading-6 text-white/85 backdrop-blur-md">
+            <div className="mt-4 max-w-2xl rounded-xl border border-white/[0.1] bg-[rgba(14,16,22,0.6)] px-4 py-3 text-sub leading-6 text-white/85 backdrop-blur-md">
               {reidentifyError ? (
                 <span className="text-[#ff9f9f]">{reidentifyError}</span>
               ) : (
@@ -398,9 +398,9 @@ export function LibraryItemDetailView({
         {/* —— 剧情简介（本地 NFO 优先，TMDB 兜底）—— */}
         {meta?.plot && (
           <section>
-            <h2 className="text-on-image mb-3 text-[15px] font-semibold tracking-[-0.01em] text-[var(--text)]">
+            <h2 className="text-on-image mb-3 text-body-lg font-semibold tracking-[-0.01em] text-[var(--text)]">
               剧情简介
-              <span className="ml-2 text-[11px] font-normal text-[var(--text-faint)]">
+              <span className="ml-2 text-caption font-normal text-[var(--text-faint)]">
                 {meta.source === "nfo"
                   ? `信息来自本地刮削（${meta.nfo_name}）`
                   : meta.source === "db"
@@ -408,7 +408,7 @@ export function LibraryItemDetailView({
                     : "信息来自 TMDB"}
               </span>
             </h2>
-            <p className="text-on-image max-w-3xl text-[14px] leading-7 text-white/78">
+            <p className="text-on-image max-w-3xl text-body leading-7 text-white/78">
               {meta.plot}
             </p>
           </section>
@@ -487,7 +487,7 @@ function ItemActionsMenu({
   onDelete: () => void;
 }) {
   const itemClass =
-    "glass-row nav-item cursor-pointer px-3 py-2 text-[13px] font-medium outline-none " +
+    "glass-row nav-item cursor-pointer px-3 py-2 text-ui font-medium outline-none " +
     "data-[highlighted]:!bg-[var(--glass-fill-hover)] data-[highlighted]:!text-[var(--text)] " +
     "data-[disabled]:pointer-events-none data-[disabled]:opacity-40";
   const running = reidentifying || scraping;
@@ -688,7 +688,7 @@ function QualityBadges({ files }: { files: LibraryItemFile[] }) {
       {labels.map((b) => (
         <span
           key={b}
-          className="rounded border border-white/25 px-1.5 py-px text-[10px] font-semibold tracking-wide text-white/85"
+          className="rounded border border-white/25 px-1.5 py-px text-micro font-semibold tracking-wide text-white/85"
         >
           {b}
         </span>
@@ -723,7 +723,7 @@ function MovieVersionSpecs({ files }: { files: LibraryItemFile[] }) {
   return (
     <section>
       <div className="mb-3 flex items-center gap-3">
-        <h2 className="text-on-image text-[15px] font-semibold tracking-[-0.01em] text-[var(--text)]">
+        <h2 className="text-on-image text-body-lg font-semibold tracking-[-0.01em] text-[var(--text)]">
           片源规格
         </h2>
         {versions.length > 1 && (
@@ -734,7 +734,7 @@ function MovieVersionSpecs({ files }: { files: LibraryItemFile[] }) {
                 type="button"
                 aria-pressed={f.id === active.id}
                 onClick={() => setActiveId(f.id)}
-                className={`tnum rounded-full px-3 py-1 text-[12px] font-medium transition-colors ${
+                className={`tnum rounded-full px-3 py-1 text-sub font-medium transition-colors ${
                   f.id === active.id
                     ? "bg-white/[0.14] text-white"
                     : "text-[var(--text-muted)] hover:bg-white/[0.07] hover:text-[var(--text)]"
@@ -762,17 +762,17 @@ function SpecRows({ file }: { file: LibraryItemFile }) {
         {videoBadges(file).length > 0 ? (
           videoBadges(file).map((b) => <SpecBadge key={b} text={b} />)
         ) : (
-          <span className="text-[12.5px] text-[var(--text-muted)]">未能探测（ffprobe 缺失或文件不可达）</span>
+          <span className="text-sub text-[var(--text-muted)]">未能探测（ffprobe 缺失或文件不可达）</span>
         )}
       </SpecRow>
       <SpecRow label="音频">
         {file.audio_streams === null ? (
-          <span className="text-[12.5px] text-[var(--text-muted)]">
+          <span className="text-sub text-[var(--text-muted)]">
             尚未探测——后台正在读取，稍候自动刷新；持续为空请检查文件是否可达，
             以及（源码部署时）是否装了 ffmpeg
           </span>
         ) : file.audio_streams.length === 0 ? (
-          <span className="text-[12.5px] text-[var(--text-muted)]">文件内没有音轨</span>
+          <span className="text-sub text-[var(--text-muted)]">文件内没有音轨</span>
         ) : (
           file.audio_streams.map((a, i) => (
             <SpecBadge key={i} text={audioLabel(a)} accent={a.default} />
@@ -781,7 +781,7 @@ function SpecRows({ file }: { file: LibraryItemFile }) {
       </SpecRow>
       <SpecRow label="字幕">
         {file.subtitle_streams.length === 0 ? (
-          <span className="text-[12.5px] text-[var(--text-muted)]">无内封或外挂字幕</span>
+          <span className="text-sub text-[var(--text-muted)]">无内封或外挂字幕</span>
         ) : (
           file.subtitle_streams.map((s, i) => (
             <SpecBadge
@@ -799,7 +799,7 @@ function SpecRows({ file }: { file: LibraryItemFile }) {
 function SpecRow({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <div className="flex items-baseline gap-4">
-      <span className="w-10 shrink-0 text-[12px] text-[var(--text-faint)]">{label}</span>
+      <span className="w-10 shrink-0 text-sub text-[var(--text-faint)]">{label}</span>
       <div className="flex flex-wrap items-center gap-1.5">{children}</div>
     </div>
   );
@@ -816,7 +816,7 @@ function SpecBadge({
 }) {
   return (
     <span
-      className={`tnum inline-flex items-center gap-1 rounded-md border px-2 py-0.5 text-[11.5px] ${
+      className={`tnum inline-flex items-center gap-1 rounded-md border px-2 py-0.5 text-caption ${
         accent
           ? "border-white/30 bg-white/[0.1] text-white"
           : "border-white/[0.12] bg-white/[0.04] text-white/80"
@@ -824,7 +824,7 @@ function SpecBadge({
     >
       {text}
       {suffix && (
-        <span className="rounded-sm bg-white/[0.12] px-1 text-[10px] text-white/70">{suffix}</span>
+        <span className="rounded-sm bg-white/[0.12] px-1 text-micro text-white/70">{suffix}</span>
       )}
     </span>
   );
@@ -837,7 +837,7 @@ function SourceLink({ href, label }: { href: string; label: string }) {
       href={href}
       target="_blank"
       rel="noreferrer"
-      className="text-[11.5px] text-[var(--text-muted)] underline decoration-white/20 underline-offset-2 transition hover:text-white/80"
+      className="text-caption text-[var(--text-muted)] underline decoration-white/20 underline-offset-2 transition hover:text-white/80"
     >
       {label} ↗
     </a>
@@ -896,14 +896,14 @@ function SeasonEpisodesSection({
   return (
     <section>
       <div className="mb-3 flex items-center gap-3">
-        <h2 className="text-on-image text-[15px] font-semibold tracking-[-0.01em] text-[var(--text)]">
+        <h2 className="text-on-image text-body-lg font-semibold tracking-[-0.01em] text-[var(--text)]">
           分集
         </h2>
         {seasons.length > 1 ? (
           <select
             value={season}
             onChange={(e) => setSeason(Number(e.target.value))}
-            className="rounded-xl border border-white/[0.08] bg-white/[0.04] px-3 py-1.5 text-[12.5px] text-white/90 outline-none focus:border-white/25 [&>option]:bg-[#181c28]"
+            className="rounded-xl border border-white/[0.08] bg-white/[0.04] px-3 py-1.5 text-sub text-white/90 outline-none focus:border-white/25 [&>option]:bg-[#181c28]"
           >
             {seasons.map((s) => (
               <option key={s} value={s}>
@@ -912,22 +912,22 @@ function SeasonEpisodesSection({
             ))}
           </select>
         ) : (
-          <span className="text-[12.5px] text-[var(--text-muted)]">
+          <span className="text-sub text-[var(--text-muted)]">
             {season === 0 ? "特别篇" : `第 ${season} 季`}
           </span>
         )}
         {data && (
-          <span className="tnum text-[12px] text-[var(--text-faint)]">
+          <span className="tnum text-sub text-[var(--text-faint)]">
             在库 {ownedCount} / {data.episodes.length} 集
           </span>
         )}
       </div>
 
       {failed && (
-        <p className="text-[12.5px] text-[var(--text-muted)]">分集信息加载失败，请稍后重试。</p>
+        <p className="text-sub text-[var(--text-muted)]">分集信息加载失败，请稍后重试。</p>
       )}
       {!data && !failed && (
-        <div className="flex items-center gap-2.5 py-6 text-[12.5px] text-[var(--text-muted)]">
+        <div className="flex items-center gap-2.5 py-6 text-sub text-[var(--text-muted)]">
           <span className="size-4 animate-spin rounded-full border-2 border-white/20 border-t-white/70" />
           正在读取分集信息…
         </div>
@@ -952,22 +952,22 @@ function SeasonEpisodesSection({
           {current && (
             <div className="mt-4 rounded-2xl border border-white/[0.07] bg-[rgba(14,16,22,0.45)] p-6 backdrop-blur-xl">
               <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
-                <h3 className="text-[14.5px] font-semibold text-[var(--text)]">
+                <h3 className="text-body font-semibold text-[var(--text)]">
                   第 {current.episode_number} 集{current.name ? ` · ${current.name}` : ""}
                 </h3>
                 {current.air_date && (
-                  <span className="tnum text-[12px] text-[var(--text-faint)]">
+                  <span className="tnum text-sub text-[var(--text-faint)]">
                     {current.air_date} 播出
                   </span>
                 )}
                 {!current.owned && (
-                  <span className="rounded border border-[#f5c451]/40 px-1.5 py-px text-[10px] font-semibold text-[#f5c451]">
+                  <span className="rounded border border-[#f5c451]/40 px-1.5 py-px text-micro font-semibold text-[#f5c451]">
                     不在库中
                   </span>
                 )}
               </div>
               {current.overview && (
-                <p className="mt-2.5 max-w-3xl text-[13px] leading-6 text-white/70">
+                <p className="mt-2.5 max-w-3xl text-ui leading-6 text-white/70">
                   {current.overview}
                 </p>
               )}
@@ -981,28 +981,28 @@ function SeasonEpisodesSection({
                       <div className="flex items-center gap-4">
                         <Tooltip
                           content={
-                            <span className="tnum break-all font-mono text-[11.5px] leading-5">
+                            <span className="tnum break-all font-mono text-caption leading-5">
                               {file.file_path}
                             </span>
                           }
                           maxWidth={520}
                         >
-                          <p className="min-w-0 flex-1 truncate text-[13px] text-[var(--text)]">
+                          <p className="min-w-0 flex-1 truncate text-ui text-[var(--text)]">
                             {file.file_name}
                           </p>
                         </Tooltip>
                         {file.missing && (
-                          <span className="shrink-0 rounded border border-[#f5c451]/40 px-1.5 py-px text-[10px] font-semibold text-[#f5c451]">
+                          <span className="shrink-0 rounded border border-[#f5c451]/40 px-1.5 py-px text-micro font-semibold text-[#f5c451]">
                             文件缺失
                           </span>
                         )}
-                        <span className="shrink-0 rounded border border-white/[0.14] px-1.5 py-px text-[10px] text-white/55">
+                        <span className="shrink-0 rounded border border-white/[0.14] px-1.5 py-px text-micro text-white/55">
                           {file.source === "imported" ? "入库管线" : "扫描发现"}
                         </span>
-                        <span className="tnum shrink-0 text-[12.5px] text-[var(--text-muted)]">
+                        <span className="tnum shrink-0 text-sub text-[var(--text-muted)]">
                           {formatBytes(file.size_bytes)}
                         </span>
-                        <span className="tnum shrink-0 text-[11.5px] text-[var(--text-faint)]">
+                        <span className="tnum shrink-0 text-caption text-[var(--text-faint)]">
                           {formatRelativeTime(file.added_at)}
                         </span>
                       </div>
@@ -1013,7 +1013,7 @@ function SeasonEpisodesSection({
                   ))}
                 </div>
               ) : (
-                <p className="mt-3 text-[12.5px] text-[var(--text-muted)]">
+                <p className="mt-3 text-sub text-[var(--text-muted)]">
                   本集不在库中——可通过订阅追踪自动补齐。
                 </p>
               )}
@@ -1062,13 +1062,13 @@ function EpisodeCard({
           }
         />
         {!episode.owned && (
-          <span className="absolute right-1.5 top-1.5 rounded bg-black/60 px-1.5 py-px text-[10px] font-semibold text-[#f5c451]">
+          <span className="absolute right-1.5 top-1.5 rounded bg-black/60 px-1.5 py-px text-micro font-semibold text-[#f5c451]">
             缺
           </span>
         )}
       </div>
       <p
-        className={`tnum mt-1.5 truncate text-[12.5px] ${
+        className={`tnum mt-1.5 truncate text-sub ${
           selected ? "font-semibold text-white" : "text-[var(--text)]"
         }`}
       >
@@ -1105,15 +1105,15 @@ function FileSection({
 
   return (
     <section>
-      <h2 className="text-on-image mb-3 text-[15px] font-semibold tracking-[-0.01em] text-[var(--text)]">
+      <h2 className="text-on-image mb-3 text-body-lg font-semibold tracking-[-0.01em] text-[var(--text)]">
         {title}{" "}
-        <span className="tnum text-[13px] font-normal text-[var(--text-muted)]">{files.length}</span>
+        <span className="tnum text-ui font-normal text-[var(--text-muted)]">{files.length}</span>
       </h2>
       <div className="overflow-hidden rounded-2xl border border-white/[0.07] bg-[rgba(14,16,22,0.45)] backdrop-blur-xl">
         {groups.map(([season, groupFiles]) => (
           <div key={season}>
             {!isMovie && groups.length > 1 && (
-              <p className="border-b border-white/[0.05] px-5 pb-2 pt-3.5 text-[12px] font-semibold text-[var(--text-muted)]">
+              <p className="border-b border-white/[0.05] px-5 pb-2 pt-3.5 text-sub font-semibold text-[var(--text-muted)]">
                 {season === 0 ? "未归集" : `第 ${season} 季`} · {groupFiles.length} 个文件
               </p>
             )}
@@ -1123,7 +1123,7 @@ function FileSection({
           </div>
         ))}
       </div>
-      <p className="mt-2 text-[11.5px] text-[var(--text-faint)]">
+      <p className="mt-2 text-caption text-[var(--text-faint)]">
         悬浮文件名可查看物理路径。规格探测自文件本体（ffprobe），不来自资源命名。
       </p>
     </section>
@@ -1149,15 +1149,15 @@ function FileRow({ file, isMovie }: { file: LibraryItemFile; isMovie: boolean })
         <div className="min-w-0 flex-1">
           <Tooltip
             content={
-              <span className="tnum break-all font-mono text-[11.5px] leading-5">
+              <span className="tnum break-all font-mono text-caption leading-5">
                 {file.file_path}
               </span>
             }
             maxWidth={520}
           >
-            <p className="truncate text-[13px] text-[var(--text)]">
+            <p className="truncate text-ui text-[var(--text)]">
               {!isMovie && (file.episode_number > 0 || file.season_number > 0) && (
-                <span className="tnum mr-2 text-[12px] font-semibold text-[var(--accent-2)]">
+                <span className="tnum mr-2 text-sub font-semibold text-[var(--accent-2)]">
                   S{String(file.season_number).padStart(2, "0")}E
                   {String(file.episode_number).padStart(2, "0")}
                 </span>
@@ -1165,7 +1165,7 @@ function FileRow({ file, isMovie }: { file: LibraryItemFile; isMovie: boolean })
               {file.file_name}
             </p>
           </Tooltip>
-          <p className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[11.5px] text-[var(--text-muted)]">
+          <p className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-caption text-[var(--text-muted)]">
             {badges.length > 0 && <span className="tnum">{badges.join(" · ")}</span>}
             {audioSummary && <span className="tnum">{audioSummary}</span>}
             {file.subtitle_streams.length > 0 && (
@@ -1174,17 +1174,17 @@ function FileRow({ file, isMovie }: { file: LibraryItemFile; isMovie: boolean })
           </p>
         </div>
         {file.missing && (
-          <span className="shrink-0 rounded border border-[#f5c451]/40 px-1.5 py-px text-[10px] font-semibold text-[#f5c451]">
+          <span className="shrink-0 rounded border border-[#f5c451]/40 px-1.5 py-px text-micro font-semibold text-[#f5c451]">
             文件缺失
           </span>
         )}
-        <span className="shrink-0 rounded border border-white/[0.14] px-1.5 py-px text-[10px] text-white/55">
+        <span className="shrink-0 rounded border border-white/[0.14] px-1.5 py-px text-micro text-white/55">
           {file.source === "imported" ? "入库管线" : "扫描发现"}
         </span>
-        <span className="tnum w-20 shrink-0 text-right text-[12.5px] text-[var(--text-muted)]">
+        <span className="tnum w-20 shrink-0 text-right text-sub text-[var(--text-muted)]">
           {formatBytes(file.size_bytes)}
         </span>
-        <span className="tnum w-20 shrink-0 text-right text-[11.5px] text-[var(--text-faint)]">
+        <span className="tnum w-20 shrink-0 text-right text-caption text-[var(--text-faint)]">
           {formatRelativeTime(file.added_at)}
         </span>
       </div>
@@ -1245,34 +1245,34 @@ function DeleteDialog({
       <div className="p-6">
         {result ? (
           <>
-            <h3 className="text-[16px] font-semibold text-[var(--text)]">
+            <h3 className="text-title-sm font-semibold text-[var(--text)]">
               {result.errors.length > 0 ? "部分删除完成" : "已从磁盘彻底删除"}
             </h3>
             <div className="scroll-thin mt-4 max-h-56 overflow-y-auto rounded-xl border border-white/[0.08] bg-white/[0.03] p-3.5">
               {result.removed_paths.map((p) => (
-                <p key={p} className="tnum break-all py-0.5 font-mono text-[11.5px] leading-5 text-white/70">
+                <p key={p} className="tnum break-all py-0.5 font-mono text-caption leading-5 text-white/70">
                   {p}
                 </p>
               ))}
               {result.removed_paths.length === 0 && (
-                <p className="text-[12px] text-[var(--text-muted)]">没有删除任何磁盘路径</p>
+                <p className="text-sub text-[var(--text-muted)]">没有删除任何磁盘路径</p>
               )}
             </div>
             {result.errors.length > 0 && (
-              <div className="mt-3 space-y-1 text-[12px] leading-5 text-[#ff9f9f]">
+              <div className="mt-3 space-y-1 text-sub leading-5 text-[#ff9f9f]">
                 {result.errors.map((e) => (
                   <p key={e}>{e}</p>
                 ))}
               </div>
             )}
-            <p className="mt-3 text-[12.5px] text-[var(--text-muted)]">
+            <p className="mt-3 text-sub text-[var(--text-muted)]">
               已清理 {result.rows_deleted} 条台账，释放 {formatBytes(result.freed_bytes)}。
             </p>
             <div className="mt-5 flex justify-end">
               <button
                 type="button"
                 onClick={onDeleted}
-                className="btn-accent rounded-full px-5 py-2 text-[13px] font-semibold"
+                className="btn-accent rounded-full px-5 py-2 text-ui font-semibold"
               >
                 回到库存页
               </button>
@@ -1280,11 +1280,11 @@ function DeleteDialog({
           </>
         ) : (
           <>
-            <h3 className="flex items-center gap-2 text-[16px] font-semibold text-[var(--text)]">
+            <h3 className="flex items-center gap-2 text-title-sm font-semibold text-[var(--text)]">
               <TrashIcon className="size-4.5 text-[#ff9f9f]" />
               删除「{detail.title}」
             </h3>
-            <p className="mt-3 text-[13px] leading-6 text-white/80">
+            <p className="mt-3 text-ui leading-6 text-white/80">
               这不是「从列表移除」——将把下列目录从磁盘
               <span className="font-semibold text-[#ff9f9f]">彻底删除</span>
               ，包括视频文件、NFO、海报、字幕等全部刮削产物，共{" "}
@@ -1297,13 +1297,13 @@ function DeleteDialog({
                 ? detail.entry_dirs
                 : detail.files.map((f) => f.file_path)
               ).map((p) => (
-                <p key={p} className="tnum flex items-start gap-1.5 break-all py-0.5 font-mono text-[11.5px] leading-5 text-white/70">
+                <p key={p} className="tnum flex items-start gap-1.5 break-all py-0.5 font-mono text-caption leading-5 text-white/70">
                   <FolderIcon className="mt-0.5 size-3.5 shrink-0 text-white/40" />
                   {p}
                 </p>
               ))}
             </div>
-            <label className="mt-4 flex cursor-pointer items-start gap-2.5 text-[12.5px] leading-6 text-white/80">
+            <label className="mt-4 flex cursor-pointer items-start gap-2.5 text-sub leading-6 text-white/80">
               <input
                 type="checkbox"
                 checked={confirmed}
@@ -1312,13 +1312,13 @@ function DeleteDialog({
               />
               我已明白：以上目录及其中全部文件将被永久删除，无法恢复。
             </label>
-            {error && <p className="mt-3 text-[12.5px] text-[#ff9f9f]">{error}</p>}
+            {error && <p className="mt-3 text-sub text-[#ff9f9f]">{error}</p>}
             <div className="mt-5 flex justify-end gap-3">
               <button
                 type="button"
                 onClick={onClose}
                 disabled={busy}
-                className="btn-glass px-4 py-2 text-[13px] font-medium text-[var(--text)]"
+                className="btn-glass px-4 py-2 text-ui font-medium text-[var(--text)]"
               >
                 取消
               </button>
@@ -1326,7 +1326,7 @@ function DeleteDialog({
                 type="button"
                 onClick={run}
                 disabled={!confirmed || busy}
-                className="flex items-center gap-2 rounded-full bg-[#c73838] px-5 py-2 text-[13px] font-semibold text-white transition hover:bg-[#d64545] disabled:cursor-not-allowed disabled:opacity-40"
+                className="flex items-center gap-2 rounded-full bg-[#c73838] px-5 py-2 text-ui font-semibold text-white transition hover:bg-[#d64545] disabled:cursor-not-allowed disabled:opacity-40"
               >
                 {busy && (
                   <span className="size-3.5 animate-spin rounded-full border-2 border-white/30 border-t-white" />

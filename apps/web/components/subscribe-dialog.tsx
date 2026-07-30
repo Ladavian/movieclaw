@@ -209,9 +209,9 @@ export function SubscribeDialog({
   return (
     <Modal open onClose={onClose} label={`订阅《${target.title}》`} width="lg">
       <div className="scroll-thin max-h-[76dvh] overflow-y-auto p-6 max-md:p-5">
-          <h2 className="text-[17px] font-bold text-white">
+          <h2 className="text-title font-bold text-white">
             订阅追踪
-            <span className="ml-2 text-[13px] font-normal text-[var(--text-muted)]">
+            <span className="ml-2 text-ui font-normal text-[var(--text-muted)]">
               {target.title}
               {target.year ? ` (${target.year})` : ""}
             </span>
@@ -219,20 +219,20 @@ export function SubscribeDialog({
 
           {/* —— 加载 / 错误 —— */}
           {!prepared && !error && (
-            <div className="mt-8 flex items-center justify-center gap-2.5 pb-4 text-[13px] text-[var(--text-muted)]">
+            <div className="mt-8 flex items-center justify-center gap-2.5 pb-4 text-ui text-[var(--text-muted)]">
               <span className="size-4 animate-spin rounded-full border-2 border-white/20 border-t-white/70" />
               正在获取条目信息…
             </div>
           )}
           {error && (
-            <p className="mt-4 rounded-lg border border-red-400/25 bg-red-500/10 px-3.5 py-2.5 text-[13px] leading-6 text-red-200">
+            <p className="mt-4 rounded-lg border border-red-400/25 bg-red-500/10 px-3.5 py-2.5 text-ui leading-6 text-red-200">
               {error}
             </p>
           )}
 
           {/* —— 豆瓣收敛：未收录 —— */}
           {prepared?.status === "not_found" && (
-            <p className="mt-4 text-[13.5px] leading-6 text-[var(--text-muted)]">
+            <p className="mt-4 text-ui leading-6 text-[var(--text-muted)]">
               TMDB 未收录该条目，暂时无法订阅。订阅依赖 TMDB
               的别名与季集数据来匹配站点资源，可尝试在 TMDB 搜索入口确认条目后再订阅。
             </p>
@@ -241,7 +241,7 @@ export function SubscribeDialog({
           {/* —— 豆瓣收敛：多候选确认 —— */}
           {prepared?.status === "ambiguous" && (
             <div className="mt-4">
-              <p className="text-[13px] text-[var(--text-muted)]">
+              <p className="text-ui text-[var(--text-muted)]">
                 找到多个可能的条目，请确认你订阅的是哪一部：
               </p>
               <div className="mt-3 grid grid-cols-4 gap-3 max-md:grid-cols-3 max-md:gap-2">
@@ -259,8 +259,8 @@ export function SubscribeDialog({
                         className="size-full"
                       />
                     </div>
-                    <p className="mt-1.5 truncate text-[12px] text-white/90">{c.title}</p>
-                    <p className="truncate text-[11px] text-[var(--text-faint)]">
+                    <p className="mt-1.5 truncate text-sub text-white/90">{c.title}</p>
+                    <p className="truncate text-caption text-[var(--text-faint)]">
                       {c.year ?? "年份未知"}
                     </p>
                   </button>
@@ -272,7 +272,7 @@ export function SubscribeDialog({
           {/* —— 已订阅：管理态 —— */}
           {prepared?.status === "ready" && prepared.existing_subscription_id && (
             <div className="mt-4">
-              <p className="flex items-center gap-2 text-[13.5px] text-white/85">
+              <p className="flex items-center gap-2 text-ui text-white/85">
                 <CheckIcon className="size-4 text-[#4ade80]" />
                 该{target.kind === "movie" ? "电影" : "剧集"}已在订阅中，movieclaw
                 正在持续追踪资源。
@@ -281,7 +281,7 @@ export function SubscribeDialog({
                 <button
                   type="button"
                   onClick={onClose}
-                  className="btn-glass h-9 px-4 text-[13px] font-medium"
+                  className="btn-glass h-9 px-4 text-ui font-medium"
                 >
                   好的
                 </button>
@@ -289,7 +289,7 @@ export function SubscribeDialog({
                   type="button"
                   disabled={busy}
                   onClick={unsubscribe}
-                  className="h-9 rounded-full border border-red-400/30 bg-red-500/10 px-4 text-[13px] font-medium text-red-200 transition hover:bg-red-500/20 disabled:opacity-50"
+                  className="h-9 rounded-full border border-red-400/30 bg-red-500/10 px-4 text-ui font-medium text-red-200 transition hover:bg-red-500/20 disabled:opacity-50"
                 >
                   取消订阅
                 </button>
@@ -301,14 +301,14 @@ export function SubscribeDialog({
           {prepared?.status === "ready" && !prepared.existing_subscription_id && (
             <div className="mt-4 space-y-5">
               {prepared.movie_owned && (
-                <p className="flex items-center gap-2 rounded-xl border border-[#4ade80]/25 bg-[#4ade80]/10 px-3.5 py-2.5 text-[12.5px] text-[#4ade80]">
+                <p className="flex items-center gap-2 rounded-xl border border-[#4ade80]/25 bg-[#4ade80]/10 px-3.5 py-2.5 text-sub text-[#4ade80]">
                   <CheckIcon className="size-4 shrink-0" />
                   媒体库里已有这部电影，订阅后不会重复下载
                 </p>
               )}
               {prepared.media?.kind === "tv" && (
                 <section>
-                  <h3 className="mb-2 text-[13px] font-semibold text-white/85">
+                  <h3 className="mb-2 text-ui font-semibold text-white/85">
                     选择要收录的季
                     <span className="ml-2 font-normal text-[var(--text-faint)]">
                       勾选即要整季（含未播集）
@@ -327,10 +327,10 @@ export function SubscribeDialog({
 
                   <label className="mt-4 flex cursor-pointer items-center justify-between rounded-xl border border-white/[0.08] bg-white/[0.04] px-4 py-3">
                     <span>
-                      <span className="block text-[13px] font-medium text-white/90">
+                      <span className="block text-ui font-medium text-white/90">
                         持续追新
                       </span>
-                      <span className="mt-0.5 block text-[11.5px] text-[var(--text-faint)]">
+                      <span className="mt-0.5 block text-caption text-[var(--text-faint)]">
                         之后播出的新集、新一季自动加入追踪
                       </span>
                     </span>
@@ -346,11 +346,11 @@ export function SubscribeDialog({
 
               {ruleSets.length > 0 && (
                 <section>
-                  <h3 className="mb-2 text-[13px] font-semibold text-white/85">资源规则</h3>
+                  <h3 className="mb-2 text-ui font-semibold text-white/85">资源规则</h3>
                   <select
                     value={ruleSetId ?? undefined}
                     onChange={(e) => setRuleSetId(Number(e.target.value))}
-                    className="w-full rounded-xl border border-white/[0.08] bg-white/[0.04] px-3.5 py-2.5 text-[13px] text-white/90 outline-none focus:border-white/25 [&>option]:bg-[#181c28]"
+                    className="w-full rounded-xl border border-white/[0.08] bg-white/[0.04] px-3.5 py-2.5 text-ui text-white/90 outline-none focus:border-white/25 [&>option]:bg-[#181c28]"
                   >
                     {ruleSets.map((r) => (
                       <option key={r.id} value={r.id}>
@@ -364,11 +364,11 @@ export function SubscribeDialog({
 
               {libraries.length > 0 && (
                 <section>
-                  <h3 className="mb-2 text-[13px] font-semibold text-white/85">入库到</h3>
+                  <h3 className="mb-2 text-ui font-semibold text-white/85">入库到</h3>
                   <select
                     value={libraryId ?? undefined}
                     onChange={(e) => setLibraryId(Number(e.target.value))}
-                    className="w-full rounded-xl border border-white/[0.08] bg-white/[0.04] px-3.5 py-2.5 text-[13px] text-white/90 outline-none focus:border-white/25 [&>option]:bg-[#181c28]"
+                    className="w-full rounded-xl border border-white/[0.08] bg-white/[0.04] px-3.5 py-2.5 text-ui text-white/90 outline-none focus:border-white/25 [&>option]:bg-[#181c28]"
                   >
                     {libraries.map((l) => (
                       <option key={l.id} value={l.id}>
@@ -379,14 +379,14 @@ export function SubscribeDialog({
                   </select>
                   {/* 收藏范围路由徽标：说明"为什么默认选了这个库"；用户改库即消失 */}
                   {routed && routed.reason && libraryId === routed.libraryId && (
-                    <p className="mt-1.5 text-[11.5px] leading-relaxed text-[var(--accent)]/90">
+                    <p className="mt-1.5 text-caption leading-relaxed text-[var(--accent)]/90">
                       自动选库：{routed.reason}
                     </p>
                   )}
                   {/* 投递路由预检：与后端真实投递同源判定，配置问题当场亮出 */}
                   {dispatchPreview &&
                     (dispatchPreview.ok ? (
-                      <p className="mt-1.5 text-[11.5px] leading-relaxed text-[var(--text-faint)]">
+                      <p className="mt-1.5 text-caption leading-relaxed text-[var(--text-faint)]">
                         {dispatchPreview.mode === "watch" ? (
                           <>
                             将投递到监听导入目录{" "}
@@ -414,7 +414,7 @@ export function SubscribeDialog({
                         )}
                       </p>
                     ) : (
-                      <p className="mt-1.5 rounded-lg border border-amber-400/25 bg-amber-500/10 px-3 py-2 text-[11.5px] leading-relaxed text-amber-200">
+                      <p className="mt-1.5 rounded-lg border border-amber-400/25 bg-amber-500/10 px-3 py-2 text-caption leading-relaxed text-amber-200">
                         {dispatchPreview.warning}
                       </p>
                     ))}
@@ -425,7 +425,7 @@ export function SubscribeDialog({
                 <button
                   type="button"
                   onClick={onClose}
-                  className="btn-glass h-9 px-4 text-[13px] font-medium"
+                  className="btn-glass h-9 px-4 text-ui font-medium"
                 >
                   取消
                 </button>
@@ -433,7 +433,7 @@ export function SubscribeDialog({
                   type="button"
                   disabled={!canSubmit}
                   onClick={submit}
-                  className="btn-accent h-9 rounded-full px-5 text-[13px] font-semibold disabled:opacity-50"
+                  className="btn-accent h-9 rounded-full px-5 text-ui font-semibold disabled:opacity-50"
                 >
                   {busy ? "正在订阅…" : "确认订阅"}
                 </button>
@@ -480,12 +480,12 @@ function SeasonRow({
       }`}
     >
       <span className="flex items-baseline gap-2.5">
-        <span className="text-[13px] font-medium text-white/90">
+        <span className="text-ui font-medium text-white/90">
           {season.season_number === 0 ? "特别篇" : `第 ${season.season_number} 季`}
         </span>
-        <span className="tnum text-[11.5px] text-[var(--text-faint)]">{progress}</span>
+        <span className="tnum text-caption text-[var(--text-faint)]">{progress}</span>
         {owned && (
-          <span className="tnum text-[11.5px] font-medium text-[#4ade80]/90">{owned}</span>
+          <span className="tnum text-caption font-medium text-[#4ade80]/90">{owned}</span>
         )}
       </span>
       <input

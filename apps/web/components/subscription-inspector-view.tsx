@@ -86,8 +86,8 @@ export function SubscriptionInspectorView({ id }: { id: number }) {
       <div className="flex h-full flex-col">
         <PageNav items={fallbackTrail} />
         <div className="flex flex-1 flex-col items-center justify-center gap-4">
-          <p className="text-[14px] text-[var(--text-muted)]">未能加载该订阅，可能已被删除。</p>
-          <Link href="/subscriptions" className="btn-glass px-4 py-2 text-[13px] font-medium">
+          <p className="text-body text-[var(--text-muted)]">未能加载该订阅，可能已被删除。</p>
+          <Link href="/subscriptions" className="btn-glass px-4 py-2 text-ui font-medium">
             <ArrowLeftIcon className="size-4" />
             返回订阅列表
           </Link>
@@ -100,7 +100,7 @@ export function SubscriptionInspectorView({ id }: { id: number }) {
     return (
       <div className="flex h-full flex-col">
         <PageNav items={fallbackTrail} />
-        <div className="flex flex-1 items-center justify-center gap-2.5 text-[13px] text-[var(--text-muted)]">
+        <div className="flex flex-1 items-center justify-center gap-2.5 text-ui text-[var(--text-muted)]">
           <span className="size-4 animate-spin rounded-full border-2 border-white/20 border-t-white/70" />
           正在加载订阅详情…
         </div>
@@ -169,7 +169,7 @@ export function SubscriptionInspectorView({ id }: { id: number }) {
           )}
 
           <div className="min-w-0 flex-1">
-            <p className="text-[11px] font-semibold tracking-[0.22em] text-[var(--accent-2)]">
+            <p className="text-caption font-semibold tracking-[0.22em] text-[var(--accent-2)]">
               {isMovie ? "电影订阅" : "剧集订阅"}
             </p>
             <h1 className="mt-1.5 flex flex-wrap items-baseline gap-2.5 text-[26px] font-bold leading-tight tracking-[-0.02em] text-white max-md:text-[20px]">
@@ -179,12 +179,12 @@ export function SubscriptionInspectorView({ id }: { id: number }) {
               >
                 {detail.media.title}
               </Link>
-              <span className="tnum shrink-0 text-[14px] font-normal text-white/50">
+              <span className="tnum shrink-0 text-body font-normal text-white/50">
                 {detail.media.year ?? ""}
               </span>
             </h1>
 
-            <p className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-[12.5px] text-white/70">
+            <p className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-sub text-white/70">
               <span className="flex items-center gap-1.5">
                 <span className="size-1.5 rounded-full" style={{ backgroundColor: meta.color }} />
                 {meta.label} · {subscriptionProgressNote(detail)}
@@ -213,7 +213,7 @@ export function SubscriptionInspectorView({ id }: { id: number }) {
               type="button"
               disabled={busy || detail.status === "completed"}
               onClick={togglePause}
-              className="btn-glass h-9 bg-white/10 px-4 text-[12.5px] font-medium backdrop-blur-md disabled:opacity-40"
+              className="btn-glass h-9 bg-white/10 px-4 text-sub font-medium backdrop-blur-md disabled:opacity-40"
             >
               {detail.status === "paused" ? "恢复追踪" : "暂停"}
             </button>
@@ -221,7 +221,7 @@ export function SubscriptionInspectorView({ id }: { id: number }) {
               type="button"
               disabled={busy}
               onClick={remove}
-              className="h-9 rounded-full border border-red-400/30 bg-red-500/10 px-4 text-[12.5px] font-medium text-red-200 transition hover:bg-red-500/20 disabled:opacity-40"
+              className="h-9 rounded-full border border-red-400/30 bg-red-500/10 px-4 text-sub font-medium text-red-200 transition hover:bg-red-500/20 disabled:opacity-40"
             >
               取消订阅
             </button>
@@ -243,7 +243,7 @@ export function SubscriptionInspectorView({ id }: { id: number }) {
           label="活动记录"
           count={activities.length}
         />
-        <span className="ml-2 text-[12px] text-[var(--text-faint)]">
+        <span className="ml-2 text-sub text-[var(--text-faint)]">
           {tab === "wanted" ? "每个追踪单元此刻到哪一步了" : "系统对该订阅的每个动作"}
         </span>
       </div>
@@ -262,7 +262,7 @@ export function SubscriptionInspectorView({ id }: { id: number }) {
 /** Hero 里的参数徽片：无边框纯填充胶囊（全站「无线框」原则）。 */
 function ParamChip({ children }: { children: React.ReactNode }) {
   return (
-    <span className="rounded-full bg-white/[0.09] px-2.5 py-1 text-[11.5px] text-white/75 backdrop-blur-sm">
+    <span className="rounded-full bg-white/[0.09] px-2.5 py-1 text-caption text-white/75 backdrop-blur-sm">
       {children}
     </span>
   );
@@ -289,7 +289,7 @@ function ProgressStrip({
           style={{ width: `${(inPipeline / denom) * 100}%` }}
         />
       </div>
-      <p className="tnum mt-2 text-[12px] text-white/55">
+      <p className="tnum mt-2 text-sub text-white/55">
         共 {total} 项 · 缺 {wanted}
         {inPipeline > 0 && ` · 下载中 ${inPipeline}`}
         {imported > 0 && ` · 已入库 ${imported}`}
@@ -315,14 +315,14 @@ function InspectorTab({
       type="button"
       aria-pressed={active}
       onClick={onClick}
-      className={`flex items-center gap-2 rounded-full px-4 py-1.5 text-[13px] font-medium transition-colors ${
+      className={`flex items-center gap-2 rounded-full px-4 py-1.5 text-ui font-medium transition-colors ${
         active
           ? "bg-white/[0.14] text-white"
           : "text-[var(--text-muted)] hover:bg-white/[0.07] hover:text-[var(--text)]"
       }`}
     >
       {label}
-      <span className="tnum text-[11.5px] opacity-70">{count}</span>
+      <span className="tnum text-caption opacity-70">{count}</span>
     </button>
   );
 }
@@ -354,7 +354,7 @@ function activityColor(type: SubscriptionActivity["type"]): string {
 function ActivityTimeline({ activities }: { activities: SubscriptionActivity[] }) {
   if (activities.length === 0) {
     return (
-      <p className="rounded-2xl border border-white/[0.07] bg-[rgba(14,16,22,0.45)] p-5 text-[12.5px] leading-6 text-[var(--text-muted)] backdrop-blur-xl">
+      <p className="rounded-2xl border border-white/[0.07] bg-[rgba(14,16,22,0.45)] p-5 text-sub leading-6 text-[var(--text-muted)] backdrop-blur-xl">
         暂无活动记录。系统开始搜索、匹配或投递后，每个动作都会记录在这里。
       </p>
     );
@@ -378,9 +378,9 @@ function ActivityTimeline({ activities }: { activities: SubscriptionActivity[] }
               <div
                 className={`flex min-w-0 flex-1 items-baseline gap-5 ${last ? "" : "pb-5"}`}
               >
-                <p className="min-w-0 flex-1 text-[13px] leading-6 text-white/85">{a.message}</p>
+                <p className="min-w-0 flex-1 text-ui leading-6 text-white/85">{a.message}</p>
                 <span
-                  className="tnum shrink-0 text-[11.5px] text-[var(--text-faint)]"
+                  className="tnum shrink-0 text-caption text-[var(--text-faint)]"
                   title={formatDateTime(a.created_at)}
                 >
                   {formatRelativeTime(a.created_at)}
@@ -398,7 +398,7 @@ function ActivityTimeline({ activities }: { activities: SubscriptionActivity[] }
 function WantedBreakdown({ wanted, isMovie }: { wanted: WantedItem[]; isMovie: boolean }) {
   if (wanted.length === 0) {
     return (
-      <p className="rounded-2xl border border-white/[0.07] bg-[rgba(14,16,22,0.45)] p-5 text-[12.5px] leading-6 text-[var(--text-muted)] backdrop-blur-xl">
+      <p className="rounded-2xl border border-white/[0.07] bg-[rgba(14,16,22,0.45)] p-5 text-sub leading-6 text-[var(--text-muted)] backdrop-blur-xl">
         当前没有追踪项。开启「持续追新」后，新集播出会自动加入。
       </p>
     );
@@ -421,7 +421,7 @@ function WantedBreakdown({ wanted, isMovie }: { wanted: WantedItem[]; isMovie: b
             className="overflow-hidden rounded-2xl border border-white/[0.07] bg-[rgba(14,16,22,0.45)] backdrop-blur-xl"
           >
             {!isMovie && (
-              <p className="border-b border-white/[0.06] px-5 py-2.5 text-[12.5px] font-semibold text-white/80">
+              <p className="border-b border-white/[0.06] px-5 py-2.5 text-sub font-semibold text-white/80">
                 {season === 0 ? "特别篇" : `第 ${season} 季`}
                 <span className="ml-2 font-normal text-[var(--text-faint)]">
                   {items.filter((w) => w.status !== "wanted").length}/{items.length} 已安排
@@ -447,20 +447,20 @@ function WantedRow({ wanted: w, isMovie }: { wanted: WantedItem; isMovie: boolea
   const { label, color, note } = wantedPresentation(w);
   return (
     <li className="flex items-center gap-4 px-5 py-2.5">
-      <span className="tnum w-14 shrink-0 text-[12.5px] font-medium text-white/90">
+      <span className="tnum w-14 shrink-0 text-sub font-medium text-white/90">
         {isMovie ? "正片" : `E${String(w.episode_number).padStart(2, "0")}`}
       </span>
       <span
-        className="shrink-0 rounded-full px-2 py-0.5 text-[10.5px] font-semibold"
+        className="shrink-0 rounded-full px-2 py-0.5 text-micro font-semibold"
         style={{ backgroundColor: `${color}22`, color }}
       >
         {label}
       </span>
-      <span className="tnum min-w-0 flex-1 truncate text-[12px] text-[var(--text-muted)]">
+      <span className="tnum min-w-0 flex-1 truncate text-sub text-[var(--text-muted)]">
         {note}
       </span>
       {w.search_attempts > 0 && (
-        <span className="tnum shrink-0 text-[11px] text-[var(--text-faint)]">
+        <span className="tnum shrink-0 text-caption text-[var(--text-faint)]">
           已搜索 {w.search_attempts} 次
         </span>
       )}

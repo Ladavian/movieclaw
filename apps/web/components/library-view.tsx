@@ -324,14 +324,14 @@ export function LibraryView() {
           <h2 className="text-on-image text-[26px] font-bold leading-tight tracking-[-0.02em] text-white max-md:text-[21px]">
             媒体库
           </h2>
-          <p className="text-on-image mt-1.5 text-[13px] text-[var(--text-muted)] max-md:mt-1 max-md:line-clamp-2 max-md:text-[12px]">
+          <p className="text-on-image mt-1.5 text-ui text-[var(--text-muted)] max-md:mt-1 max-md:line-clamp-2 max-md:text-sub">
             你的影视收藏在这里安家：订阅与下载的内容按「入库到哪个库」落盘，Plex / Emby 可直接识别
           </p>
         </div>
         <button
           type="button"
           onClick={() => setEditing("new")}
-          className="btn-accent flex shrink-0 items-center justify-center gap-1 rounded-full py-2 pl-3 pr-4 text-[13px] font-semibold max-md:self-start"
+          className="btn-accent flex shrink-0 items-center justify-center gap-1 rounded-full py-2 pl-3 pr-4 text-ui font-semibold max-md:self-start"
         >
           <PlusIcon className="size-4" />
           添加媒体库
@@ -339,7 +339,7 @@ export function LibraryView() {
       </div>
 
       {error && (
-        <div className="mx-6 mt-4 rounded-xl border border-[#ff6b6b]/30 bg-[#ff6b6b]/10 px-4 py-3 text-sm text-[#ff6b6b] max-md:mx-4">
+        <div className="mx-6 mt-4 rounded-xl border border-[#ff6b6b]/30 bg-[#ff6b6b]/10 px-4 py-3 text-body text-[#ff6b6b] max-md:mx-4">
           {error}
         </div>
       )}
@@ -349,14 +349,14 @@ export function LibraryView() {
       {routingWarnings.map((w) => (
         <div
           key={w}
-          className="mx-6 mt-4 rounded-xl border border-amber-400/25 bg-amber-500/10 px-4 py-3 text-[12.5px] leading-relaxed text-amber-200 max-md:mx-4"
+          className="mx-6 mt-4 rounded-xl border border-amber-400/25 bg-amber-500/10 px-4 py-3 text-sub leading-relaxed text-amber-200 max-md:mx-4"
         >
           {w}
         </div>
       ))}
 
       {libraries === null && !failed && (
-        <div className="mt-16 flex items-center justify-center gap-2.5 text-[13px] text-[var(--text-muted)]">
+        <div className="mt-16 flex items-center justify-center gap-2.5 text-ui text-[var(--text-muted)]">
           <span className="size-4 animate-spin rounded-full border-2 border-white/20 border-t-white/70" />
           正在加载媒体库…
         </div>
@@ -366,11 +366,11 @@ export function LibraryView() {
           提示条（stale-while-error），卡片照常展示上一份快照 */}
       {failed && libraries === null && (
         <div className="mt-16 flex flex-col items-center gap-3 text-center">
-          <p className="text-[13.5px] text-[var(--text-muted)]">媒体库加载失败</p>
+          <p className="text-ui text-[var(--text-muted)]">媒体库加载失败</p>
           <button
             type="button"
             onClick={reload}
-            className="btn-glass px-4 py-2 text-[13px] font-medium text-[var(--text)]"
+            className="btn-glass px-4 py-2 text-ui font-medium text-[var(--text)]"
           >
             重试
           </button>
@@ -378,15 +378,15 @@ export function LibraryView() {
       )}
 
       {failed && libraries !== null && (
-        <div className="mx-6 mt-4 rounded-xl border border-amber-400/25 bg-amber-500/10 px-4 py-3 text-[12.5px] text-amber-200 max-md:mx-4">
+        <div className="mx-6 mt-4 rounded-xl border border-amber-400/25 bg-amber-500/10 px-4 py-3 text-sub text-amber-200 max-md:mx-4">
           与后端通信失败，正在自动重试；下方显示的是最近一次成功加载的数据
         </div>
       )}
 
       {libraries !== null && libraries.length === 0 && (
         <div className="mt-20 flex flex-col items-center gap-4 px-6 text-center">
-          <p className="text-[15px] font-semibold text-[var(--text)]">还没有媒体库</p>
-          <p className="max-w-[440px] text-[13px] leading-relaxed text-[var(--text-muted)]">
+          <p className="text-body-lg font-semibold text-[var(--text)]">还没有媒体库</p>
+          <p className="max-w-[440px] text-ui leading-relaxed text-[var(--text-muted)]">
             媒体库定义「内容放在哪」：订阅和下载完成的影片会整理进对应库的根目录，
             Plex / Emby 指向同一目录即可识别。建议按类型分别创建，比如电影库、剧集库，
             根路径选到你的媒体盘（Docker 部署时是挂进容器的那个路径）。
@@ -394,7 +394,7 @@ export function LibraryView() {
           <button
             type="button"
             onClick={() => setEditing("new")}
-            className="btn-accent flex items-center gap-1 rounded-full py-2 pl-3 pr-4 text-[13px] font-semibold"
+            className="btn-accent flex items-center gap-1 rounded-full py-2 pl-3 pr-4 text-ui font-semibold"
           >
             <PlusIcon className="size-4" />
             创建第一个媒体库
@@ -551,13 +551,13 @@ function LibraryCard({
           {!busy && (importing > 0 || stats.unidentified_count > 0) && (
             <div className="absolute inset-x-2.5 bottom-2 flex flex-wrap items-center gap-1.5">
               {importing > 0 && (
-                <span className="flex items-center gap-1.5 rounded-full border border-[#7dd3fc]/35 bg-black/55 px-2 py-0.5 text-[10px] font-semibold text-[#7dd3fc] backdrop-blur-md">
+                <span className="flex items-center gap-1.5 rounded-full border border-[#7dd3fc]/35 bg-black/55 px-2 py-0.5 text-micro font-semibold text-[#7dd3fc] backdrop-blur-md">
                   <span className="size-1.5 animate-pulse rounded-full bg-[#7dd3fc]" />
                   {importing} 个新文件入库中
                 </span>
               )}
               {stats.unidentified_count > 0 && (
-                <span className="rounded-full border border-[#f5c451]/35 bg-black/55 px-2 py-0.5 text-[10px] font-semibold text-[#f5c451] backdrop-blur-md">
+                <span className="rounded-full border border-[#f5c451]/35 bg-black/55 px-2 py-0.5 text-micro font-semibold text-[#f5c451] backdrop-blur-md">
                   {stats.unidentified_count} 个待识别
                 </span>
               )}
@@ -578,7 +578,7 @@ function LibraryCard({
                   分阶段（盘点/入账/补图），阶段变了这里必须跟着变——否则
                   文件扫完后还要下几分钟图片，环停在 100% 配一句"扫描中"，
                   看起来就是卡死了 */}
-              <span className="text-[11px] font-semibold text-white/85">
+              <span className="text-caption font-semibold text-white/85">
                 {library.scanning
                   ? (SCAN_PHASE_LABELS[library.scan_progress?.phase ?? "ingesting"] ?? "扫描中")
                   : library.organizing
@@ -588,7 +588,7 @@ function LibraryCard({
               {/* 刷新是全量重刷、以分钟计，多给一行"到哪部了"（并发若干路
                   时取第一部即可，完整列表在单库页的面板里） */}
               {refreshingMeta && library.metadata_refresh?.active?.[0] && (
-                <span className="max-w-[86%] truncate text-[10.5px] text-white/60">
+                <span className="max-w-[86%] truncate text-micro text-white/60">
                   {library.metadata_refresh.active[0].title} ·{" "}
                   {library.metadata_refresh.active[0].phase}
                 </span>
@@ -600,16 +600,16 @@ function LibraryCard({
 
       {/* 库名：Emby 式放在封面下方居中，只与「默认」共处一行 */}
       <div className="mt-2.5 flex items-center justify-center gap-2 px-2">
-        <h3 className="truncate text-[15px] font-semibold text-white">{library.name}</h3>
+        <h3 className="truncate text-body-lg font-semibold text-white">{library.name}</h3>
         {library.is_default && (
-          <span className="shrink-0 rounded-full border border-white/[0.14] bg-white/[0.1] px-2 py-0.5 text-[10.5px] font-semibold text-white/80">
+          <span className="shrink-0 rounded-full border border-white/[0.14] bg-white/[0.1] px-2 py-0.5 text-micro font-semibold text-white/80">
             默认
           </span>
         )}
       </div>
       {collectSummary && (
         <p
-          className="mt-0.5 truncate px-2 text-center text-[11px] text-[var(--text-faint)]"
+          className="mt-0.5 truncate px-2 text-center text-caption text-[var(--text-faint)]"
           title={`收藏范围：${collectSummary}（订阅与监听导入按它自动选库）`}
         >
           收：{collectSummary}
@@ -667,7 +667,7 @@ function ScanProgressRing({ progress }: { progress: { processed: number; total: 
           className="transition-[stroke-dashoffset] duration-500 ease-out"
         />
       </svg>
-      <span className="absolute inset-0 flex items-center justify-center text-[13px] font-semibold text-white">
+      <span className="absolute inset-0 flex items-center justify-center text-ui font-semibold text-white">
         {pct === null ? "…" : `${pct}%`}
       </span>
     </div>
@@ -815,7 +815,7 @@ function LibraryCardMenu({
                 setMenuPos(null);
                 onEdit();
               }}
-              className="glass-row px-2.5 py-2 text-[13px] font-medium disabled:opacity-40"
+              className="glass-row px-2.5 py-2 text-ui font-medium disabled:opacity-40"
             >
               编辑库
             </button>
@@ -835,7 +835,7 @@ function LibraryCardMenu({
                 }
                 onScan();
               }}
-              className="glass-row px-2.5 py-2 text-[13px] font-medium disabled:opacity-40"
+              className="glass-row px-2.5 py-2 text-ui font-medium disabled:opacity-40"
             >
               {!library.scanning
                 ? "扫描库"
@@ -850,7 +850,7 @@ function LibraryCardMenu({
                 setMenuPos(null);
                 onOrganize();
               }}
-              className="glass-row px-2.5 py-2 text-[13px] font-medium disabled:opacity-40"
+              className="glass-row px-2.5 py-2 text-ui font-medium disabled:opacity-40"
             >
               {library.organizing ? "正在整理…" : "整理文件名"}
             </button>
@@ -858,7 +858,7 @@ function LibraryCardMenu({
               type="button"
               disabled={library.is_default}
               onClick={() => guard(() => setDefaultLibrary(library.id))}
-              className="glass-row px-2.5 py-2 text-[13px] font-medium disabled:opacity-40"
+              className="glass-row px-2.5 py-2 text-ui font-medium disabled:opacity-40"
             >
               设为默认库
             </button>
@@ -875,7 +875,7 @@ function LibraryCardMenu({
                   return;
                 guard(() => deleteLibrary(library.id));
               }}
-              className="glass-row px-2.5 py-2 text-[13px] font-medium !text-[var(--danger)] hover:!bg-[rgba(255,107,107,0.12)] disabled:opacity-40"
+              className="glass-row px-2.5 py-2 text-ui font-medium !text-[var(--danger)] hover:!bg-[rgba(255,107,107,0.12)] disabled:opacity-40"
             >
               删除库
             </button>
@@ -961,9 +961,9 @@ export function LibraryFormDialog({
   };
 
   const inputClass =
-    "w-full rounded-xl border border-white/[0.08] bg-white/[0.04] px-3 py-2 text-[13px] " +
+    "w-full rounded-xl border border-white/[0.08] bg-white/[0.04] px-3 py-2 text-ui " +
     "text-[var(--text)] outline-none focus:border-[var(--accent)]/60";
-  const labelClass = "mb-1.5 block text-xs font-medium text-[var(--text-muted)]";
+  const labelClass = "mb-1.5 block text-sub font-medium text-[var(--text-muted)]";
 
   // 收藏范围的当前声明摘要（底栏常显）：切到基本信息页签也能看到已设了什么。
   // 区域折叠复用卡片摘要的 regionLabels（整组折叠 + 零散国家码兜底），
@@ -998,10 +998,10 @@ export function LibraryFormDialog({
       >
         {/* 头部：标题 + 分段页签 */}
         <div className="shrink-0 border-b border-white/[0.06] px-6 pt-5 max-md:px-5">
-          <h2 className="text-[17px] font-bold text-white">
+          <h2 className="text-title font-bold text-white">
             {library ? "编辑媒体库" : "添加媒体库"}
             {library && (
-              <span className="ml-2 text-[13px] font-normal text-[var(--text-muted)]">
+              <span className="ml-2 text-ui font-normal text-[var(--text-muted)]">
                 {library.name}
               </span>
             )}
@@ -1019,7 +1019,7 @@ export function LibraryFormDialog({
                 role="tab"
                 aria-selected={tab === key}
                 onClick={() => setTab(key)}
-                className={`relative pb-2.5 text-[13px] font-medium transition-colors ${
+                className={`relative pb-2.5 text-ui font-medium transition-colors ${
                   tab === key ? "text-white" : "text-[var(--text-muted)] hover:text-white"
                 }`}
               >
@@ -1053,7 +1053,7 @@ export function LibraryFormDialog({
                   disabled={library !== null}
                   onClick={() => setKind(k)}
                   data-active={(library?.kind ?? kind) === k}
-                  className="glass-row nav-item !w-auto px-3 py-1.5 text-xs font-medium disabled:opacity-60"
+                  className="glass-row nav-item !w-auto px-3 py-1.5 text-sub font-medium disabled:opacity-60"
                 >
                   {LIBRARY_KIND_META[k].label}
                 </button>
@@ -1091,7 +1091,7 @@ export function LibraryFormDialog({
                   <Tooltip
                     content={
                       <>
-                        <p className="mb-1 break-all font-mono text-[11px] text-[var(--text-muted)]">{root}</p>
+                        <p className="mb-1 break-all font-mono text-caption text-[var(--text-muted)]">{root}</p>
                         点击更改：从当前路径开始重新选择目录。
                       </>
                     }
@@ -1100,7 +1100,7 @@ export function LibraryFormDialog({
                       type="button"
                       dir="rtl"
                       onClick={() => setPickerTarget(i)}
-                      className="min-w-0 flex-1 truncate rounded text-left font-mono text-[13px] text-[var(--text)] transition-colors hover:text-[var(--accent)]"
+                      className="min-w-0 flex-1 truncate rounded text-left font-mono text-ui text-[var(--text)] transition-colors hover:text-[var(--accent)]"
                     >
                       {"‎" + root + "‎"}
                     </button>
@@ -1115,7 +1115,7 @@ export function LibraryFormDialog({
                         </>
                       }
                     >
-                      <span className="shrink-0 cursor-default rounded-full bg-[var(--accent)]/15 px-2 py-0.5 text-[10px] font-semibold text-[var(--accent)]">
+                      <span className="shrink-0 cursor-default rounded-full bg-[var(--accent)]/15 px-2 py-0.5 text-micro font-semibold text-[var(--accent)]">
                         主根
                       </span>
                     </Tooltip>
@@ -1124,7 +1124,7 @@ export function LibraryFormDialog({
                       <button
                         type="button"
                         onClick={() => setRoots([root, ...roots.filter((r) => r !== root)])}
-                        className="touch-reveal shrink-0 rounded-full px-2 py-0.5 text-[10px] font-medium text-[var(--text-faint)] opacity-0 transition-opacity hover:bg-white/10 hover:text-white group-hover:opacity-100"
+                        className="touch-reveal shrink-0 rounded-full px-2 py-0.5 text-micro font-medium text-[var(--text-faint)] opacity-0 transition-opacity hover:bg-white/10 hover:text-white group-hover:opacity-100"
                       >
                         设为主根
                       </button>
@@ -1143,13 +1143,13 @@ export function LibraryFormDialog({
               <button
                 type="button"
                 onClick={() => setPickerTarget("add")}
-                className="flex w-full items-center justify-center gap-2 rounded-xl border border-dashed border-white/15 px-3 py-2.5 text-[13px] font-medium text-[var(--text-muted)] transition-colors hover:border-[var(--accent)]/50 hover:text-white"
+                className="flex w-full items-center justify-center gap-2 rounded-xl border border-dashed border-white/15 px-3 py-2.5 text-ui font-medium text-[var(--text-muted)] transition-colors hover:border-[var(--accent)]/50 hover:text-white"
               >
                 <PlusIcon className="size-4" />
                 {roots.length === 0 ? "浏览服务器目录并添加" : "添加目录"}
               </button>
             </div>
-            <p className="mt-1.5 text-[11px] leading-relaxed text-[var(--text-faint)]">
+            <p className="mt-1.5 text-caption leading-relaxed text-[var(--text-faint)]">
               新入库的内容落在<strong className="font-medium text-[var(--text-muted)]">主根</strong>下：主根/标题
               (年份)。其余为扩展根：扫描与监控照常覆盖，但不写入新内容。
             </p>
@@ -1162,12 +1162,12 @@ export function LibraryFormDialog({
               两个维度间是"且" */}
           {tab === "scope" && (
             <>
-          <p className="text-[12px] leading-relaxed text-[var(--text-muted)]">
+          <p className="text-sub leading-relaxed text-[var(--text-muted)]">
             可选：声明「本库收什么」后，订阅与监听导入按作品特征自动选进本库。
             全部留空 = 不声明，该类型的默认库承接未命中的作品；订阅时永远可以手动改库。
           </p>
           {routingOptions === null ? (
-            <p className="rounded-xl border border-white/[0.08] bg-white/[0.03] px-3 py-2.5 text-[12px] text-[var(--text-faint)]">
+            <p className="rounded-xl border border-white/[0.08] bg-white/[0.03] px-3 py-2.5 text-sub text-[var(--text-faint)]">
               正在加载可选项…
             </p>
           ) : (
@@ -1194,7 +1194,7 @@ export function LibraryFormDialog({
                             : [...prev, code],
                         )
                       }
-                      className="glass-row nav-item !w-auto px-3 py-1.5 text-xs font-medium"
+                      className="glass-row nav-item !w-auto px-3 py-1.5 text-sub font-medium"
                     >
                       {name}
                     </button>
@@ -1202,7 +1202,7 @@ export function LibraryFormDialog({
                 </div>
                 {/* 预设组保留为快捷键：一键选中/取消整组，避免「欧美」要点十下 */}
                 <div className="mt-2 flex flex-wrap items-center gap-1.5">
-                  <span className="text-[11px] text-[var(--text-faint)]">快捷组合</span>
+                  <span className="text-caption text-[var(--text-faint)]">快捷组合</span>
                   {routingOptions.region_presets.map((preset) => {
                     const active = preset.countries.every((c) => matchRegions.includes(c));
                     return (
@@ -1220,7 +1220,7 @@ export function LibraryFormDialog({
                               : [...new Set([...prev, ...preset.countries])],
                           )
                         }
-                        className="glass-row nav-item !w-auto px-2.5 py-1 text-[11px] font-medium"
+                        className="glass-row nav-item !w-auto px-2.5 py-1 text-caption font-medium"
                       >
                         {preset.label}
                       </button>
@@ -1243,7 +1243,7 @@ export function LibraryFormDialog({
                             : [...prev, g.id],
                         )
                       }
-                      className="glass-row nav-item !w-auto px-3 py-1.5 text-xs font-medium"
+                      className="glass-row nav-item !w-auto px-3 py-1.5 text-sub font-medium"
                     >
                       {g.label}
                     </button>
@@ -1251,7 +1251,7 @@ export function LibraryFormDialog({
                 </div>
               </div>
               {matchRegions.length > 0 && matchGenres.length > 0 && (
-                <p className="text-[11px] leading-relaxed text-[var(--text-faint)]">
+                <p className="text-caption leading-relaxed text-[var(--text-faint)]">
                   区域与类型须<strong className="font-medium text-[var(--text-muted)]">同时满足</strong>
                   （如「日韩 + 动画」= 只收日韩的动画）。
                 </p>
@@ -1265,23 +1265,23 @@ export function LibraryFormDialog({
         {/* 底栏：错误 + 范围摘要 + 操作，任一页签下常显 */}
         <div className="shrink-0 border-t border-white/[0.06] px-6 py-4 max-md:px-5">
           {error && (
-            <p className="mb-3 rounded-lg border border-red-400/25 bg-red-500/10 px-3.5 py-2.5 text-[13px] leading-6 text-red-200">
+            <p className="mb-3 rounded-lg border border-red-400/25 bg-red-500/10 px-3.5 py-2.5 text-ui leading-6 text-red-200">
               {error}
             </p>
           )}
           <div className="flex items-center justify-between gap-3">
-            <p className="min-w-0 truncate text-[11px] text-[var(--text-faint)]">
+            <p className="min-w-0 truncate text-caption text-[var(--text-faint)]">
               {missingFields.length > 0 ? `还需填写：${missingFields.join("、")}` : scopeSummary}
             </p>
             <div className="flex shrink-0 items-center gap-3">
-              <button type="button" onClick={onClose} className="btn-glass h-9 px-4 text-[13px] font-medium">
+              <button type="button" onClick={onClose} className="btn-glass h-9 px-4 text-ui font-medium">
                 取消
               </button>
               <button
                 type="button"
                 onClick={submit}
                 disabled={!canSubmit}
-                className="btn-accent h-9 rounded-full px-5 text-[13px] font-semibold disabled:opacity-40"
+                className="btn-accent h-9 rounded-full px-5 text-ui font-semibold disabled:opacity-40"
               >
                 {busy ? "保存中…" : "保存"}
               </button>

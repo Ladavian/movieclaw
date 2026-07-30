@@ -123,13 +123,13 @@ export function DownloaderConfigSection() {
   return (
     <div className="space-y-5">
       {error && (
-        <div className="rounded-xl border border-[#ff6b6b]/30 bg-[#ff6b6b]/10 px-4 py-3 text-sm text-[#ff6b6b]">
+        <div className="rounded-xl border border-[#ff6b6b]/30 bg-[#ff6b6b]/10 px-4 py-3 text-body text-[#ff6b6b]">
           {error}
         </div>
       )}
 
       <div className="flex items-center justify-between gap-4">
-        <p className="text-xs text-[var(--text-muted)]">
+        <p className="text-sub text-[var(--text-muted)]">
           {loading
             ? "加载中…"
             : downloaders.length === 0
@@ -141,7 +141,7 @@ export function DownloaderConfigSection() {
             type="button"
             onClick={() => void load()}
             disabled={loading}
-            className="btn-glass px-3.5 py-1.5 text-xs font-medium"
+            className="btn-glass px-3.5 py-1.5 text-sub font-medium"
           >
             刷新
           </button>
@@ -149,7 +149,7 @@ export function DownloaderConfigSection() {
             type="button"
             onClick={() => setAdding((v) => !v)}
             disabled={loading}
-            className="btn-accent flex items-center gap-1 rounded-full py-1.5 pl-2.5 pr-3.5 text-xs font-semibold disabled:opacity-60"
+            className="btn-accent flex items-center gap-1 rounded-full py-1.5 pl-2.5 pr-3.5 text-sub font-semibold disabled:opacity-60"
           >
             <PlusIcon className="size-4" />
             添加下载器
@@ -185,8 +185,8 @@ export function DownloaderConfigSection() {
               <DownloadIcon className="size-6" />
             </span>
             <div>
-              <p className="text-sm font-medium text-[var(--text)]">还没有接入任何下载器</p>
-              <p className="mt-1 text-xs text-[var(--text-muted)]">
+              <p className="text-body font-medium text-[var(--text)]">还没有接入任何下载器</p>
+              <p className="mt-1 text-sub text-[var(--text-muted)]">
                 点击右上角「添加下载器」，支持 qBittorrent 和 Transmission。
               </p>
             </div>
@@ -276,21 +276,21 @@ function DownloaderCard({
         </span>
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2">
-            <p className="truncate text-sm font-semibold text-[var(--text)]">{downloader.name}</p>
+            <p className="truncate text-body font-semibold text-[var(--text)]">{downloader.name}</p>
             {downloader.is_default && (
-              <span className="shrink-0 rounded-full border border-white/[0.12] bg-[var(--accent-soft)] px-2 py-0.5 text-[11px] font-semibold text-[var(--accent)]">
+              <span className="shrink-0 rounded-full border border-white/[0.12] bg-[var(--accent-soft)] px-2 py-0.5 text-caption font-semibold text-[var(--accent)]">
                 默认
               </span>
             )}
             <span
-              className="flex shrink-0 items-center gap-1.5 rounded-full px-2 py-0.5 text-[11px] font-medium"
+              className="flex shrink-0 items-center gap-1.5 rounded-full px-2 py-0.5 text-caption font-medium"
               style={{ background: `${meta.color}1f`, color: meta.color }}
             >
               <span className="size-1.5 rounded-full" style={{ background: meta.color }} />
               {meta.label}
             </span>
           </div>
-          <p className="mt-0.5 truncate text-[11px] text-[var(--text-faint)]" title={downloader.url}>
+          <p className="mt-0.5 truncate text-caption text-[var(--text-faint)]" title={downloader.url}>
             {subtitle}
           </p>
         </div>
@@ -372,8 +372,8 @@ function DownloaderCard({
 function InfoStat({ label, value }: { label: string; value: string }) {
   return (
     <div className="min-w-0">
-      <p className="text-[10px] text-[var(--text-faint)]">{label}</p>
-      <p className="mt-0.5 truncate text-[13px] font-semibold text-[var(--text)]">{value}</p>
+      <p className="text-micro text-[var(--text-faint)]">{label}</p>
+      <p className="mt-0.5 truncate text-ui font-semibold text-[var(--text)]">{value}</p>
     </div>
   );
 }
@@ -403,7 +403,7 @@ function DownloaderActionsMenu({
   onDelete,
 }: DownloaderActionsMenuProps) {
   const itemClass =
-    "glass-row nav-item cursor-pointer px-3 py-2 text-xs font-medium outline-none " +
+    "glass-row nav-item cursor-pointer px-3 py-2 text-sub font-medium outline-none " +
     "data-[highlighted]:!bg-[var(--glass-fill-hover)] data-[highlighted]:!text-[var(--text)] " +
     "data-[disabled]:pointer-events-none data-[disabled]:opacity-40";
 
@@ -549,9 +549,9 @@ function DownloaderForm({
   }
 
   const inputClass =
-    "w-full rounded-xl border border-white/[0.08] bg-white/[0.04] px-3 py-2 text-[13px] " +
+    "w-full rounded-xl border border-white/[0.08] bg-white/[0.04] px-3 py-2 text-ui " +
     "text-[var(--text)] outline-none focus:border-[var(--accent)]/60";
-  const labelClass = "mb-1.5 block text-xs font-medium text-[var(--text-muted)]";
+  const labelClass = "mb-1.5 block text-sub font-medium text-[var(--text-muted)]";
 
   return (
     <div className="space-y-4">
@@ -565,7 +565,7 @@ function DownloaderForm({
               type="button"
               onClick={() => setClientType(t)}
               data-active={clientType === t}
-              className="glass-row nav-item !w-auto px-3 py-1.5 text-xs font-medium"
+              className="glass-row nav-item !w-auto px-3 py-1.5 text-sub font-medium"
             >
               {TYPE_LABEL[t]}
             </button>
@@ -634,11 +634,11 @@ function DownloaderForm({
           >
             <FolderIcon className="size-4 shrink-0 text-[var(--accent)]/80" />
             {savePath ? (
-              <span dir="rtl" className="min-w-0 flex-1 truncate font-mono text-[13px] text-[var(--text)]">
+              <span dir="rtl" className="min-w-0 flex-1 truncate font-mono text-ui text-[var(--text)]">
                 {"‎" + savePath + "‎"}
               </span>
             ) : (
-              <span className="text-[13px] text-[var(--text-faint)]">浏览服务器目录并选择…</span>
+              <span className="text-ui text-[var(--text-faint)]">浏览服务器目录并选择…</span>
             )}
           </button>
           {savePath && (
@@ -652,7 +652,7 @@ function DownloaderForm({
             </button>
           )}
         </div>
-        <p className="mt-1.5 text-[11px] leading-relaxed text-[var(--text-faint)]">
+        <p className="mt-1.5 text-caption leading-relaxed text-[var(--text-faint)]">
           提交下载时文件的保存位置，从 movieclaw 能看到的目录里选择；下载器看到的路径不同时，
           配合下方「路径映射」翻译。留空则使用下载器自己设置的默认下载目录
           ——下载器与 movieclaw 没有共享目录的部署请留空。
@@ -664,7 +664,7 @@ function DownloaderForm({
         <button
           type="button"
           onClick={() => setMappingsOpen((v) => !v)}
-          className="flex items-center gap-1.5 text-xs font-medium text-[var(--text-muted)] transition-colors hover:text-[var(--text)]"
+          className="flex items-center gap-1.5 text-sub font-medium text-[var(--text-muted)] transition-colors hover:text-[var(--text)]"
         >
           <span
             className="inline-block transition-transform"
@@ -679,7 +679,7 @@ function DownloaderForm({
         </button>
         {mappingsOpen && (
           <div className="mt-2.5 space-y-2.5">
-            <p className="text-[11px] leading-relaxed text-[var(--text-faint)]">
+            <p className="text-caption leading-relaxed text-[var(--text-faint)]">
               movieclaw 与下载器不在同一容器/主机、同一块盘两边路径不同时才需要：
               提交下载前会把保存目录按前缀翻译成下载器视角。例如 movieclaw 看到的下载区是
               <code className="mx-0.5 font-mono">/data/downloads</code>、下载器容器里是
@@ -689,7 +689,7 @@ function DownloaderForm({
               添加一条两边相同的映射即可。
             </p>
             {suggestMapping && (
-              <p className="rounded-lg bg-[var(--accent-soft)] px-3 py-2 text-[11.5px] leading-relaxed text-[var(--accent)]">
+              <p className="rounded-lg bg-[var(--accent-soft)] px-3 py-2 text-caption leading-relaxed text-[var(--accent)]">
                 已按体检建议预填映射的本机侧 {suggestMapping}——右侧填下载器视角的对应路径；
                 下载器可直达同名路径时，点中间的 → 把左侧复制过去即可。
               </p>
@@ -704,11 +704,11 @@ function DownloaderForm({
                 >
                   <FolderIcon className="size-4 shrink-0 text-[var(--accent)]/80" />
                   {mapping.local ? (
-                    <span dir="rtl" className="min-w-0 flex-1 truncate font-mono text-[13px] text-[var(--text)]">
+                    <span dir="rtl" className="min-w-0 flex-1 truncate font-mono text-ui text-[var(--text)]">
                       {"‎" + mapping.local + "‎"}
                     </span>
                   ) : (
-                    <span className="truncate text-[13px] text-[var(--text-faint)]">movieclaw 上的路径…</span>
+                    <span className="truncate text-ui text-[var(--text-faint)]">movieclaw 上的路径…</span>
                   )}
                 </button>
                 {/* 箭头即按钮：两边路径一致时点一下把左侧复制到右侧，省去手动输入 */}
@@ -743,17 +743,17 @@ function DownloaderForm({
             <button
               type="button"
               onClick={() => setMappings((prev) => [...prev, { local: "", remote: "" }])}
-              className="btn-glass flex items-center gap-1 px-3 py-1.5 text-xs font-medium"
+              className="btn-glass flex items-center gap-1 px-3 py-1.5 text-sub font-medium"
             >
               <PlusIcon className="size-3.5" />
               添加映射
             </button>
             {!mappingsComplete ? (
-              <p className="text-[11px] text-[#ffb46b]">
+              <p className="text-caption text-[#ffb46b]">
                 每条映射两边都要填：左边浏览选择，右边填下载器上以 / 开头的绝对路径；不需要的行请删除。
               </p>
             ) : !mappingsUnique ? (
-              <p className="text-[11px] text-[#ffb46b]">
+              <p className="text-caption text-[#ffb46b]">
                 映射的路径不能重复：同一 movieclaw 路径或同一下载器路径只能出现一次，请修改或删除重复的行。
               </p>
             ) : null}
@@ -762,14 +762,14 @@ function DownloaderForm({
       </div>
 
       <div className="flex items-center justify-end gap-3 pt-1">
-        <button type="button" onClick={onCancel} className="btn-glass px-3.5 py-2 text-[13px] font-medium">
+        <button type="button" onClick={onCancel} className="btn-glass px-3.5 py-2 text-ui font-medium">
           取消
         </button>
         <button
           type="button"
           onClick={submit}
           disabled={busy || !canSubmit}
-          className="btn-accent rounded-full px-4.5 py-2 text-[13px] font-semibold disabled:opacity-40"
+          className="btn-accent rounded-full px-4.5 py-2 text-ui font-semibold disabled:opacity-40"
         >
           {busy ? "保存中…" : "保存"}
         </button>

@@ -139,15 +139,15 @@ export function NetworkConfigSection() {
   if (failed) {
     return (
       <div className="flex items-center gap-3">
-        <p className="text-[13px] text-[var(--text-muted)]">网络配置加载失败</p>
-        <button type="button" onClick={reload} className="btn-glass px-3 py-1.5 text-[12.5px] font-medium">
+        <p className="text-ui text-[var(--text-muted)]">网络配置加载失败</p>
+        <button type="button" onClick={reload} className="btn-glass px-3 py-1.5 text-sub font-medium">
           重试
         </button>
       </div>
     );
   }
   if (!view || !form) {
-    return <p className="text-[13px] text-[var(--text-muted)]">正在加载网络配置…</p>;
+    return <p className="text-ui text-[var(--text-muted)]">正在加载网络配置…</p>;
   }
 
   const proxyActive =
@@ -162,7 +162,7 @@ export function NetworkConfigSection() {
         {/* 保存状态挂在首个分组标题行右侧：不单占一行，避免页面顶部空隙 */}
         <div className="mb-2.5 flex h-5 items-center justify-between px-1">
           <h3 className="group-label">代理</h3>
-          <span className="text-[12px]">
+          <span className="text-sub">
             {saveState === "saving" && <span className="text-[var(--text-faint)]">保存中…</span>}
             {saveState === "saved" && (
               <span className="flex items-center gap-1 text-emerald-300/90">
@@ -201,7 +201,7 @@ export function NetworkConfigSection() {
                   key={value}
                   type="button"
                   onClick={() => commit({ ...form, proxy_mode: value as ProxyMode })}
-                  className={`rounded-full px-3.5 py-1.5 text-xs font-semibold transition ${
+                  className={`rounded-full px-3.5 py-1.5 text-sub font-semibold transition ${
                     form.proxy_mode === value
                       ? "bg-white/15 text-white shadow-sm"
                       : "text-[var(--text-muted)] hover:text-white"
@@ -215,11 +215,11 @@ export function NetworkConfigSection() {
 
           {form.proxy_mode === "env" && (
             <div className="flex items-center justify-between gap-4 px-5 py-3.5">
-              <span className="text-[12.5px] text-[var(--text-muted)]">环境变量探测</span>
+              <span className="text-sub text-[var(--text-muted)]">环境变量探测</span>
               {view.env_proxy_detected ? (
-                <span className="font-mono text-[12.5px] text-[var(--text)]">{view.env_proxy_detected}</span>
+                <span className="font-mono text-sub text-[var(--text)]">{view.env_proxy_detected}</span>
               ) : (
-                <span className="flex items-center gap-1.5 text-[12.5px] text-amber-300/90">
+                <span className="flex items-center gap-1.5 text-sub text-amber-300/90">
                   未发现代理地址
                   <HelpDot
                     content="未检测到 HTTPS_PROXY / HTTP_PROXY / ALL_PROXY。Docker 部署可通过 -e HTTPS_PROXY=… 传入；或改用「手动」直接填写。"
@@ -250,11 +250,11 @@ export function NetworkConfigSection() {
                   onBlur={(e) => commit({ ...form, proxy_url: e.target.value.trim() })}
                   onKeyDown={(e) => e.key === "Enter" && (e.target as HTMLInputElement).blur()}
                   placeholder="socks5://192.168.1.2:7891"
-                  className="w-[300px] max-w-[55%] rounded-xl border border-white/[0.08] bg-white/[0.04] px-3 py-2 font-mono text-[12.5px] text-[var(--text)] outline-none transition-colors placeholder:text-[var(--text-faint)] focus:border-[var(--accent)]/50 max-md:w-full max-md:max-w-none"
+                  className="w-[300px] max-w-[55%] rounded-xl border border-white/[0.08] bg-white/[0.04] px-3 py-2 font-mono text-sub text-[var(--text)] outline-none transition-colors placeholder:text-[var(--text-faint)] focus:border-[var(--accent)]/50 max-md:w-full max-md:max-w-none"
                 />
               </div>
               {(proxyUrlError || !form.proxy_url.trim()) && (
-                <p className={`mt-1.5 text-right text-[11px] ${proxyUrlError ? "text-red-300" : "text-[var(--text-faint)]"}`}>
+                <p className={`mt-1.5 text-right text-caption ${proxyUrlError ? "text-red-300" : "text-[var(--text-faint)]"}`}>
                   {proxyUrlError ?? "填写地址后自动保存生效"}
                 </p>
               )}
@@ -280,7 +280,7 @@ export function NetworkConfigSection() {
             }
           />
           {!proxyActive && (
-            <span className="ml-auto text-[11px] text-[var(--text-faint)]">
+            <span className="ml-auto text-caption text-[var(--text-faint)]">
               当前无可用代理，开关已禁用（测试仍可用，测的是直连/镜像的连通性）
             </span>
           )}
@@ -354,8 +354,8 @@ export function NetworkConfigSection() {
               <ChevronRightIcon
                 className={`size-4 shrink-0 text-[var(--text-faint)] transition-transform ${advancedOpen ? "rotate-90" : ""}`}
               />
-              <span className="text-sm font-medium text-[var(--text)]">TMDB 镜像地址</span>
-              <span className="truncate text-[11.5px] text-[var(--text-faint)]">不走代理的替代方案</span>
+              <span className="text-body font-medium text-[var(--text)]">TMDB 镜像地址</span>
+              <span className="truncate text-caption text-[var(--text-faint)]">不走代理的替代方案</span>
             </button>
             <HelpDot
               content={
@@ -408,11 +408,11 @@ export function NetworkConfigSection() {
                       }}
                       onKeyDown={(e) => e.key === "Enter" && (e.target as HTMLInputElement).blur()}
                       placeholder={view.mirror_defaults[field] ?? ""}
-                      className="w-[340px] max-w-[60%] rounded-xl border border-white/[0.08] bg-white/[0.04] px-3 py-2 font-mono text-[12.5px] text-[var(--text)] outline-none transition-colors placeholder:text-[var(--text-faint)] focus:border-[var(--accent)]/50 max-md:w-full max-md:max-w-none"
+                      className="w-[340px] max-w-[60%] rounded-xl border border-white/[0.08] bg-white/[0.04] px-3 py-2 font-mono text-sub text-[var(--text)] outline-none transition-colors placeholder:text-[var(--text-faint)] focus:border-[var(--accent)]/50 max-md:w-full max-md:max-w-none"
                     />
                   </div>
                   {mirrorErrors[field] && (
-                    <p className="mt-1.5 text-right text-[11px] text-red-300">{mirrorErrors[field]}</p>
+                    <p className="mt-1.5 text-right text-caption text-red-300">{mirrorErrors[field]}</p>
                   )}
                 </div>
               ))}
@@ -428,7 +428,7 @@ export function NetworkConfigSection() {
 function LabelWithHelp({ label, help }: { label: string; help: React.ReactNode }) {
   return (
     <span className="flex shrink-0 items-center gap-1.5">
-      <span className="text-sm font-medium text-[var(--text)]">{label}</span>
+      <span className="text-body font-medium text-[var(--text)]">{label}</span>
       <HelpDot content={help} />
     </span>
   );
@@ -476,15 +476,15 @@ function ServiceRow({
   return (
     <div className="flex items-center gap-3 px-5 py-3.5">
       <span className="flex min-w-0 items-center gap-1.5">
-        <span className="truncate text-sm font-medium text-[var(--text)]">{label}</span>
+        <span className="truncate text-body font-medium text-[var(--text)]">{label}</span>
         <HelpDot content={description} />
       </span>
       <span className="ml-auto flex items-center gap-3">
-        {pending && <span className="text-[12px] text-[var(--text-faint)]">测试中…</span>}
+        {pending && <span className="text-sub text-[var(--text-faint)]">测试中…</span>}
         {result && (
           <Tooltip content={result.message} placement="top">
             <span
-              className={`flex items-center gap-1.5 text-[12px] ${
+              className={`flex items-center gap-1.5 text-sub ${
                 result.ok ? "text-emerald-300/90" : "text-red-300/90"
               }`}
             >
@@ -499,7 +499,7 @@ function ServiceRow({
           type="button"
           onClick={onTest}
           disabled={pending}
-          className="btn-glass px-3 py-1.5 text-[12px] font-medium disabled:opacity-40"
+          className="btn-glass px-3 py-1.5 text-sub font-medium disabled:opacity-40"
         >
           测试
         </button>

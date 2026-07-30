@@ -226,13 +226,13 @@ function PosterCardContent({
               徽章不用 backdrop-blur：海报墙每张卡 2~3 个模糊合成层会显著放大
               滚动时的 GPU 压力（几百张卡叠加），加实底色观感几乎无差 */}
           {badges[0] && (
-            <span className="absolute left-2 top-2 rounded-md bg-black/70 px-1.5 py-0.5 text-[10px] font-bold tracking-wide text-[var(--accent)]">
+            <span className="absolute left-2 top-2 rounded-md bg-black/70 px-1.5 py-0.5 text-micro font-bold tracking-wide text-[var(--accent)]">
               {badges[0]}
             </span>
           )}
           {/* 右上：评分徽章（暂无评分时不渲染，避免展示 0.0） */}
           {item.rating > 0 && (
-            <span className="tnum absolute right-2 top-2 flex items-center gap-1 rounded-md bg-black/70 px-1.5 py-0.5 text-[11px] font-semibold text-white">
+            <span className="tnum absolute right-2 top-2 flex items-center gap-1 rounded-md bg-black/70 px-1.5 py-0.5 text-caption font-semibold text-white">
               <StarIcon className="size-3 text-[#f5c451]" />
               {item.rating.toFixed(1)}
             </span>
@@ -243,12 +243,12 @@ function PosterCardContent({
               与桌面 hover 是同一层——手机上不再另设常驻的角落圆键。 */}
           <div className="absolute inset-x-0 bottom-0 translate-y-3 bg-gradient-to-t from-black/90 via-black/60 to-transparent px-3 pb-3 pt-10 opacity-0 transition-all duration-300 ease-out group-hover/card:translate-y-0 group-hover/card:opacity-100 group-data-[revealed=true]/card:translate-y-0 group-data-[revealed=true]/card:opacity-100">
             {genres.length > 0 && (
-              <p className="text-[11px] font-medium text-[var(--accent-2)]">
+              <p className="text-caption font-medium text-[var(--accent-2)]">
                 {genres.join(" · ")}
               </p>
             )}
             {overview && (
-              <p className="mt-1 line-clamp-3 text-[11px] leading-4 text-white/75">
+              <p className="mt-1 line-clamp-3 text-caption leading-4 text-white/75">
                 {overview}
               </p>
             )}
@@ -263,12 +263,12 @@ function PosterCardContent({
 
       {/* 文字区：常显标题 + 元信息（压在背景大图上，需 text-on-image 投影保证可读） */}
       <div className={`mt-2 ${rank ? "pl-11 max-md:pl-9" : ""}`}>
-        <p className="text-on-image truncate text-[13px] font-semibold text-[var(--text)]">
+        <p className="text-on-image truncate text-ui font-semibold text-[var(--text)]">
           {item.title}
         </p>
         {/* year 用真值判断：媒体库条目缺失年份时以 0 占位，不应显示出来 */}
         {(!!item.year || item.extent) && (
-          <p className="text-on-image tnum mt-0.5 truncate text-[11px] text-[var(--text-muted)]">
+          <p className="text-on-image tnum mt-0.5 truncate text-caption text-[var(--text-muted)]">
             {item.year || ""}
             {!!item.year && item.extent ? " · " : ""}
             {item.extent}
@@ -308,7 +308,7 @@ function PosterCardActionButton({
   if (!subscribeMeta) {
     // 已入库标识：非交互，与库存格下方的绿点语言一致。
     return (
-      <span className="flex h-7 items-center gap-1.5 rounded-full bg-white/[0.18] px-3 text-[11px] font-semibold text-white/90">
+      <span className="flex h-7 items-center gap-1.5 rounded-full bg-white/[0.18] px-3 text-caption font-semibold text-white/90">
         <span className="size-1.5 rounded-full bg-[#4ade80]" />
         已入库
       </span>
@@ -343,8 +343,8 @@ function PosterCardActionButton({
       }}
       className={
         existingSub
-          ? "flex h-7 items-center gap-1.5 rounded-full bg-white/[0.18] px-3 text-[11px] font-semibold text-white/90 transition-colors hover:bg-white/[0.26]"
-          : "btn-accent flex h-7 items-center gap-1 rounded-full px-3 text-[11px] font-semibold"
+          ? "flex h-7 items-center gap-1.5 rounded-full bg-white/[0.18] px-3 text-caption font-semibold text-white/90 transition-colors hover:bg-white/[0.26]"
+          : "btn-accent flex h-7 items-center gap-1 rounded-full px-3 text-caption font-semibold"
       }
     >
       {existingSub ? (

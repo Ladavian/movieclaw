@@ -105,7 +105,7 @@ export function ImportWatchSection() {
 
   return (
     <div className="space-y-5">
-      <p className="text-[13px] leading-6 text-[var(--text-muted)]">
+      <p className="text-ui leading-6 text-[var(--text-muted)]">
         监听下载目录，其中<strong className="font-medium text-white/80">下载完成</strong>
         的内容（下载器确认完成，或文件持续静默且探测通过）自动识别、按「标题 (年份)」规范命名
         搬进目标媒体库。源文件原地保留：硬链接零占用、可继续做种；复制适合跨盘。
@@ -113,15 +113,15 @@ export function ImportWatchSection() {
       </p>
 
       {error && (
-        <p className="rounded-lg border border-red-400/25 bg-red-500/10 px-3.5 py-2.5 text-[13px] leading-6 text-red-200">
+        <p className="rounded-lg border border-red-400/25 bg-red-500/10 px-3.5 py-2.5 text-ui leading-6 text-red-200">
           {error}
         </p>
       )}
 
       {failed && (
         <div className="flex items-center gap-3">
-          <p className="text-[13px] text-[var(--text-muted)]">监听导入配置加载失败</p>
-          <button type="button" onClick={reload} className="btn-glass px-3 py-1.5 text-[12.5px] font-medium">
+          <p className="text-ui text-[var(--text-muted)]">监听导入配置加载失败</p>
+          <button type="button" onClick={reload} className="btn-glass px-3 py-1.5 text-sub font-medium">
             重试
           </button>
         </div>
@@ -130,7 +130,7 @@ export function ImportWatchSection() {
       {rules !== null && !failed && (
         <div className="space-y-2">
           {rules.length === 0 && (
-            <p className="rounded-xl bg-white/[0.03] px-4 py-6 text-center text-[13px] text-[var(--text-muted)]">
+            <p className="rounded-xl bg-white/[0.03] px-4 py-6 text-center text-ui text-[var(--text-muted)]">
               还没有监听导入规则。不需要「下载区 → 库」自动搬运的话，这里保持为空即可。
             </p>
           )}
@@ -141,17 +141,17 @@ export function ImportWatchSection() {
             >
               <FolderIcon className="size-4 shrink-0 text-[var(--accent)]/80" />
               <div className="min-w-0 flex-1">
-                <p className="truncate font-mono text-[12.5px] text-[var(--text)]" title={rule.source_path}>
+                <p className="truncate font-mono text-sub text-[var(--text)]" title={rule.source_path}>
                   {rule.source_path}
                 </p>
-                <p className="mt-0.5 text-[11.5px] text-[var(--text-muted)]">
+                <p className="mt-0.5 text-caption text-[var(--text-muted)]">
                   {rule.strategy === "hardlink" ? "硬链接" : "复制"} → {rule.target_label}
                 </p>
               </div>
               <button
                 type="button"
                 onClick={() => setEditing(rule)}
-                className="btn-glass shrink-0 px-3 py-1.5 text-[12px] font-medium"
+                className="btn-glass shrink-0 px-3 py-1.5 text-sub font-medium"
               >
                 编辑
               </button>
@@ -168,7 +168,7 @@ export function ImportWatchSection() {
           <button
             type="button"
             onClick={() => setEditing("new")}
-            className="flex w-full items-center justify-center gap-2 rounded-xl border border-dashed border-white/15 px-3 py-2.5 text-[13px] font-medium text-[var(--text-muted)] transition-colors hover:border-[var(--accent)]/50 hover:text-white"
+            className="flex w-full items-center justify-center gap-2 rounded-xl border border-dashed border-white/15 px-3 py-2.5 text-ui font-medium text-[var(--text-muted)] transition-colors hover:border-[var(--accent)]/50 hover:text-white"
           >
             <PlusIcon className="size-4" />
             添加监听导入规则
@@ -269,18 +269,18 @@ function RuleFormDialog({
       .finally(() => setBusy(false));
   };
 
-  const labelClass = "mb-1.5 block text-xs font-medium text-[var(--text-muted)]";
+  const labelClass = "mb-1.5 block text-sub font-medium text-[var(--text-muted)]";
 
   return (
     <>
       <Modal open onClose={onClose} label={rule ? "编辑监听导入规则" : "添加监听导入规则"}>
         <div className="space-y-4 p-6">
-          <h2 className="text-[17px] font-bold text-white">
+          <h2 className="text-title font-bold text-white">
             {rule ? "编辑监听导入规则" : "添加监听导入规则"}
           </h2>
 
           {error && (
-            <p className="rounded-lg border border-red-400/25 bg-red-500/10 px-3.5 py-2.5 text-[13px] leading-6 text-red-200">
+            <p className="rounded-lg border border-red-400/25 bg-red-500/10 px-3.5 py-2.5 text-ui leading-6 text-red-200">
               {error}
             </p>
           )}
@@ -294,18 +294,18 @@ function RuleFormDialog({
             >
               <FolderIcon className="size-4 shrink-0 text-[var(--accent)]/80" />
               {sourcePath ? (
-                <span dir="rtl" className="min-w-0 flex-1 truncate font-mono text-[13px] text-[var(--text)]">
+                <span dir="rtl" className="min-w-0 flex-1 truncate font-mono text-ui text-[var(--text)]">
                   {"‎" + sourcePath + "‎"}
                 </span>
               ) : (
-                <span className="text-[13px] text-[var(--text-faint)]">浏览服务器目录并选择…</span>
+                <span className="text-ui text-[var(--text-faint)]">浏览服务器目录并选择…</span>
               )}
             </button>
             {/* 下载器目录快捷候选：源目录大概率就是下载器目录，点选直填；
                 想用其子目录（如 watch/）点选后再「浏览」，弹窗会从该目录起步 */}
             {downloaderDirs.length > 0 && (
               <div className="mt-2">
-                <p className="mb-1.5 text-[11px] text-[var(--text-faint)]">
+                <p className="mb-1.5 text-caption text-[var(--text-faint)]">
                   从下载器目录快速选择（选后可再浏览细化到子目录）：
                 </p>
                 <div className="flex flex-wrap gap-1.5">
@@ -316,7 +316,7 @@ function RuleFormDialog({
                       onClick={() => setSourcePath(option.path)}
                       data-active={sourcePath === option.path}
                       title={`${option.path}（来自下载器「${option.downloaderName}」）`}
-                      className="glass-row nav-item !w-auto max-w-full gap-1.5 px-2.5 py-1.5 text-[12px] font-medium"
+                      className="glass-row nav-item !w-auto max-w-full gap-1.5 px-2.5 py-1.5 text-sub font-medium"
                     >
                       <FolderIcon className="size-3.5 shrink-0 text-[var(--accent)]/80" />
                       <span dir="rtl" className="min-w-0 truncate font-mono">
@@ -327,7 +327,7 @@ function RuleFormDialog({
                 </div>
               </div>
             )}
-            <p className="mt-1.5 text-[11px] leading-relaxed text-[var(--text-faint)]">
+            <p className="mt-1.5 text-caption leading-relaxed text-[var(--text-faint)]">
               不能与任何媒体库的根路径重叠（库根下的内容由库自己扫描管理）。
               订阅和手动下载会把种子投到这个目录（movieclaw 视角）；若下载器在另一个
               容器/主机上、看到的路径不同，请先到「设置 → 下载器」配置路径映射，
@@ -349,14 +349,14 @@ function RuleFormDialog({
                   type="button"
                   onClick={() => setStrategy(value)}
                   data-active={strategy === value}
-                  className="glass-row nav-item !w-auto px-3 py-1.5 text-xs font-medium"
+                  className="glass-row nav-item !w-auto px-3 py-1.5 text-sub font-medium"
                   title={hint}
                 >
                   {label}
                 </button>
               ))}
             </div>
-            <p className="mt-1.5 text-[11px] leading-relaxed text-[var(--text-faint)]">
+            <p className="mt-1.5 text-caption leading-relaxed text-[var(--text-faint)]">
               {strategy === "hardlink"
                 ? "保存时会检测源目录与目标库主根是否同一文件系统，跨盘会提示改用复制。"
                 : "复制适合源目录与库不在同一块盘的部署。"}
@@ -372,7 +372,7 @@ function RuleFormDialog({
                   type="button"
                   onClick={() => setTarget({ type: "library", id: lib.id })}
                   data-active={target?.type === "library" && target.id === lib.id}
-                  className="glass-row nav-item !w-auto px-3 py-1.5 text-xs font-medium"
+                  className="glass-row nav-item !w-auto px-3 py-1.5 text-sub font-medium"
                   title={lib.primary_root ?? undefined}
                 >
                   {lib.name}
@@ -389,19 +389,19 @@ function RuleFormDialog({
                   type="button"
                   onClick={() => setTarget({ type: "auto", kind: k })}
                   data-active={target?.type === "auto" && target.kind === k}
-                  className="glass-row nav-item !w-auto px-3 py-1.5 text-xs font-medium"
+                  className="glass-row nav-item !w-auto px-3 py-1.5 text-sub font-medium"
                   title="识别出作品后，按各库的收藏范围自动选库；未命中进该类型的默认库"
                 >
                   {label}
                 </button>
               ))}
               {libraries.length === 0 && (
-                <p className="text-[12px] text-[var(--text-faint)]">
+                <p className="text-sub text-[var(--text-faint)]">
                   还没有媒体库，请先在「媒体库」页创建。
                 </p>
               )}
             </div>
-            <p className="mt-1.5 text-[11px] leading-relaxed text-[var(--text-faint)]">
+            <p className="mt-1.5 text-caption leading-relaxed text-[var(--text-faint)]">
               {target?.type === "auto"
                 ? "自动路由：识别出作品后按各媒体库的「收藏范围」分流（如动画进动漫库），未命中进该类型的默认库；订阅投递的内容始终进订阅指定的库。每个类型至多一条自动路由规则。"
                 : "指定库：这个目录里的内容固定导入所选库（落其主根）。"}
@@ -409,14 +409,14 @@ function RuleFormDialog({
           </div>
 
           <div className="flex items-center justify-end gap-3 pt-1">
-            <button type="button" onClick={onClose} className="btn-glass h-9 px-4 text-[13px] font-medium">
+            <button type="button" onClick={onClose} className="btn-glass h-9 px-4 text-ui font-medium">
               取消
             </button>
             <button
               type="button"
               onClick={submit}
               disabled={!canSubmit}
-              className="btn-accent h-9 rounded-full px-5 text-[13px] font-semibold disabled:opacity-40"
+              className="btn-accent h-9 rounded-full px-5 text-ui font-semibold disabled:opacity-40"
             >
               {busy ? "保存中…" : "保存"}
             </button>

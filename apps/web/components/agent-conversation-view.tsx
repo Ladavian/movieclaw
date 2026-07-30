@@ -53,8 +53,8 @@ export function AgentConversationView({ conversationId }: { conversationId: stri
     return (
       <div className="immersive-theme flex h-full items-center justify-center px-6">
         <div className="max-w-sm text-center">
-          <p className="text-sm font-medium text-[var(--text)]">无法打开会话</p>
-          <p className="mt-2 text-xs leading-5 text-[var(--text-muted)]">{loadError}</p>
+          <p className="text-body font-medium text-[var(--text)]">无法打开会话</p>
+          <p className="mt-2 text-sub leading-5 text-[var(--text-muted)]">{loadError}</p>
         </div>
       </div>
     );
@@ -63,7 +63,7 @@ export function AgentConversationView({ conversationId }: { conversationId: stri
   if (!conversation?.loaded) {
     return (
       <div className="immersive-theme flex h-full items-center justify-center px-6">
-        <p className="animate-pulse text-sm text-[var(--text-muted)]">正在加载会话…</p>
+        <p className="animate-pulse text-body text-[var(--text-muted)]">正在加载会话…</p>
       </div>
     );
   }
@@ -82,10 +82,10 @@ export function AgentConversationView({ conversationId }: { conversationId: stri
       {/* 顶部条：会话标题 + 运行状态 */}
       <header className="flex h-14 shrink-0 items-center px-5 max-md:h-11 max-md:px-4">
         <div className="flex min-w-0 items-center gap-2.5">
-          <h1 className="truncate text-[14px] font-semibold tracking-[-0.01em]">
+          <h1 className="truncate text-body font-semibold tracking-[-0.01em]">
             {conversation.title}
           </h1>
-          <span className="flex shrink-0 items-center gap-1.5 rounded-full bg-white/[0.06] px-2.5 py-0.5 text-[11px] text-[var(--text-muted)]">
+          <span className="flex shrink-0 items-center gap-1.5 rounded-full bg-white/[0.06] px-2.5 py-0.5 text-caption text-[var(--text-muted)]">
             <span
               className={`size-1.5 rounded-full ${running ? "animate-pulse bg-[#6aa7ff]" : "bg-[#4ade80]"}`}
             />
@@ -142,7 +142,7 @@ const TurnView = memo(function TurnView({ turn }: { turn: AgentTurn }) {
     <div className="space-y-4">
       {/* 用户消息：右侧玻璃气泡 */}
       <div className="flex justify-end">
-        <div className="max-w-[80%] whitespace-pre-wrap rounded-2xl bg-[var(--glass-fill-active)] px-4 py-3 text-sm leading-6 text-[var(--text)]">
+        <div className="max-w-[80%] whitespace-pre-wrap rounded-2xl bg-[var(--glass-fill-active)] px-4 py-3 text-body leading-6 text-[var(--text)]">
           {turn.input}
         </div>
       </div>
@@ -176,20 +176,20 @@ const TurnView = memo(function TurnView({ turn }: { turn: AgentTurn }) {
           })}
 
           {turn.status === "running" && turn.segments.length === 0 && (
-            <p className="text-[13px] text-[var(--text-faint)]">
+            <p className="text-ui text-[var(--text-faint)]">
               正在启动
               <StreamingCursor />
             </p>
           )}
 
           {turn.status === "error" && (
-            <div className="rounded-xl border border-[#ff6b6b]/30 bg-[#ff6b6b]/10 px-3.5 py-2.5 text-[13px] leading-5 text-[#ff6b6b]">
+            <div className="rounded-xl border border-[#ff6b6b]/30 bg-[#ff6b6b]/10 px-3.5 py-2.5 text-ui leading-5 text-[#ff6b6b]">
               {turn.error}
             </div>
           )}
 
           {turn.status === "done" && (
-            <p className="text-[11px] text-[var(--text-faint)]">
+            <p className="text-caption text-[var(--text-faint)]">
               {turn.stopped
                 ? "已停止生成"
                 : turn.result &&
@@ -234,7 +234,7 @@ const ProcessBlock = memo(function ProcessBlock({ segment, active }: { segment: 
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
-        className="flex items-center gap-1 text-[12px] font-medium text-[var(--text-faint)] transition-colors hover:text-[var(--text-muted)]"
+        className="flex items-center gap-1 text-sub font-medium text-[var(--text-faint)] transition-colors hover:text-[var(--text-muted)]"
       >
         <ChevronRightIcon className={`size-3.5 transition-transform ${open ? "rotate-90" : ""}`} />
         <span className={active ? "animate-pulse" : undefined}>
@@ -247,7 +247,7 @@ const ProcessBlock = memo(function ProcessBlock({ segment, active }: { segment: 
             item.kind === "thinking" ? (
               <p
                 key={index}
-                className="whitespace-pre-wrap text-[12px] leading-5 text-[var(--text-faint)]"
+                className="whitespace-pre-wrap text-sub leading-5 text-[var(--text-faint)]"
               >
                 {item.text}
               </p>
@@ -294,7 +294,7 @@ const ToolCallCard = memo(function ToolCallCard({ tool }: { tool: AgentTurnToolC
       {tool.argsDone === false ? (
         // 参数生成中：工具名固定，参数区右锚定滚动显示最新生成的尾部——
         // 长参数溢出时新字符持续从右侧推入，肉眼可见任务仍在进行
-        <p className="flex font-mono text-[11px] text-[var(--accent-2)]">
+        <p className="flex font-mono text-caption text-[var(--accent-2)]">
           <span className="shrink-0">⚙ {tool.name}(</span>
           <span className="flex min-w-0 flex-1 justify-end overflow-hidden [mask-image:linear-gradient(to_right,transparent,black_24px)]">
             <span className="whitespace-nowrap">
@@ -304,17 +304,18 @@ const ToolCallCard = memo(function ToolCallCard({ tool }: { tool: AgentTurnToolC
         </p>
       ) : (
         <>
-          <p className="font-mono text-[11px] text-[var(--accent-2)]">⚙ {tool.name}</p>
+          <p className="font-mono text-caption text-[var(--accent-2)]">⚙ {tool.name}</p>
           {input && <HighlightedCode code={input.code} lang={input.lang} />}
         </>
       )}
       {tool.argsDone === false ? (
-        <p className="mt-0.5 animate-pulse text-[11px] text-[var(--text-faint)]">生成参数中…</p>
+        <p className="mt-0.5 animate-pulse text-caption text-[var(--text-faint)]">生成参数中…</p>
       ) : tool.output === undefined ? (
-        <p className="mt-0.5 text-[11px] text-[var(--text-faint)]">执行中…</p>
+        <p className="mt-0.5 text-caption text-[var(--text-faint)]">执行中…</p>
       ) : (
         <div
-          className={`scroll-thin mt-1 max-h-44 overflow-y-auto whitespace-pre-wrap break-words font-mono text-[11px] leading-4 ${
+          // 行高用相对值：字号随语义 token 在移动端换档（11→13px），固定 16px 行高会挤死多行日志
+          className={`scroll-thin mt-1 max-h-44 overflow-y-auto whitespace-pre-wrap break-words font-mono text-caption leading-[1.45] ${
             tool.isError ? "text-[#ff6b6b]" : "text-[var(--text-muted)]"
           }`}
         >

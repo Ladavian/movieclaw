@@ -121,12 +121,12 @@ function PipelineHealthPanel() {
   return (
     <section>
       <div className="mb-2 flex items-center justify-between">
-        <h3 className="text-[14px] font-semibold text-white/90">订阅链路体检</h3>
+        <h3 className="text-body font-semibold text-white/90">订阅链路体检</h3>
         <button
           type="button"
           onClick={reload}
           disabled={busy}
-          className="btn-glass flex items-center gap-1.5 px-3 py-1.5 text-[12px] font-medium disabled:opacity-60"
+          className="btn-glass flex items-center gap-1.5 px-3 py-1.5 text-sub font-medium disabled:opacity-60"
         >
           {busy && (
             <span className="size-3 animate-spin rounded-full border-2 border-white/20 border-t-white/70" />
@@ -134,19 +134,19 @@ function PipelineHealthPanel() {
           重新体检
         </button>
       </div>
-      <p className="mb-4 text-[12.5px] leading-6 text-[var(--text-muted)]">
+      <p className="mb-4 text-sub leading-6 text-[var(--text-muted)]">
         逐库预演「资源搜索 → 下载 → 投递 → 入库」的完整链路，与真实投递同一套判定。
         红点表示订阅会卡在那一步（工单不会丢，修好后自动重试）；黄点能转但有降级。
         修改配置后回到本页会自动重检。
       </p>
 
       {failed && (
-        <p className="rounded-xl bg-white/[0.03] px-4 py-5 text-center text-[13px] text-[var(--text-muted)]">
+        <p className="rounded-xl bg-white/[0.03] px-4 py-5 text-center text-ui text-[var(--text-muted)]">
           体检加载失败，请重试
         </p>
       )}
       {health === null && !failed && (
-        <p className="flex items-center gap-2.5 rounded-xl bg-white/[0.03] px-4 py-5 text-[13px] text-[var(--text-muted)]">
+        <p className="flex items-center gap-2.5 rounded-xl bg-white/[0.03] px-4 py-5 text-ui text-[var(--text-muted)]">
           <span className="size-4 animate-spin rounded-full border-2 border-white/20 border-t-white/70" />
           正在体检…
         </p>
@@ -204,14 +204,14 @@ function SetupChecklist({ health }: { health: PipelineHealth }) {
   ];
   return (
     <div className="rounded-xl border border-white/[0.08] bg-white/[0.04] p-4">
-      <p className="mb-3 text-[13px] font-medium text-white/90">
+      <p className="mb-3 text-ui font-medium text-white/90">
         把订阅跑起来需要三步（完成后这里会变成链路体检）：
       </p>
       <div className="space-y-2">
         {steps.map((step, i) => (
           <div key={step.label} className="flex items-center gap-3">
             <span
-              className={`flex size-5 shrink-0 items-center justify-center rounded-full text-[11px] font-semibold ${
+              className={`flex size-5 shrink-0 items-center justify-center rounded-full text-caption font-semibold ${
                 step.done ? "bg-[#4ade80]/20 text-[#4ade80]" : "bg-white/10 text-white/70"
               }`}
             >
@@ -219,16 +219,16 @@ function SetupChecklist({ health }: { health: PipelineHealth }) {
             </span>
             <span className="min-w-0 flex-1">
               <span
-                className={`text-[13px] font-medium ${step.done ? "text-white/50 line-through" : "text-white/90"}`}
+                className={`text-ui font-medium ${step.done ? "text-white/50 line-through" : "text-white/90"}`}
               >
                 {step.label}
               </span>
-              <span className="ml-2 text-[11.5px] text-[var(--text-faint)]">{step.hint}</span>
+              <span className="ml-2 text-caption text-[var(--text-faint)]">{step.hint}</span>
             </span>
             {!step.done && (
               <Link
                 href={step.href as never}
-                className="btn-glass shrink-0 px-3 py-1.5 text-[12px] font-medium"
+                className="btn-glass shrink-0 px-3 py-1.5 text-sub font-medium"
               >
                 {step.action}
               </Link>
@@ -236,7 +236,7 @@ function SetupChecklist({ health }: { health: PipelineHealth }) {
           </div>
         ))}
       </div>
-      <p className="mt-3 text-[11.5px] leading-relaxed text-[var(--text-faint)]">
+      <p className="mt-3 text-caption leading-relaxed text-[var(--text-faint)]">
         可选第四步：「监听导入」让下载区与媒体库分离（PT 保种推荐）——下载器落盘的
         内容自动硬链接进库，源文件继续做种。不配置则直接下载进库根，同样能自动入账。
       </p>
@@ -252,7 +252,7 @@ function SetupChecklist({ health }: { health: PipelineHealth }) {
 function IssueCardList({ issues }: { issues: PipelineIssue[] }) {
   return (
     <div className="space-y-2.5">
-      <p className="text-[13px] font-medium text-white/90">
+      <p className="text-ui font-medium text-white/90">
         需要处理 {issues.length} 件事（下方库卡片的红黄点都来自这里）：
       </p>
       {issues.map((issue) => (
@@ -273,13 +273,13 @@ function IssueCard({ issue }: { issue: PipelineIssue }) {
       <div className="flex items-start gap-2.5">
         <span className={`mt-[5px] size-2 shrink-0 rounded-full ${STATUS_META[issue.status].dot}`} />
         <div className="min-w-0 flex-1">
-          <p className="text-[13.5px] font-semibold text-white/95">{issue.title}</p>
+          <p className="text-ui font-semibold text-white/95">{issue.title}</p>
           {issue.affected_libraries.length > 0 && (
-            <p className="mt-1 text-[11.5px] text-[var(--text-faint)]">
+            <p className="mt-1 text-caption text-[var(--text-faint)]">
               影响 {issue.affected_libraries.length} 个库：{issue.affected_libraries.join("、")}
             </p>
           )}
-          <p className="mt-1.5 text-[12.5px] leading-relaxed text-[var(--text-muted)]">
+          <p className="mt-1.5 text-sub leading-relaxed text-[var(--text-muted)]">
             {issue.detail}
           </p>
         </div>
@@ -306,24 +306,24 @@ function FixOptionBlock({ option, ordinal }: { option: FixOption; ordinal: numbe
   const href = fixOptionHref(option);
   return (
     <div className="flex flex-col rounded-lg bg-white/[0.04] p-3">
-      <p className="text-[12.5px] font-semibold text-white/90">
+      <p className="text-sub font-semibold text-white/90">
         {ordinal !== null && (
-          <span className="mr-1.5 inline-flex size-4.5 items-center justify-center rounded-full bg-white/10 text-[10.5px] text-white/70">
+          <span className="mr-1.5 inline-flex size-4.5 items-center justify-center rounded-full bg-white/10 text-micro text-white/70">
             {ordinal}
           </span>
         )}
         {option.title}
       </p>
       {option.why && (
-        <p className="mt-1.5 text-[11.5px] leading-relaxed text-[var(--text-faint)]">{option.why}</p>
+        <p className="mt-1.5 text-caption leading-relaxed text-[var(--text-faint)]">{option.why}</p>
       )}
-      <p className="mt-1.5 flex-1 text-[12px] leading-relaxed text-[var(--text-muted)]">
+      <p className="mt-1.5 flex-1 text-sub leading-relaxed text-[var(--text-muted)]">
         {option.steps}
       </p>
       {href && (
         <Link
           href={href as never}
-          className="btn-glass mt-2.5 self-start px-3 py-1.5 text-[12px] font-medium"
+          className="btn-glass mt-2.5 self-start px-3 py-1.5 text-sub font-medium"
         >
           {option.fix_label} →
         </Link>
@@ -358,11 +358,11 @@ function FlowStepper({ nodes }: { nodes: FlowNode[] }) {
             }`}
           >
             <span className={`size-1.5 shrink-0 rounded-full ${STATUS_META[node.status].dot}`} />
-            <span className="text-[12px] font-medium text-white/90">{node.label}</span>
+            <span className="text-sub font-medium text-white/90">{node.label}</span>
             {node.sub && (
               <span
                 dir="rtl"
-                className="max-w-[180px] truncate font-mono text-[11px] text-[var(--text-faint)]"
+                className="max-w-[180px] truncate font-mono text-caption text-[var(--text-faint)]"
                 title={node.sub}
               >
                 {"‎" + node.sub + "‎"}
@@ -407,7 +407,7 @@ function SharedSegmentsRow({
   return (
     <div className="rounded-xl border border-white/[0.08] bg-white/[0.04] px-4 py-3">
       <div className="flex items-center gap-3">
-        <span className="w-24 shrink-0 text-[12px] text-[var(--text-faint)] max-md:hidden">
+        <span className="w-24 shrink-0 text-sub text-[var(--text-faint)] max-md:hidden">
           公共链路
         </span>
         <FlowStepper nodes={nodes} />
@@ -470,32 +470,32 @@ function LibraryPipelineCard({
     <div className="rounded-xl border border-white/[0.08] bg-white/[0.04] px-4 py-3">
       <div className="flex items-center gap-3">
         <span className="w-24 shrink-0 max-md:hidden">
-          <span className="block truncate text-[13px] font-medium text-white/90">
+          <span className="block truncate text-ui font-medium text-white/90">
             {pipeline.library_name}
           </span>
-          <span className="block text-[11px] text-[var(--text-faint)]">
+          <span className="block text-caption text-[var(--text-faint)]">
             {pipeline.kind === "movie" ? "电影" : "剧集"}
             {pipeline.is_default ? " · 默认" : ""}
           </span>
         </span>
         <div className="min-w-0 flex-1">
-          <p className="mb-1.5 text-[12.5px] font-medium text-white/90 md:hidden">
+          <p className="mb-1.5 text-sub font-medium text-white/90 md:hidden">
             {pipeline.library_name}
           </p>
           <FlowStepper nodes={nodes} />
           {/* 正向叙事：订阅命中本库会发生什么——全绿时的可预期，不用去玩模拟一单 */}
           {pipeline.narrative && (
-            <p className="mt-1.5 text-[11.5px] leading-relaxed text-[var(--text-faint)]">
+            <p className="mt-1.5 text-caption leading-relaxed text-[var(--text-faint)]">
               {pipeline.narrative}
             </p>
           )}
         </div>
         <div className="flex shrink-0 flex-col items-end gap-1">
-          <span className={`text-[12px] font-medium ${meta.text}`}>{meta.label}</span>
+          <span className={`text-sub font-medium ${meta.text}`}>{meta.label}</span>
           <button
             type="button"
             onClick={() => setShowAll((v) => !v)}
-            className="text-[11px] text-[var(--text-faint)] hover:text-white"
+            className="text-caption text-[var(--text-faint)] hover:text-white"
           >
             {showAll ? "收起" : "查看全部"}
           </button>
@@ -517,7 +517,7 @@ function ProblemList({ checks }: { checks: PipelineCheck[] }) {
             <span
               className={`mt-[5px] size-1.5 shrink-0 rounded-full ${STATUS_META[check.status].dot}`}
             />
-            <p className="min-w-0 flex-1 text-[12px] leading-relaxed text-[var(--text-muted)]">
+            <p className="min-w-0 flex-1 text-sub leading-relaxed text-[var(--text-muted)]">
               <span className="font-medium text-[var(--text)]">{check.label}</span>
               <span className="ml-2">{check.detail}</span>
               {fix && (
@@ -580,8 +580,8 @@ function SimulatePanel() {
 
   return (
     <section>
-      <h3 className="mb-2 text-[14px] font-semibold text-white/90">模拟一单</h3>
-      <p className="mb-3 text-[12.5px] leading-6 text-[var(--text-muted)]">
+      <h3 className="mb-2 text-body font-semibold text-white/90">模拟一单</h3>
+      <p className="mb-3 text-sub leading-6 text-[var(--text-muted)]">
         搜一部片，看它订阅后会进哪个库、投递到哪、怎么入库——只做预演，不会真的订阅。
         配完收藏范围想确认「某类片会进哪」，在这里试一下就知道。
       </p>
@@ -591,22 +591,22 @@ function SimulatePanel() {
         onChange={(e) => setQuery(e.target.value)}
         placeholder="输入片名，如：葬送的芙莉莲"
         autoComplete="off"
-        className="w-full rounded-xl border border-white/[0.08] bg-white/[0.04] px-3.5 py-2.5 text-[13px] text-[var(--text)] outline-none focus:border-[var(--accent)]/60"
+        className="w-full rounded-xl border border-white/[0.08] bg-white/[0.04] px-3.5 py-2.5 text-ui text-[var(--text)] outline-none focus:border-[var(--accent)]/60"
       />
       {searching && (
-        <p className="mt-2 text-[12px] text-[var(--text-faint)]">正在搜索…</p>
+        <p className="mt-2 text-sub text-[var(--text-faint)]">正在搜索…</p>
       )}
       {candidates !== null && !searching && !picked && (
         <div className="mt-2 flex flex-wrap gap-1.5">
           {candidates.length === 0 && (
-            <p className="text-[12px] text-[var(--text-faint)]">没有找到条目，换个关键词试试</p>
+            <p className="text-sub text-[var(--text-faint)]">没有找到条目，换个关键词试试</p>
           )}
           {candidates.map((item) => (
             <button
               key={item.id}
               type="button"
               onClick={() => pick(item)}
-              className="glass-row nav-item !w-auto px-3 py-1.5 text-[12px] font-medium"
+              className="glass-row nav-item !w-auto px-3 py-1.5 text-sub font-medium"
             >
               {item.title}
               <span className="ml-1.5 text-[var(--text-faint)]">
@@ -618,11 +618,11 @@ function SimulatePanel() {
       )}
       {picked && (
         <div className="mt-3 rounded-xl border border-white/[0.08] bg-white/[0.04] px-4 py-3">
-          <p className="text-[13px] font-medium text-white/90">
+          <p className="text-ui font-medium text-white/90">
             《{picked.title}》{picked.year ? ` (${picked.year})` : ""}
           </p>
           {preview === null ? (
-            <p className="mt-2 text-[12px] text-[var(--text-faint)]">正在预演…</p>
+            <p className="mt-2 text-sub text-[var(--text-faint)]">正在预演…</p>
           ) : (
             <div className="mt-2 space-y-1.5">
               <SimStep
@@ -643,11 +643,11 @@ function SimulatePanel() {
                 }
               />
               {preview.ok ? (
-                <p className="flex items-center gap-1.5 pt-1 text-[12.5px] font-medium text-[#4ade80]">
+                <p className="flex items-center gap-1.5 pt-1 text-sub font-medium text-[#4ade80]">
                   ✓ 全链路可行：订阅后即可自动下载并整理入库
                 </p>
               ) : (
-                <p className="rounded-lg border border-amber-400/25 bg-amber-500/10 px-3 py-2 text-[12px] leading-relaxed text-amber-200">
+                <p className="rounded-lg border border-amber-400/25 bg-amber-500/10 px-3 py-2 text-sub leading-relaxed text-amber-200">
                   {preview.warning}
                 </p>
               )}
@@ -661,8 +661,8 @@ function SimulatePanel() {
 
 function SimStep({ n, text }: { n: number; text: string }) {
   return (
-    <p className="flex items-start gap-2.5 text-[12.5px] leading-relaxed text-[var(--text-muted)]">
-      <span className="mt-px flex size-4.5 shrink-0 items-center justify-center rounded-full bg-white/10 text-[10.5px] font-semibold text-white/70">
+    <p className="flex items-start gap-2.5 text-sub leading-relaxed text-[var(--text-muted)]">
+      <span className="mt-px flex size-4.5 shrink-0 items-center justify-center rounded-full bg-white/10 text-micro font-semibold text-white/70">
         {n}
       </span>
       <span className="min-w-0 flex-1">{text}</span>
@@ -685,13 +685,13 @@ function RuleSetsPanel() {
 
   return (
     <section>
-      <h3 className="mb-2 text-[14px] font-semibold text-white/90">规则组</h3>
-      <p className="mb-4 text-[12.5px] leading-6 text-[var(--text-muted)]">
+      <h3 className="mb-2 text-body font-semibold text-white/90">规则组</h3>
+      <p className="mb-4 text-sub leading-6 text-[var(--text-muted)]">
         规则组定义「什么样的资源可接受」（分辨率、来源等硬条件与偏好排序），
         在订阅弹窗中按订阅选用；标「默认」的组是新订阅的初始选择。
       </p>
       {ruleSets === null ? (
-        <p className="rounded-xl bg-white/[0.03] px-4 py-4 text-[13px] text-[var(--text-muted)]">
+        <p className="rounded-xl bg-white/[0.03] px-4 py-4 text-ui text-[var(--text-muted)]">
           正在加载…
         </p>
       ) : (
@@ -701,15 +701,15 @@ function RuleSetsPanel() {
               key={rs.id}
               className="flex items-center gap-3 rounded-xl border border-white/[0.08] bg-white/[0.04] px-4 py-2.5"
             >
-              <span className="min-w-0 flex-1 truncate text-[13px] font-medium text-white/90">
+              <span className="min-w-0 flex-1 truncate text-ui font-medium text-white/90">
                 {rs.name}
               </span>
               {rs.is_default && (
-                <span className="shrink-0 rounded-full border border-white/[0.14] bg-white/[0.1] px-2 py-0.5 text-[10.5px] font-semibold text-white/80">
+                <span className="shrink-0 rounded-full border border-white/[0.14] bg-white/[0.1] px-2 py-0.5 text-micro font-semibold text-white/80">
                   默认
                 </span>
               )}
-              <span className="shrink-0 text-[11.5px] text-[var(--text-faint)]">
+              <span className="shrink-0 text-caption text-[var(--text-faint)]">
                 {Object.keys(rs.spec ?? {}).length === 0 ? "全不限" : "已配置条件"}
               </span>
             </div>

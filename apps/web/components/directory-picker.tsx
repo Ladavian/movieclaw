@@ -116,7 +116,7 @@ export function DirectoryPicker({
       panelClassName="flex max-h-[76dvh] flex-col"
     >
         <div className="space-y-3 p-5 pb-3">
-          <h2 className="text-[15px] font-bold text-white">选择服务器目录</h2>
+          <h2 className="text-body-lg font-bold text-white">选择服务器目录</h2>
 
           {/* 面包屑 / 手动输入（铅笔切换） */}
           {editing ? (
@@ -130,7 +130,7 @@ export function DirectoryPicker({
               }}
               placeholder="输入绝对路径后回车跳转"
               spellCheck={false}
-              className="w-full rounded-xl border border-[var(--accent)]/60 bg-white/[0.04] px-3 py-2 font-mono text-[13px] text-[var(--text)] outline-none"
+              className="w-full rounded-xl border border-[var(--accent)]/60 bg-white/[0.04] px-3 py-2 font-mono text-ui text-[var(--text)] outline-none"
             />
           ) : (
             <div className="flex items-center gap-1.5">
@@ -141,7 +141,7 @@ export function DirectoryPicker({
                 <button
                   type="button"
                   onClick={() => void navigate("/")}
-                  className="shrink-0 rounded-md px-1.5 py-0.5 font-mono text-[13px] text-[var(--text-muted)] hover:bg-white/10 hover:text-white"
+                  className="shrink-0 rounded-md px-1.5 py-0.5 font-mono text-ui text-[var(--text-muted)] hover:bg-white/10 hover:text-white"
                 >
                   /
                 </button>
@@ -151,7 +151,7 @@ export function DirectoryPicker({
                     <button
                       type="button"
                       onClick={() => void navigate(seg.path)}
-                      className={`rounded-md px-1.5 py-0.5 text-[13px] hover:bg-white/10 hover:text-white ${
+                      className={`rounded-md px-1.5 py-0.5 text-ui hover:bg-white/10 hover:text-white ${
                         seg.path === view?.path
                           ? "font-semibold text-white"
                           : "text-[var(--text-muted)]"
@@ -177,7 +177,7 @@ export function DirectoryPicker({
           )}
 
           {error && (
-            <p className="rounded-lg border border-red-400/25 bg-red-500/10 px-3 py-2 text-[12px] leading-5 text-red-200">
+            <p className="rounded-lg border border-red-400/25 bg-red-500/10 px-3 py-2 text-sub leading-5 text-red-200">
               {error}
             </p>
           )}
@@ -186,9 +186,9 @@ export function DirectoryPicker({
         {/* 子目录列表：单击下钻 */}
         <div ref={listRef} className="min-h-[240px] flex-1 overflow-y-auto px-3 pb-2">
           {loading && !view ? (
-            <p className="px-3 py-8 text-center text-[13px] text-[var(--text-muted)]">加载中…</p>
+            <p className="px-3 py-8 text-center text-ui text-[var(--text-muted)]">加载中…</p>
           ) : view && view.entries.length === 0 ? (
-            <p className="px-3 py-8 text-center text-[13px] text-[var(--text-muted)]">
+            <p className="px-3 py-8 text-center text-ui text-[var(--text-muted)]">
               该目录下没有子目录，可直接选择当前目录
             </p>
           ) : (
@@ -201,7 +201,7 @@ export function DirectoryPicker({
                 className="glass-row group flex w-full items-center gap-2.5 px-3 py-2 text-left disabled:opacity-50"
               >
                 <FolderIcon className="size-4 shrink-0 text-[var(--accent)]/80" />
-                <span className="min-w-0 flex-1 truncate text-[13px] text-[var(--text)]">
+                <span className="min-w-0 flex-1 truncate text-ui text-[var(--text)]">
                   {entry.name}
                 </span>
                 <ChevronRightIcon className="size-3.5 shrink-0 text-[var(--text-faint)] opacity-0 transition-opacity group-hover:opacity-100" />
@@ -215,19 +215,19 @@ export function DirectoryPicker({
           {/* 保尾截断（dir=rtl）：省略号在头部，当前目录名始终可见；LRM 防 "/" 跳位 */}
           <p
             dir="rtl"
-            className="min-w-0 flex-1 truncate text-left font-mono text-[12px] text-[var(--text-muted)]"
+            className="min-w-0 flex-1 truncate text-left font-mono text-sub text-[var(--text-muted)]"
             title={view?.path}
           >
             {view ? "‎" + view.path + "‎" : "…"}
           </p>
-          <button type="button" onClick={onClose} className="btn-glass h-8 shrink-0 px-3.5 text-[13px] font-medium">
+          <button type="button" onClick={onClose} className="btn-glass h-8 shrink-0 px-3.5 text-ui font-medium">
             取消
           </button>
           <button
             type="button"
             disabled={!view || loading}
             onClick={() => view && onSelect(view.path)}
-            className="btn-accent flex h-8 shrink-0 items-center gap-1.5 rounded-full px-4 text-[13px] font-semibold disabled:opacity-40"
+            className="btn-accent flex h-8 shrink-0 items-center gap-1.5 rounded-full px-4 text-ui font-semibold disabled:opacity-40"
           >
             <CheckIcon className="size-3.5" />
             选择此目录

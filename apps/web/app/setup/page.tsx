@@ -105,7 +105,7 @@ export default function SetupPage() {
         <button
           type="submit"
           disabled={busy || !username.trim() || !password || !confirm}
-          className="btn-accent w-full rounded-full px-4.5 py-2.5 text-[13px] font-semibold disabled:opacity-40"
+          className="btn-accent w-full rounded-full px-4.5 py-2.5 text-ui font-semibold disabled:opacity-40"
         >
           {busy ? "创建中…" : "创建账号并进入"}
         </button>

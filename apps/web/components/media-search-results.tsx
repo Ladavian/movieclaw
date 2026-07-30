@@ -109,7 +109,7 @@ export function MediaSearchResults({
       {/* 状态行：与站点资源垂直的头部同构（关键词 + 快照提示） */}
       <header className="shrink-0 px-6 pb-3 pt-4 max-md:px-4 max-md:pt-3">
         <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1.5">
-          <h1 className="text-on-image text-[18px] font-semibold tracking-[-0.01em] text-white">
+          <h1 className="text-on-image text-title-lg font-semibold tracking-[-0.01em] text-white">
             “{keyword}”
           </h1>
 
@@ -118,7 +118,7 @@ export function MediaSearchResults({
             <div className="ml-auto flex items-center gap-2">
               <span
                 title="这是历史留存的结果快照，豆瓣数据（评分/海报）可能已变化"
-                className="flex items-center gap-1.5 rounded-full border border-[#6aa7ff]/30 bg-[#6aa7ff]/12 px-2.5 py-1 text-[11px] text-[#b9d4ff] backdrop-blur-sm"
+                className="flex items-center gap-1.5 rounded-full border border-[#6aa7ff]/30 bg-[#6aa7ff]/12 px-2.5 py-1 text-caption text-[#b9d4ff] backdrop-blur-sm"
               >
                 <svg
                   viewBox="0 0 24 24"
@@ -138,7 +138,7 @@ export function MediaSearchResults({
                 <button
                   type="button"
                   onClick={onResearch}
-                  className="btn-accent rounded-full px-2.5 py-1 text-[11px] font-medium"
+                  className="btn-accent rounded-full px-2.5 py-1 text-caption font-medium"
                 >
                   重新搜索
                 </button>
@@ -194,11 +194,11 @@ function MediaSourceSection({
   return (
     <section>
       <div className="mb-3 flex items-center gap-2.5">
-        <span className="rounded-full bg-black/30 px-2.5 py-0.5 text-[11px] text-[var(--accent)] backdrop-blur-sm">
+        <span className="rounded-full bg-black/30 px-2.5 py-0.5 text-caption text-[var(--accent)] backdrop-blur-sm">
           {label}
         </span>
         {items && items.length > 0 && (
-          <span className="text-on-image text-[12px] text-[rgba(243,245,249,0.75)]">
+          <span className="text-on-image text-sub text-[rgba(243,245,249,0.75)]">
             共 {items.length} 条结果
           </span>
         )}
@@ -206,12 +206,12 @@ function MediaSourceSection({
 
       {!items && !error && <MediaSearchSkeleton />}
       {error && (
-        <p className="text-on-image text-[12px] leading-relaxed text-[rgba(243,245,249,0.6)]">
+        <p className="text-on-image text-sub leading-relaxed text-[rgba(243,245,249,0.6)]">
           {error}
         </p>
       )}
       {items?.length === 0 && (
-        <p className="text-on-image text-[12px] text-[rgba(243,245,249,0.6)]">
+        <p className="text-on-image text-sub text-[rgba(243,245,249,0.6)]">
           该来源没有找到相关条目
         </p>
       )}
@@ -240,12 +240,12 @@ function MediaSearchEmpty({
 }) {
   return (
     <div className="flex flex-col items-center pt-24 text-center">
-      <p className="text-on-image text-[15px] font-semibold text-white">{title}</p>
-      <p className="text-on-image mt-1.5 text-[12px] text-[rgba(243,245,249,0.7)]">{hint}</p>
+      <p className="text-on-image text-body-lg font-semibold text-white">{title}</p>
+      <p className="text-on-image mt-1.5 text-sub text-[rgba(243,245,249,0.7)]">{hint}</p>
       <button
         type="button"
         onClick={onSwitchToTorrent}
-        className="btn-accent mt-5 rounded-full px-4 py-1.5 text-[12px] font-semibold"
+        className="btn-accent mt-5 rounded-full px-4 py-1.5 text-sub font-semibold"
       >
         搜索站点资源
       </button>

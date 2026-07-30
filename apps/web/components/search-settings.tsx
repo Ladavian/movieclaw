@@ -298,11 +298,11 @@ export function SearchSection() {
 
               {tab.type === "category" ? (
                 <div className="min-w-0 flex-1">
-                  <p className="text-sm font-medium text-[var(--text)]">
+                  <p className="text-body font-medium text-[var(--text)]">
                     {CATEGORY_LABEL[tab.id]}
                   </p>
                   {CATEGORY_HINT[tab.id] && (
-                    <p className="mt-0.5 text-[11px] text-[var(--text-faint)]">
+                    <p className="mt-0.5 text-caption text-[var(--text-faint)]">
                       {CATEGORY_HINT[tab.id]}
                     </p>
                   )}
@@ -310,12 +310,12 @@ export function SearchSection() {
               ) : (
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-2">
-                    <p className="truncate text-sm font-medium text-[var(--text)]">{tab.name}</p>
-                    <span className="shrink-0 rounded-full bg-[var(--accent-soft)] px-2 py-0.5 text-[10px] font-semibold text-[var(--accent)]">
+                    <p className="truncate text-body font-medium text-[var(--text)]">{tab.name}</p>
+                    <span className="shrink-0 rounded-full bg-[var(--accent-soft)] px-2 py-0.5 text-micro font-semibold text-[var(--accent)]">
                       自定义
                     </span>
                   </div>
-                  <p className="mt-0.5 truncate text-[11px] text-[var(--text-faint)]">
+                  <p className="mt-0.5 truncate text-caption text-[var(--text-faint)]">
                     {presetSummary(tab)}
                   </p>
                 </div>
@@ -327,7 +327,7 @@ export function SearchSection() {
                     type="button"
                     onClick={() => openEditor(tab)}
                     disabled={busy || loading}
-                    className="btn-glass px-2.5 py-1 text-[11px] font-medium disabled:opacity-40"
+                    className="btn-glass px-2.5 py-1 text-caption font-medium disabled:opacity-40"
                   >
                     编辑
                   </button>
@@ -335,7 +335,7 @@ export function SearchSection() {
                     type="button"
                     onClick={() => deletePreset(tab)}
                     disabled={busy || loading}
-                    className="rounded-full px-2.5 py-1 text-[11px] font-medium text-[var(--text-faint)] transition-colors hover:bg-[var(--danger)]/15 hover:text-[var(--danger)] disabled:opacity-40"
+                    className="rounded-full px-2.5 py-1 text-caption font-medium text-[var(--text-faint)] transition-colors hover:bg-[var(--danger)]/15 hover:text-[var(--danger)] disabled:opacity-40"
                   >
                     删除
                   </button>
@@ -364,7 +364,7 @@ export function SearchSection() {
             type="button"
             onClick={() => openEditor(null)}
             disabled={busy || loading}
-            className="btn-glass mt-3 px-3.5 py-2 text-xs font-medium disabled:opacity-40"
+            className="btn-glass mt-3 px-3.5 py-2 text-sub font-medium disabled:opacity-40"
           >
             <PlusIcon className="size-4" />
             <span>新建自定义分类</span>
@@ -386,12 +386,12 @@ export function SearchSection() {
       )}
 
       {error && (
-        <p className="rounded-xl border border-[var(--danger)]/30 bg-[var(--danger)]/10 px-4 py-2.5 text-xs text-[var(--danger)]">
+        <p className="rounded-xl border border-[var(--danger)]/30 bg-[var(--danger)]/10 px-4 py-2.5 text-sub text-[var(--danger)]">
           {error}
         </p>
       )}
 
-      <p className="text-xs leading-6 text-[var(--text-faint)]">
+      <p className="text-sub leading-6 text-[var(--text-faint)]">
         按住左侧手柄拖动即可调整顺序——列表顺序即搜索面板中分类标签的排列顺序，「全部」固定在首位。
         自定义分类可组合多个资源分类与指定站点，一次搜索只打勾选的站点。
         改动即时保存到服务端，所有设备与浏览器保持一致。
@@ -475,7 +475,7 @@ function PresetEditor({
     });
 
   const chipCls = (active: boolean) =>
-    `rounded-full border px-3 py-1 text-[12px] transition-colors ${
+    `rounded-full border px-3 py-1 text-sub transition-colors ${
       active
         ? "border-[var(--accent)]/60 bg-[var(--accent)]/15 text-[var(--accent)]"
         : "border-white/[0.09] bg-white/[0.04] text-[var(--text-muted)] hover:border-white/[0.18] hover:text-[var(--text)]"
@@ -488,7 +488,7 @@ function PresetEditor({
       </h3>
       <div className="css-glass space-y-5 !rounded-2xl p-5">
         <div>
-          <label className="mb-1.5 block text-xs font-medium text-[var(--text-muted)]">
+          <label className="mb-1.5 block text-sub font-medium text-[var(--text-muted)]">
             名称（1~16 字）
           </label>
           <input
@@ -498,12 +498,12 @@ function PresetEditor({
             maxLength={16}
             placeholder="如：4K 影剧、MT 专搜"
             autoFocus
-            className="w-full rounded-xl border border-white/[0.08] bg-white/[0.04] px-3 py-2 text-[13px] text-[var(--text)] outline-none focus:border-[var(--accent)]/60"
+            className="w-full rounded-xl border border-white/[0.08] bg-white/[0.04] px-3 py-2 text-ui text-[var(--text)] outline-none focus:border-[var(--accent)]/60"
           />
         </div>
 
         <div>
-          <p className="mb-1.5 text-xs font-medium text-[var(--text-muted)]">
+          <p className="mb-1.5 text-sub font-medium text-[var(--text-muted)]">
             资源分类 <span className="text-[var(--text-faint)]">（不勾选 = 不限分类）</span>
           </p>
           <div className="flex flex-wrap gap-1.5">
@@ -521,13 +521,13 @@ function PresetEditor({
         </div>
 
         <div>
-          <p className="mb-1.5 text-xs font-medium text-[var(--text-muted)]">
+          <p className="mb-1.5 text-sub font-medium text-[var(--text-muted)]">
             搜索站点 <span className="text-[var(--text-faint)]">（不勾选 = 全部可用站点）</span>
           </p>
           {siteOptions === null ? (
-            <p className="text-[12px] text-[var(--text-faint)]">正在加载站点列表…</p>
+            <p className="text-sub text-[var(--text-faint)]">正在加载站点列表…</p>
           ) : siteOptions.length === 0 ? (
-            <p className="text-[12px] text-[var(--text-faint)]">
+            <p className="text-sub text-[var(--text-faint)]">
               还没有接入任何站点；先切到「站点接入」标签页添加，或直接保存（默认搜全部可用站点）。
             </p>
           ) : (
@@ -543,7 +543,7 @@ function PresetEditor({
                   }`}
                 >
                   {site.displayName}
-                  {!site.usable && <span className="ml-1 text-[10px]">·不可用</span>}
+                  {!site.usable && <span className="ml-1 text-micro">·不可用</span>}
                 </button>
               ))}
             </div>
@@ -552,8 +552,8 @@ function PresetEditor({
 
         <div className="flex items-center gap-3">
           <div className="min-w-0 flex-1">
-            <p className="text-xs font-medium text-[var(--text-muted)]">图览模式</p>
-            <p className="mt-0.5 text-[11px] leading-4 text-[var(--text-faint)]">
+            <p className="text-sub font-medium text-[var(--text-muted)]">图览模式</p>
+            <p className="mt-0.5 text-caption leading-4 text-[var(--text-faint)]">
               用该分类搜索时，带海报的结果默认以图墙展示（仅部分站点返回海报，
               如 M-Team）；结果页右上角可随时临时切换。
             </p>
@@ -572,8 +572,8 @@ function PresetEditor({
 
         <div className="flex items-center gap-3">
           <div className="min-w-0 flex-1">
-            <p className="text-xs font-medium text-[var(--text-muted)]">无痕搜索</p>
-            <p className="mt-0.5 text-[11px] leading-4 text-[var(--text-faint)]">
+            <p className="text-sub font-medium text-[var(--text-muted)]">无痕搜索</p>
+            <p className="mt-0.5 text-caption leading-4 text-[var(--text-faint)]">
               用该分类搜索时不写入搜索历史，搜索面板的「最近搜索」不会出现相关记录，
               适合隐私敏感的分类。
             </p>
@@ -595,7 +595,7 @@ function PresetEditor({
             type="button"
             onClick={onCancel}
             disabled={busy}
-            className="btn-glass px-3.5 py-1.5 text-xs font-medium disabled:opacity-40"
+            className="btn-glass px-3.5 py-1.5 text-sub font-medium disabled:opacity-40"
           >
             取消
           </button>
@@ -603,7 +603,7 @@ function PresetEditor({
             type="button"
             onClick={onSave}
             disabled={busy || !draft.name.trim()}
-            className="btn-accent rounded-full px-4 py-1.5 text-xs font-semibold disabled:opacity-40"
+            className="btn-accent rounded-full px-4 py-1.5 text-sub font-semibold disabled:opacity-40"
           >
             {busy ? "保存中…" : "保存"}
           </button>

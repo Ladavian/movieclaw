@@ -37,7 +37,7 @@ export function useLlmConfigured(): boolean | null {
 /** 未配置模型时的引导提示：告知原因 + 一键跳转设置页。 */
 export function LlmSetupNotice() {
   return (
-    <p className="notice-surface mt-3 rounded-xl border border-[var(--line)] px-3.5 py-2.5 text-[13px] leading-5 text-[var(--text-muted)]">
+    <p className="notice-surface mt-3 rounded-xl border border-[var(--line)] px-3.5 py-2.5 text-ui leading-5 text-[var(--text-muted)]">
       尚未接入 AI 模型，暂时无法开始对话。请先前往
       <Link href="/settings/llm" className="mx-0.5 text-[var(--accent)] hover:underline">
         设置 → AI 模型
