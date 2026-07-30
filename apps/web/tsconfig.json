@@ -39,6 +39,7 @@
     ".next-importbadge/types/**/*.ts",
     ".next-mapcopy/types/**/*.ts",
     ".next-mobilechrome/types/**/*.ts",
+    ".next-nanoid-preview/types/**/*.ts",
     ".next-newtask/types/**/*.ts",
     ".next-preview-dense/types/**/*.ts",
     ".next-preview-dirpick/types/**/*.ts",
@@ -58,15 +59,20 @@
     ".next-preview-setmenu/types/**/*.ts",
     ".next-preview-sort/types/**/*.ts",
     ".next-preview-toolbar/types/**/*.ts",
+    ".next-preview-tracking/types/**/*.ts",
     ".next-preview-unident/types/**/*.ts",
+    ".next-preview-wall/types/**/*.ts",
+    ".next-preview/types/**/*.ts",
+    ".next-rowload/types/**/*.ts",
     ".next-scanux/types/**/*.ts",
     ".next-subcancel/types/**/*.ts",
     ".next-subinspector/types/**/*.ts",
     ".next-tapguard/types/**/*.ts",
+    ".next-transfer/types/**/*.ts",
     ".next-wishbtn/types/**/*.ts",
     ".next/types/**/*.ts",
     "next-env.d.ts",
-    ".next-nanoid-preview/types/**/*.ts"
+    ".next-herobtn/types/**/*.ts"
   ],
   "exclude": [
     "node_modules"

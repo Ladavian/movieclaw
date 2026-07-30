@@ -197,7 +197,7 @@ async def test_library_wall_query_count_is_flat(db, tmp_path) -> None:
             _sink.append(stmt)
 
         async with db.session() as session:
-            resp = await list_library_items(library_id, session)
+            resp = await list_library_items(library_id, session=session)
         event.remove(engine, "before_cursor_execute", _tally)
 
         assert len(resp.data) == count

@@ -6,24 +6,30 @@ import { useRouter } from "next/navigation";
 import type { Route } from "next";
 
 import {
+  CheckIcon,
   ChevronLeftIcon,
   ChevronRightIcon,
   GlobeIcon,
-  InfoIcon,
-  BellIcon,
+  PlusIcon,
   StarIcon,
 } from "@/components/icons";
 import { MediaRow } from "@/components/media-row";
 import { PosterImage } from "@/components/poster-image";
-import { fetchDiscoverPage } from "@/lib/api/discover";
+import { useSubscribeEntry } from "@/components/subscribe-entry";
+import {
+  fetchDiscoverHero,
+  fetchDiscoverLayout,
+  fetchDiscoverRow,
+} from "@/lib/api/discover";
 import { HttpError } from "@/lib/http";
 import { useMediaDetail } from "@/lib/media-detail";
 import { usePageChrome } from "@/lib/page-chrome";
 import { useIsMobile } from "@/lib/use-media-query";
 import { useTapGuard } from "@/lib/use-tap-guard";
 import type {
-  DiscoverPageData,
+  DiscoverLayoutData,
   MediaItem,
+  MediaRowData,
   MediaSource,
   MediaType,
 } from "@/lib/media-types";
@@ -35,11 +41,15 @@ import type {
  *   1. HeroBanner —— 精选影片轮播大横幅（宽幅剧照 + 渐变蒙版 + 标题区 + 操作按钮）
  *   2. 若干 MediaRow —— 「今日热榜 Top 10（排名变体）/ 热门 / 高分 / …」横滚海报行
  *
- * 数据来自后端 /discover 聚合接口（数据源 TMDB，服务端缓存 30 分钟）；
- * 前端再做一层模块级内存缓存，「发现电影 ↔ 发现剧集」来回切换即时呈现，
- * 刷新页面才会重新拉取。
+ * 渐进加载：先拉毫秒级的布局接口拿到行清单，立刻按真实行名撑起整页骨架，
+ * 再按行序逐行请求数据、先就绪的行先淡入。这对豆瓣视角尤其关键——后端对
+ * 豆瓣限速每秒 1 个请求，冷缓存整页聚合要十几秒，逐行加载让首行 1~2 秒可见。
+ * 布局/Hero/单行分别做模块级内存缓存，「发现电影 ↔ 发现剧集」来回切换即时
+ * 呈现，刷新页面才会重新拉取。
  */
-const pageCache = new Map<string, DiscoverPageData>();
+const layoutCache = new Map<string, DiscoverLayoutData>();
+const heroCache = new Map<string, MediaItem[]>();
+const rowCache = new Map<string, MediaRowData>();
 
 /** 加载失败信息：除文案外带上后端错误码与引导提示，驱动引导式错误态。 */
 interface DiscoverErrorInfo {
@@ -74,24 +84,92 @@ export function DiscoverView({
 }) {
   const router = useRouter();
   const cacheKey = `${mediaType}:${source}`;
-  const [page, setPage] = useState<DiscoverPageData | null>(
-    () => pageCache.get(cacheKey) ?? null,
+  const [layout, setLayout] = useState<DiscoverLayoutData | null>(
+    () => layoutCache.get(cacheKey) ?? null,
   );
+  // Hero 三态：undefined=加载中（出骨架）、[]=无或失败（收起）、有值=轮播
+  const [hero, setHero] = useState<MediaItem[] | undefined>(
+    () => heroCache.get(cacheKey),
+  );
+  // 每行三态：undefined=加载中（出骨架）、"error"=失败（收起）、有值=渲染
+  const [rowsById, setRowsById] = useState<Record<string, MediaRowData | "error">>({});
   const [error, setError] = useState<DiscoverErrorInfo | null>(null);
   // 重试计数器：点「重试」时 +1，触发 effect 重新拉取
   const [reloadKey, setReloadKey] = useState(0);
 
   useEffect(() => {
-    const cached = pageCache.get(cacheKey);
-    setPage(cached ?? null);
-    setError(null);
-    if (cached) return;
-
     let cancelled = false;
-    fetchDiscoverPage(mediaType, source)
+    setError(null);
+    setHero(heroCache.get(cacheKey));
+
+    // 已缓存的行直接进入初始状态，未缓存的保持 undefined（骨架）等待逐行到达
+    const seedRows = (rows: DiscoverLayoutData["rows"]) => {
+      const seeded: Record<string, MediaRowData | "error"> = {};
+      for (const stub of rows) {
+        const cached = rowCache.get(`${cacheKey}:${stub.id}`);
+        if (cached) seeded[stub.id] = cached;
+      }
+      setRowsById(seeded);
+      return seeded;
+    };
+
+    // 布局就绪后逐行拉数据：请求按行序发起，豆瓣限速器先到先得，
+    // 数据自上而下依次填充，与用户视线顺序一致。全部行都失败时才
+    // 整页转为错误态（通常是网络不通），部分失败只收起对应行。
+    const loadPage = (pageLayout: DiscoverLayoutData) => {
+      const seeded = seedRows(pageLayout.rows);
+      if (pageLayout.hasHero) {
+        if (!heroCache.has(cacheKey)) {
+          fetchDiscoverHero(mediaType, source)
+            .then((items) => {
+              heroCache.set(cacheKey, items);
+              if (!cancelled) setHero(items);
+            })
+            .catch(() => {
+              // Hero 失败只收起大横幅，不影响行数据
+              if (!cancelled) setHero([]);
+            });
+        }
+      } else {
+        setHero([]);
+      }
+
+      const pending = pageLayout.rows.filter((stub) => !seeded[stub.id]);
+      let failed = 0;
+      let firstError: DiscoverErrorInfo | null = null;
+      for (const stub of pending) {
+        fetchDiscoverRow(mediaType, stub.id, source)
+          .then((row) => {
+            rowCache.set(`${cacheKey}:${stub.id}`, row);
+            if (!cancelled) setRowsById((prev) => ({ ...prev, [stub.id]: row }));
+          })
+          .catch((err: unknown) => {
+            firstError ??= toErrorInfo(err);
+            failed += 1;
+            if (cancelled) return;
+            setRowsById((prev) => ({ ...prev, [stub.id]: "error" }));
+            // 没有任何一行成功（含缓存）且全部请求都失败：整页转错误态
+            if (failed === pending.length && pending.length === pageLayout.rows.length) {
+              setError(firstError);
+            }
+          });
+      }
+    };
+
+    const cachedLayout = layoutCache.get(cacheKey);
+    setLayout(cachedLayout ?? null);
+    if (cachedLayout) {
+      loadPage(cachedLayout);
+      return () => {
+        cancelled = true;
+      };
+    }
+    fetchDiscoverLayout(mediaType, source)
       .then((data) => {
-        pageCache.set(cacheKey, data);
-        if (!cancelled) setPage(data);
+        layoutCache.set(cacheKey, data);
+        if (cancelled) return;
+        setLayout(data);
+        loadPage(data);
       })
       .catch((err: unknown) => {
         if (!cancelled) setError(toErrorInfo(err));
@@ -134,7 +212,7 @@ export function DiscoverView({
       </div>
     );
   }
-  if (!page) {
+  if (!layout) {
     return (
       <div className="flex flex-1 flex-col">
         {toolbar}
@@ -145,13 +223,24 @@ export function DiscoverView({
   return (
     <div className="scroll-thin scroll-safe flex-1 overflow-y-auto pb-10">
       {toolbar}
-      {page.hero.length > 0 && (
+      {/* Hero 区：布局声明有 Hero 时先占位，数据到达后换成轮播；失败/无则收起 */}
+      {layout.hasHero && hero === undefined && (
         <div className="px-6 max-md:px-4">
-          <HeroBanner items={page.hero} />
+          <HeroSkeleton />
+        </div>
+      )}
+      {hero && hero.length > 0 && (
+        <div className="px-6 max-md:px-4">
+          <HeroBanner items={hero} />
         </div>
       )}
       <div className="mt-8 space-y-8">
-        {page.rows.map((row) => {
+        {layout.rows.map((stub) => {
+          const row = rowsById[stub.id];
+          // 失败或条目太少（空 items）的行整行收起
+          if (row === "error") return null;
+          if (row && row.items.length === 0) return null;
+          if (!row) return <RowSkeleton key={stub.id} stub={stub} />;
           const isTop250 = row.id === "douban-movie_top250";
           return (
             <MediaRow
@@ -196,25 +285,63 @@ function SourceSwitcher({
   );
 }
 
-/** 加载骨架：按真实页面布局占位（Hero 大块 + 两行海报），避免切页闪白。 */
+/** 布局到达前的整页骨架（Hero 大块 + 两行海报）；布局是毫秒级的，一闪而过。 */
 function DiscoverSkeleton() {
   return (
     <div className="flex-1 overflow-hidden px-6 pb-10 max-md:px-4" aria-busy="true" aria-label="发现页加载中">
-      <div className="h-[46vh] min-h-[320px] animate-pulse rounded-2xl bg-white/[0.05] ring-1 ring-white/10 max-md:h-[38vh] max-md:min-h-[230px]" />
+      <HeroSkeleton />
       {[0, 1].map((row) => (
         <div key={row} className="mt-10">
           <div className="h-4 w-28 animate-pulse rounded bg-white/[0.08]" />
           <div className="mt-4 flex gap-4 overflow-hidden">
-            {Array.from({ length: 8 }, (_, i) => (
-              <div
-                key={i}
-                className="aspect-[2/3] w-[152px] shrink-0 animate-pulse rounded-2xl bg-white/[0.05] max-md:w-[126px] xl:w-[164px]"
-              />
-            ))}
+            <RowItemsSkeleton />
           </div>
         </div>
       ))}
     </div>
+  );
+}
+
+/** Hero 大横幅的占位块（与真实 Hero 同尺寸，数据到达后原位替换不跳版）。 */
+function HeroSkeleton() {
+  return (
+    <div className="h-[46vh] min-h-[320px] animate-pulse rounded-2xl bg-white/[0.05] ring-1 ring-white/10 max-md:h-[38vh] max-md:min-h-[230px]" />
+  );
+}
+
+/**
+ * 单行加载骨架：行标题实显（来自布局），海报区闪烁占位。
+ * 标题栏与横滚区的留白复刻 MediaRow 的布局，数据到达后原位替换不跳版；
+ * 这一行行「亮着名字等数据」的骨架就是页面的分区加载进度。
+ */
+function RowSkeleton({ stub }: { stub: { title: string; ranked?: boolean } }) {
+  return (
+    <section aria-busy="true" aria-label={`「${stub.title}」加载中`}>
+      <div className="mb-3 px-6 max-md:mb-2 max-md:px-4">
+        <h3 className="text-on-image text-body-lg font-semibold tracking-[-0.01em] text-[var(--text)]">
+          {stub.title}
+        </h3>
+      </div>
+      <div className="flex gap-4 overflow-hidden px-6 pb-1 pt-1 max-md:gap-3 max-md:px-4">
+        <RowItemsSkeleton ranked={stub.ranked} />
+      </div>
+    </section>
+  );
+}
+
+/** 一排海报占位卡；ranked 行的卡片更宽，与真实 Top 10 行对齐。 */
+function RowItemsSkeleton({ ranked }: { ranked?: boolean }) {
+  return (
+    <>
+      {Array.from({ length: 8 }, (_, i) => (
+        <div
+          key={i}
+          className={`aspect-[2/3] shrink-0 animate-pulse rounded-2xl bg-white/[0.05] ${
+            ranked ? "w-[188px] max-md:w-[156px]" : "w-[152px] max-md:w-[126px] xl:w-[164px]"
+          }`}
+        />
+      ))}
+    </>
   );
 }
 
@@ -350,19 +477,37 @@ function HeroSlide({
   preload: boolean;
 }) {
   const { open } = useMediaDetail();
+  const { open: openSubscribe, subscriptionOf } = useSubscribeEntry();
+  // 该影片是否已有订阅（数据来自 SubscribeEntryProvider 的全站订阅列表，Hero 自身不发请求）
+  const existingSub = subscriptionOf(item);
   // 「粘性」装载：轮到过一次就永久保留 src（浏览器已缓存，重复挂载无成本）
   const [revealed, setRevealed] = useState(preload);
   useEffect(() => {
     if (preload) setRevealed(true);
   }, [preload]);
-  // Hero 占满首屏，手机上「向下滑看海报墙」几乎必然从这块起手，
-  // 「更多信息」正落在起手区里，同样过一遍误触判定。
+  // 整块 Hero 就是进详情的入口（与海报卡片「点海报进详情」一致，不再另设「更多信息」键）。
+  // Hero 占满首屏，手机上「向下滑看海报墙」几乎必然从这块起手，所以点击要过一遍误触判定。
   const tapGuard = useTapGuard(() => open(item));
+  const subscribeTapGuard = useTapGuard(() => void openSubscribe(item));
   return (
     <div
       aria-hidden={!active}
-      className={`absolute inset-0 transition-opacity duration-700 ease-out ${
-        active ? "z-[1] opacity-100" : "z-0 opacity-0"
+      // 非当前帧虽然透明但仍占满同一块区域，必须关掉命中测试，否则点击可能落到它身上
+      role={active ? "button" : undefined}
+      tabIndex={active ? 0 : -1}
+      aria-label={`查看《${item.title}》详情`}
+      {...tapGuard}
+      onKeyDown={(e) => {
+        // 只认落在 Hero 自身上的回车/空格；内部订阅键的按键由它自己处理，
+        // 否则一次回车会同时触发订阅弹层和详情页
+        if (e.target !== e.currentTarget) return;
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          open(item);
+        }
+      }}
+      className={`absolute inset-0 transition-opacity duration-700 ease-out focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-ring)] ${
+        active ? "z-[1] cursor-pointer opacity-100" : "pointer-events-none z-0 opacity-0"
       }`}
     >
       {/* 宽幅剧照 + 双层渐变蒙版：左侧压暗保文字可读，底部渐隐融入页面 */}
@@ -419,21 +564,37 @@ function HeroSlide({
           {item.overview}
         </p>
 
+        {/* 订阅入口：文案/图标/行为与海报卡片完全一致（已订阅则切成状态键，点击进订阅管理）。
+            它嵌在「整块进详情」的点击区里，所以点击必须 stopPropagation，
+            否则订阅弹层弹出的同时详情页也会被打开。 */}
         <div className="mt-5 flex flex-wrap items-center gap-3 max-md:mt-3.5 max-md:gap-2">
           <button
             type="button"
-            className="btn-accent flex h-10 items-center gap-2 rounded-full px-5 text-ui font-semibold"
+            aria-label={existingSub ? `管理《${item.title}》的订阅` : `订阅影片《${item.title}》`}
+            onPointerDown={subscribeTapGuard.onPointerDown}
+            onPointerUp={subscribeTapGuard.onPointerUp}
+            onPointerCancel={subscribeTapGuard.onPointerCancel}
+            onClick={(e) => {
+              e.stopPropagation();
+              subscribeTapGuard.onClick(e);
+            }}
+            className={
+              existingSub
+                ? "flex h-10 items-center gap-2 rounded-full bg-white/[0.18] px-5 text-ui font-semibold text-white/90 backdrop-blur-md transition-colors hover:bg-white/[0.26]"
+                : "btn-accent flex h-10 items-center gap-2 rounded-full px-5 text-ui font-semibold"
+            }
           >
-            <BellIcon className="size-4" />
-            订阅追踪
-          </button>
-          <button
-            type="button"
-            {...tapGuard}
-            className="btn-glass h-10 bg-white/10 px-5 text-ui font-medium backdrop-blur-md"
-          >
-            <InfoIcon className="size-4" />
-            更多信息
+            {existingSub ? (
+              <>
+                <CheckIcon className="size-4 text-[#4ade80]" />
+                已订阅
+              </>
+            ) : (
+              <>
+                <PlusIcon className="size-4" />
+                订阅影片
+              </>
+            )}
           </button>
         </div>
       </div>

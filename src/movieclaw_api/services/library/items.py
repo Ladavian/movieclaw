@@ -26,8 +26,9 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import NamedTuple
+from typing import Literal, NamedTuple
 
+from sqlalchemy import func
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
 
@@ -39,6 +40,7 @@ from movieclaw_api.services.library.nfo import (
     read_entry_metadata,
     read_episode_metadata,
 )
+from movieclaw_api.services.library.sort_key import title_initial, title_sort_key
 from movieclaw_api.services.media_probe import probe_media
 from movieclaw_api.services.media_scrape import asset_version, file_version
 from movieclaw_db.models import Library, LibraryFile, MediaItem, utcnow
@@ -63,6 +65,7 @@ def _get_display_cache():
 
         _display_cache = SwrCache(SqlCacheStore(), "library_display")
     return _display_cache
+
 
 # ---------------------------------------------------------------------------
 # 条目目录与本地美术图
@@ -146,8 +149,124 @@ class _FileFacts(NamedTuple):
     unprobed: bool
 
 
-async def build_library_wall(session: AsyncSession, library_id: int) -> list[LibraryItemView]:
+WallSort = Literal["title", "added_at", "probing"]
+
+
+async def _titles_sorted(session: AsyncSession, library_id: int) -> list[tuple[int, str]]:
+    """本库全部条目的 (id, 标题)，按拼音序排好。
+
+    按标题排序不走 SQL：SQLite 对中文按码点排，出来的顺序对用户没有意义
+    （详见 sort_key 模块）。这里只取一列标题排序，本页的聚合仍只算 limit
+    个条目——贵的是聚合，不是排一列标题。索引条（A-Z 分档）与按标题分页
+    共用这份排好的名单，口径天然一致。
+    """
+    rows = (
+        await session.execute(
+            select(LibraryFile.media_item_id, MediaItem.title)
+            .join(MediaItem, MediaItem.id == LibraryFile.media_item_id)  # type: ignore[arg-type]
+            .where(
+                LibraryFile.library_id == library_id,
+                LibraryFile.media_item_id.is_not(None),  # type: ignore[union-attr]
+            )
+            .distinct()
+        )
+    ).all()
+    # id 收尾：拼音串相同（同名不同条目）时顺序必须稳定，否则翻页会重复或漏项
+    return sorted(
+        ((i, t) for i, t in rows if i is not None), key=lambda r: (title_sort_key(r[1]), r[0])
+    )
+
+
+async def build_library_index(session: AsyncSession, library_id: int) -> list[tuple[str, int, int]]:
+    """按标题排序下的首字母分档：[(首字母, 条目数, 起始 offset)]，只回非空档。
+
+    起始 offset 就是海报墙 ``?sort=title&offset=`` 的取值——前端点一下
+    字母即可跳到该档第一格。
+    """
+    ordered = await _titles_sorted(session, library_id)
+    buckets: list[tuple[str, int, int]] = []
+    for index, (_, title) in enumerate(ordered):
+        initial = title_initial(title)
+        if buckets and buckets[-1][0] == initial:
+            head, count, start = buckets[-1]
+            buckets[-1] = (head, count + 1, start)
+        else:
+            buckets.append((initial, 1, index))
+    return buckets
+
+
+async def _wall_page_ids(
+    session: AsyncSession,
+    library_id: int,
+    sort: WallSort,
+    limit: int | None,
+    offset: int,
+) -> list[int]:
+    """按 sort 排好序的本页条目 id（无 limit 时是全库）。
+
+    先把「这一页是哪些条目」定下来，后面的聚合才能只算这几十个条目。
+    每个排序都以 media_item_id 收尾——排序键相等时顺序必须稳定，
+    否则翻页会出现某条目重复出现、另一条目永远刷不到的漏项。
+    """
+    if sort == "title":
+        ids = [i for i, _ in await _titles_sorted(session, library_id)]
+        return ids if limit is None else ids[offset : offset + limit]
+
+    if sort == "added_at":
+        # 「最近添加」：条目的入账时间取它名下最新的一次文件入账
+        query = (
+            select(LibraryFile.media_item_id)
+            .where(
+                LibraryFile.library_id == library_id,
+                LibraryFile.media_item_id.is_not(None),  # type: ignore[union-attr]
+            )
+            .group_by(LibraryFile.media_item_id)  # type: ignore[arg-type]
+            .order_by(
+                func.max(LibraryFile.created_at).desc(),
+                LibraryFile.media_item_id.desc(),  # type: ignore[union-attr]
+            )
+        )
+        if limit is not None:
+            query = query.limit(limit).offset(offset)
+        return [i for i in (await session.execute(query)).scalars().all() if i is not None]
+
+    # probing：扫描补探阶段把「还有文件没读出规格」的条目提到墙最前面，
+    # 用户能看见"在处理哪几部"；两段各自保持拼音序（sorted 稳定排序）
+    ordered = await _titles_sorted(session, library_id)
+    unprobed = {
+        i
+        for i in (
+            await session.execute(
+                select(LibraryFile.media_item_id)
+                .where(
+                    LibraryFile.library_id == library_id,
+                    LibraryFile.media_item_id.is_not(None),  # type: ignore[union-attr]
+                    LibraryFile.audio_streams.is_(None),  # type: ignore[union-attr]
+                    LibraryFile.missing_since.is_(None),  # type: ignore[union-attr]
+                )
+                .distinct()
+            )
+        )
+        .scalars()
+        .all()
+    }
+    ids = [i for i, _ in sorted(ordered, key=lambda row: row[0] not in unprobed)]
+    return ids if limit is None else ids[offset : offset + limit]
+
+
+async def build_library_wall(
+    session: AsyncSession,
+    library_id: int,
+    *,
+    sort: WallSort = "title",
+    limit: int | None = None,
+    offset: int = 0,
+) -> list[LibraryItemView]:
     """库内媒体条目的库存聚合（单库海报墙数据源）。
+
+    ``limit`` 给定时只聚合这一页的条目——首页「最近添加」只要 20 格，
+    海报墙滚动加载一次要一屏，都不该为此把整库的台账行捞出来算一遍。
+    不给 limit 则是全库（保留给一次性拿完整库存的调用方）。
 
     调用方需自行完成库存在性检查（404）。
     """
@@ -155,6 +274,20 @@ async def build_library_wall(session: AsyncSession, library_id: int) -> list[Lib
     from movieclaw_db.models import MediaMetadata
     from movieclaw_db.repositories.library_file_repo import LibraryFileRepository
     from movieclaw_db.repositories.media_repo import MediaItemRepository
+
+    page_ids = await _wall_page_ids(session, library_id, sort, limit, offset)
+    if not page_ids:
+        return []
+    # 分页时按 id 列表收窄（一页几十个，绑定变量绰绰有余）；全库时走子查询
+    # ——SQLite 的绑定变量数有上限，几千个 id 塞进 IN 列表会撞
+    in_page = (
+        select(LibraryFile.media_item_id).where(
+            LibraryFile.library_id == library_id,
+            LibraryFile.media_item_id.is_not(None),  # type: ignore[union-attr]
+        )
+        if limit is None
+        else page_ids
+    )
 
     # 只取聚合真正用得上的六列，不整行取 ORM 对象：台账行有四十来列、其中
     # 三列是 JSON（音轨/字幕/候选），整行取意味着一部三万集的库要反序列化
@@ -172,28 +305,16 @@ async def build_library_wall(session: AsyncSession, library_id: int) -> list[Lib
                 LibraryFile.audio_streams.is_(None),  # type: ignore[union-attr]
             ).where(
                 LibraryFile.library_id == library_id,
-                LibraryFile.media_item_id.is_not(None),  # type: ignore[union-attr]
+                LibraryFile.media_item_id.in_(in_page),  # type: ignore[union-attr]
             )
         )
     ).all()
     files_by_item: dict[int, list[_FileFacts]] = {}
     for media_item_id, *facts in file_rows:
         files_by_item.setdefault(media_item_id, []).append(_FileFacts(*facts))
-    # 用子查询而不是把几千个 id 塞进 IN 列表：SQLite 的绑定变量数有上限，
-    # 大库会撞。条目行本身要整取——展示要用到标题/年份/状态等大部分列
+    # 条目行整取——展示要用到标题/年份/状态等大部分列
     items = (
-        (
-            await session.execute(
-                select(MediaItem).where(
-                    MediaItem.id.in_(  # type: ignore[attr-defined]
-                        select(LibraryFile.media_item_id).where(
-                            LibraryFile.library_id == library_id,
-                            LibraryFile.media_item_id.is_not(None),  # type: ignore[union-attr]
-                        )
-                    )
-                )
-            )
-        )
+        (await session.execute(select(MediaItem).where(MediaItem.id.in_(in_page))))  # type: ignore[attr-defined]
         .scalars()
         .all()
     )
@@ -224,7 +345,7 @@ async def build_library_wall(session: AsyncSession, library_id: int) -> list[Lib
             )
         ).all()
     }
-    views = []
+    by_id: dict[int, LibraryItemView] = {}
     for item, files in grouped.values():
         units = {(f.season_number, f.episode_number) for f in files}
         if item.kind == "tv":
@@ -239,31 +360,27 @@ async def build_library_wall(session: AsyncSession, library_id: int) -> list[Lib
             poster_url = f"/images/assets/{rel}?v={asset_version(rel)}"
         else:
             poster_url = f"{base}/w500{item.poster_path}" if item.poster_path else None
-        views.append(
-            LibraryItemView(
-                media_item_id=item.id,  # type: ignore[arg-type]
-                kind=MediaKind(item.kind),
-                tmdb_id=item.tmdb_id,
-                title=item.title,
-                year=item.year,
-                poster_url=poster_url,
-                file_count=len(files),
-                total_size_bytes=sum(f.size_bytes for f in files),
-                seasons=sorted({s for s, _ in units if item.kind == "tv"}),
-                episode_count=len(units) if item.kind == "tv" else 0,
-                resolutions=sorted({f.resolution for f in files if f.resolution}, reverse=True),
-                missing_count=sum(1 for f in files if f.missing_since is not None),
-                air_status=derive_air_status(item.status) if item.kind == "tv" else None,
-                missing_episode_count=missing_episodes,
-                added_at=max(f.created_at for f in files),
-                # 缺失文件不算「待补探」：文件都不在了，探不是「还没轮到」而是「探不了」
-                probe_pending_count=sum(
-                    1 for f in files if f.unprobed and f.missing_since is None
-                ),
-            )
+        by_id[item.id] = LibraryItemView(  # type: ignore[index]
+            media_item_id=item.id,  # type: ignore[arg-type]
+            kind=MediaKind(item.kind),
+            tmdb_id=item.tmdb_id,
+            title=item.title,
+            year=item.year,
+            poster_url=poster_url,
+            file_count=len(files),
+            total_size_bytes=sum(f.size_bytes for f in files),
+            seasons=sorted({s for s, _ in units if item.kind == "tv"}),
+            episode_count=len(units) if item.kind == "tv" else 0,
+            resolutions=sorted({f.resolution for f in files if f.resolution}, reverse=True),
+            missing_count=sum(1 for f in files if f.missing_since is not None),
+            air_status=derive_air_status(item.status) if item.kind == "tv" else None,
+            missing_episode_count=missing_episodes,
+            added_at=max(f.created_at for f in files),
+            # 缺失文件不算「待补探」：文件都不在了，探不是「还没轮到」而是「探不了」
+            probe_pending_count=sum(1 for f in files if f.unprobed and f.missing_since is None),
         )
-    views.sort(key=lambda v: v.title)
-    return views
+    # 顺序以选页查询为准（排序已在 SQL 里定好），不在这里二次排序
+    return [by_id[i] for i in page_ids if i in by_id]
 
 
 @dataclass
@@ -425,9 +542,7 @@ async def build_season_episodes(
     from movieclaw_db.models import MediaEpisode
 
     season_rows = [
-        row
-        for row in files
-        if row.season_number == season_number and row.episode_number > 0
+        row for row in files if row.season_number == season_number and row.episode_number > 0
     ]
     by_episode: dict[int, list[LibraryFile]] = {}
     for row in season_rows:
@@ -539,9 +654,7 @@ async def _fill_from_tmdb_season(
             info.still_url = f"{image_base}/w300{still}"
 
 
-async def _fill_actor_thumbs(
-    session: AsyncSession, item: MediaItem, meta: EntryMetadata
-) -> None:
+async def _fill_actor_thumbs(session: AsyncSession, item: MediaItem, meta: EntryMetadata) -> None:
     """给 NFO 里缺 ``<thumb>`` 或缺 ``<tmdbid>`` 的演员按姓名回填库内档案（就地改 meta）。
 
     很多刮削器（包括本项目早期版本）只往 NFO 写演员姓名与角色，不写头像，
@@ -561,9 +674,7 @@ async def _fill_actor_thumbs(
     row = await MediaItemRepository(session).get_metadata(item.id)
     if row is None or not row.cast:
         return
-    by_name = {
-        (c.get("name") or "").strip(): c for c in row.cast if c.get("name")
-    }
+    by_name = {(c.get("name") or "").strip(): c for c in row.cast if c.get("name")}
     if not by_name:
         return
     image_base = get_settings().tmdb_image_base_url.rstrip("/")
@@ -916,7 +1027,9 @@ def _remove_file_with_sidecars(path: Path, result: DeleteResult) -> bool:
                 continue
             name = entry.stem.lower()
             is_sidecar = entry.suffix.lower() in _SUBTITLE_EXTS | {".nfo"} | set(_ART_EXTS)
-            if is_sidecar and (name == stem or name.startswith(stem + ".") or name.startswith(stem + "-")):
+            if is_sidecar and (
+                name == stem or name.startswith(stem + ".") or name.startswith(stem + "-")
+            ):
                 try:
                     os.remove(entry)
                     result.removed_paths.append(str(entry))

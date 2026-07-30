@@ -87,6 +87,7 @@ from movieclaw_db.models import (
     Library,
     LibraryFile,
     MediaItem,
+    NoticeSeverity,
     utcnow,
 )
 from movieclaw_db.models.scheduled_task import TriggerType
@@ -254,10 +255,33 @@ async def _sweep_dir(rule: ImportWatch, library: Library | None) -> None:
                 await _process_entry(rule, library, root, entry, briefs)
             except Exception:  # noqa: BLE001 -- 单条目失败不断整轮
                 logger.exception("处理监听条目失败：%s", entry)
-        # 条目从监听目录消失（用户删源）后清掉它的静默观察，防字典无界增长
+        # 条目从监听目录消失（用户删源）后清掉它的静默观察，防字典无界增长；
+        # 它的失败告警（若有）也一并熄灭——源没了，问题就不存在了
         prefix = str(root).rstrip("/") + "/"
         for key in [k for k in _stability if k.startswith(prefix) and k not in seen]:
             _stability.pop(key, None)
+        from movieclaw_api.services.system_notice import resolve_notices
+        from movieclaw_db.models import NoticeStatus, SystemNotice
+
+        db = get_database()
+        async with db.session() as session:
+            stale = [
+                row.dedupe_key
+                for row in (
+                    await session.execute(
+                        select(SystemNotice).where(
+                            SystemNotice.source == "ingest",
+                            SystemNotice.status == NoticeStatus.ACTIVE.value,
+                            SystemNotice.dedupe_key.startswith(f"ingest:{prefix}"),  # type: ignore[attr-defined]
+                        )
+                    )
+                )
+                .scalars()
+                .all()
+                if row.dedupe_key.removeprefix("ingest:") not in seen
+            ]
+            for key in stale:
+                await resolve_notices(session, dedupe_key=key)
 
 
 async def _downloader_briefs() -> list | None:
@@ -708,9 +732,23 @@ async def _save_record(
             record.library_id = library.id  # auto 条目此前失败无归属，路由成功后补上
     await session.commit()
     _stability.pop(entry_path, None)
+    # 全局红灯：处理失败是"不修就不入库"的用户可行动错误（改名/换策略/装
+    # ffprobe），必须跳出台账被感受到；成功或跳过则代表问题消失，就地熄灯
+    from movieclaw_api.services.system_notice import resolve_notices, upsert_notice
+
     if status is IngestStatus.FAILED:
+        await upsert_notice(
+            session,
+            dedupe_key=f"ingest:{entry_path}",
+            severity=NoticeSeverity.ERROR,
+            source="ingest",
+            title=f"「{Path(entry_path).name}」监听导入失败",
+            message=message,
+            payload={"entry_path": entry_path},
+        )
         logger.warning("监听导入未完成（%s）：%s", entry_path, message)
     else:
+        await resolve_notices(session, dedupe_key=f"ingest:{entry_path}")
         logger.info("监听导入（%s）：%s", entry_path, message)
 
 

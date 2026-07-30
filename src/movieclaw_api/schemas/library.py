@@ -203,6 +203,16 @@ def derive_air_status(status: str | None) -> Literal["airing", "ended"] | None:
     return None
 
 
+class LibraryIndexEntryView(BaseModel):
+    """海报墙 A-Z 索引条的一档（按标题排序下的首字母分组）。"""
+
+    initial: str = Field(description="首字母档：A-Z，落不进的（数字/符号/假名等）为 #")
+    count: int = Field(description="该档的条目数")
+    offset: int = Field(
+        description="该档第一格在按标题排序中的位置——即 /items?sort=title&offset= 的取值"
+    )
+
+
 class LibraryItemView(BaseModel):
     """库内一个媒体条目的库存聚合（单库海报墙的一格）。"""
 
@@ -455,6 +465,85 @@ class ReidentifyResultView(BaseModel):
         description="身份由目录名 tmdbid 标记或 NFO 钉死——结果不满意需先改标记/NFO 或人工认领",
     )
     message: str = Field(description="面向用户的结论文案")
+
+
+class TransferPayload(BaseModel):
+    """条目转移的请求体：只需要目标库。"""
+
+    target_library_id: int = Field(description="转移目标库 id（必须与当前库同类型）")
+
+
+class TransferMoveView(BaseModel):
+    """转移预览里的一个搬运单元。"""
+
+    source_path: str
+    target_path: str
+    is_dir: bool = Field(description="true=整个条目目录搬走；false=只搬这一个文件")
+    size_bytes: int
+    file_count: int = Field(description="本单元随迁的台账行数")
+
+
+class TransferSkipView(BaseModel):
+    """预览里的一条跳过说明：哪个路径、为什么不搬它。"""
+
+    file_path: str
+    reason: str
+
+
+class TransferPreviewView(BaseModel):
+    """转移预览：完整的「将要发生什么」，用户确认后才执行。"""
+
+    target_library_id: int
+    target_library_name: str
+    target_root: str = Field(description="目标库主根——条目目录会搬到这里")
+    moves: list[TransferMoveView]
+    skips: list[TransferSkipView] = Field(description="不参与转移的路径与中文原因")
+    total_bytes: int
+    missing_count: int = Field(description="缺失文件数（磁盘无实体，只随迁台账归属）")
+    cross_device: bool = Field(
+        description="目标与源不在同一块盘——将退化为完整复制（耗时，且断开与做种目录的硬链接）"
+    )
+    blocked: list[str] = Field(
+        default_factory=list, description="阻断性问题（如目标已有同名目录）；非空则不给执行"
+    )
+
+
+class TransferStartView(BaseModel):
+    """转移启动响应。"""
+
+    started: bool
+    message: str
+
+
+class TransferStatusView(BaseModel):
+    """转移进度 / 最近一次结论（前端弹窗轮询这一个接口收尾）。"""
+
+    running: bool
+    media_item_id: int | None = None
+    title: str | None = None
+    target_library_id: int | None = None
+    processed: int = 0
+    total: int = 0
+    # 以下为最近一次转移的结论（running=false 且转移过才有）
+    finished_at: datetime | None = None
+    target_library_name: str | None = None
+    moved_paths: list[str] = Field(default_factory=list)
+    files_relocated: int = 0
+    bytes_moved: int = 0
+    removed_dirs: int = 0
+    subscription_moved: bool = Field(
+        default=False, description="该片的订阅是否一并改挂到目标库（后续剧集直接投新库）"
+    )
+    errors: list[str] = Field(default_factory=list)
+
+    @field_serializer("finished_at")
+    def _serialize_utc(self, value: datetime | None) -> str | None:
+        # 后端存的是 naive UTC，补上 +00:00 前端才不会按本地时区解读
+        if value is None:
+            return None
+        if value.tzinfo is None:
+            value = value.replace(tzinfo=UTC)
+        return value.isoformat()
 
 
 class ItemDeleteResultView(BaseModel):

@@ -14,6 +14,7 @@ import {
   PlusIcon,
   TrashIcon,
 } from "@/components/icons";
+import { NoticeCenter } from "@/components/notice-center";
 import { UserMenu } from "@/components/user-menu";
 import { useAgentConversations } from "@/lib/agent-conversations";
 import { useBackdrop } from "@/lib/backdrop";
@@ -168,6 +169,8 @@ export function Sidebar({
               </button>
             );
           })}
+          {/* 待处理事项：常态零渲染，有"需要用户行动"的运行时故障才亮起 */}
+          <NoticeCenter collapsed={collapsed} />
         </div>
 
         {/* 分组：最近会话（真实 Agent 会话，按最近更新排序；折叠时整组隐藏） */}

@@ -20,7 +20,9 @@ auth tokens create
 auth tokens list
 auth tokens revoke
 discover douban show
-discover page
+discover hero
+discover layout
+discover row
 discover search
 discover show
 dl add
@@ -54,10 +56,14 @@ lib items artwork-download
 lib items artwork-select
 lib items delete
 lib items episodes
+lib items ids
+lib items index
 lib items list
 lib items refresh
 lib items reidentify
 lib items show
+lib items transfer
+lib items transfer preview
 lib list
 lib missing clear
 lib missing list
@@ -73,6 +79,7 @@ lib routing-options
 lib scan start
 lib scan stop
 lib show
+lib transfer status
 lib unidentified clear
 lib unidentified list
 lib update
@@ -86,6 +93,8 @@ logs read
 net set
 net show
 net test
+notices dismiss
+notices list
 people show
 rules create
 rules delete

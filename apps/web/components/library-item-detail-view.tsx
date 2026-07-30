@@ -32,12 +32,18 @@ import {
   type ReidentifyResult,
   type SeasonEpisodes,
   type SubtitleStream,
+  type TransferPreview,
+  type TransferStatus,
   deleteLibraryItem,
   getItemEpisodes,
   getLibrary,
   getLibraryItemDetail,
+  getTransferStatus,
+  listLibraries,
+  previewItemTransfer,
   refreshItemMetadata,
   reidentifyLibraryItem,
+  transferLibraryItem,
 } from "@/lib/api/libraries";
 import { useBackdrop } from "@/lib/backdrop";
 import { formatBytes } from "@/lib/format";
@@ -84,6 +90,8 @@ export function LibraryItemDetailView({
   const [artworkOpen, setArtworkOpen] = useState(false);
   // 删除确认弹窗
   const [deleteOpen, setDeleteOpen] = useState(false);
+  // 转移到其他库的弹窗（选库 → 预览 → 执行 → 进度 → 结论）
+  const [transferOpen, setTransferOpen] = useState(false);
 
   const reload = useCallback(() => {
     setFailed(false);
@@ -262,6 +270,7 @@ export function LibraryItemDetailView({
             scraping={scrapingNow}
             onReidentify={runReidentify}
             onRefreshMetadata={runMetadataRefresh}
+            onTransfer={() => setTransferOpen(true)}
             onDelete={() => setDeleteOpen(true)}
           />
         }
@@ -454,6 +463,17 @@ export function LibraryItemDetailView({
         libraryId={libraryId}
       />
 
+      <TransferDialog
+        open={transferOpen}
+        detail={detail}
+        libraryId={libraryId}
+        sourceLibraryName={library?.name ?? null}
+        onClose={() => setTransferOpen(false)}
+        onTransferred={(targetLibraryId) =>
+          router.replace(`/library/${targetLibraryId}/item/${mediaItemId}` as Route)
+        }
+      />
+
       <ArtworkPickerDialog
         open={artworkOpen}
         libraryId={libraryId}
@@ -466,24 +486,29 @@ export function LibraryItemDetailView({
 }
 
 /**
- * 条目操作 ⋯ 菜单：重新识别 / 刷新元数据 / 删除影片。
+ * 条目操作 ⋯ 菜单：重新识别 / 刷新元数据 / 转移到其他库 / 删除影片。
  *
- * 这三个都是低频且不可逆（改身份锚、重下全套图、删文件）的操作，摆成三颗
- * 常驻大按钮既压着正文，又把「误点」的成本摊在最显眼的位置。收进顶栏右上角
- * 的 ⋯ 后，页面主区只剩内容；跑起来之后的状态仍由正文里的进度条完整交代
- * （与媒体库页「操作进 ⋯、状态看正文」的分工一致）。
+ * 这几个都是低频且不可逆（改身份锚、重下全套图、搬目录、删文件）的操作，
+ * 摆成常驻大按钮既压着正文，又把「误点」的成本摊在最显眼的位置。收进顶栏
+ * 右上角的 ⋯ 后，页面主区只剩内容；跑起来之后的状态仍由正文里的进度条
+ * 完整交代（与媒体库页「操作进 ⋯、状态看正文」的分工一致）。
+ *
+ * 「转移到其他库」与「重新识别」是**两种不同的错**的补救，菜单里紧挨着摆：
+ * 前者是"片子认对了、库放错了"（韩剧进了大陆剧库），后者是"片子认错了"。
  */
 function ItemActionsMenu({
   reidentifying,
   scraping,
   onReidentify,
   onRefreshMetadata,
+  onTransfer,
   onDelete,
 }: {
   reidentifying: boolean;
   scraping: boolean;
   onReidentify: () => void;
   onRefreshMetadata: () => void;
+  onTransfer: () => void;
   onDelete: () => void;
 }) {
   const itemClass =
@@ -527,6 +552,9 @@ function ItemActionsMenu({
             className={itemClass}
           >
             {scraping ? "正在刷新元数据…" : "刷新元数据"}
+          </DropdownMenu.Item>
+          <DropdownMenu.Item onSelect={onTransfer} className={itemClass}>
+            转移到其他库…
           </DropdownMenu.Item>
           <DropdownMenu.Separator className="my-1 h-px bg-white/[0.07]" />
           <DropdownMenu.Item
@@ -1194,6 +1222,349 @@ function FileRow({ file, isMovie }: { file: LibraryItemFile; isMovie: boolean })
         </div>
       )}
     </div>
+  );
+}
+
+/**
+ * 转移到其他库的弹窗：选库 → 预览 → 确认 → 进度 → 结论，四步走完一条路。
+ *
+ * 存在的理由：入库选库要么靠收藏范围自动路由、要么靠订阅时手选，两条路
+ * 都会错——最典型的是韩剧被判进了「大陆华语剧」。此前对这种错分没有任何
+ * 补救手段，只能手工挪目录再两边重扫。
+ *
+ * 界面上必须讲清的三件事（都在预览步骤里）：
+ * 1. **搬的是磁盘目录**，不是"从列表里挪一下"——把源目录与目标目录并排列出；
+ * 2. **跨盘要复制**：目标与源不在同一块盘时是完整复制而非改名，耗时按体积
+ *    走，且会断开与做种目录的硬链接（磁盘占用翻倍）——这条必须显式警示；
+ * 3. **目标已有同名目录就不干**：宁可让用户自己决断，绝不覆盖或合并。
+ */
+function TransferDialog({
+  open,
+  detail,
+  libraryId,
+  sourceLibraryName,
+  onClose,
+  onTransferred,
+}: {
+  open: boolean;
+  detail: LibraryItemDetail;
+  libraryId: number;
+  sourceLibraryName: string | null;
+  onClose: () => void;
+  onTransferred: (targetLibraryId: number) => void;
+}) {
+  // 可选目标库：同类型、非当前库（类型不同是"认错了片子"，该走重新识别）
+  const [candidates, setCandidates] = useState<MediaLibrary[] | null>(null);
+  const [targetId, setTargetId] = useState<number | null>(null);
+  const [preview, setPreview] = useState<TransferPreview | null>(null);
+  const [loadingPreview, setLoadingPreview] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  // 进行中/已完成的转移状态（后台任务，轮询同一个接口一路走到结论）
+  const [status, setStatus] = useState<TransferStatus | null>(null);
+  const [starting, setStarting] = useState(false);
+
+  useEffect(() => {
+    if (!open) return;
+    setTargetId(null);
+    setPreview(null);
+    setStatus(null);
+    setError(null);
+    listLibraries(detail.kind)
+      .then((libs) => setCandidates(libs.filter((l) => l.id !== libraryId)))
+      .catch(() => setError("读取媒体库列表失败，请稍后重试"));
+  }, [open, detail.kind, libraryId]);
+
+  // 选中目标库就立刻算预览：用户要先看清"搬到哪、搬多少"才谈得上确认
+  useEffect(() => {
+    if (!open || targetId == null) return;
+    let alive = true;
+    setLoadingPreview(true);
+    setPreview(null);
+    setError(null);
+    previewItemTransfer(libraryId, detail.media_item_id, targetId)
+      .then((data) => alive && setPreview(data))
+      .catch((err) => alive && setError(err instanceof Error ? err.message : "预览失败"))
+      .finally(() => alive && setLoadingPreview(false));
+    return () => {
+      alive = false;
+    };
+  }, [open, targetId, libraryId, detail.media_item_id]);
+
+  // 转移进行中：每秒拉一次进度，跑完自动切到结论页（不用 useVisiblePolling——
+  // 这是用户正盯着看的短任务，页面切后台也该继续走完，回来直接看到结果）
+  const running = status?.running ?? false;
+  useEffect(() => {
+    if (!open || !running) return;
+    const timer = setInterval(() => {
+      getTransferStatus(libraryId)
+        .then(setStatus)
+        .catch(() => {});
+    }, 1000);
+    return () => clearInterval(timer);
+  }, [open, running, libraryId]);
+
+  const run = async () => {
+    if (targetId == null) return;
+    setStarting(true);
+    setError(null);
+    try {
+      await transferLibraryItem(libraryId, detail.media_item_id, targetId);
+      setStatus(await getTransferStatus(libraryId));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "转移失败，请稍后重试");
+    } finally {
+      setStarting(false);
+    }
+  };
+
+  const busy = starting || running;
+  const finished = status != null && !status.running;
+  const canRun =
+    preview != null && preview.blocked.length === 0 && preview.moves.length > 0 && !busy;
+
+  return (
+    <Modal
+      open={open}
+      onClose={busy ? () => {} : onClose}
+      label="转移到其他媒体库"
+      width="2xl"
+      panelClassName="flex max-h-[80vh] flex-col"
+    >
+      <div className="scroll-thin flex-1 overflow-y-auto p-6">
+        {finished ? (
+          <TransferResult status={status!} />
+        ) : (
+          <>
+            <h3 className="flex items-center gap-2 text-title-sm font-semibold text-[var(--text)]">
+              <FolderIcon className="size-4.5 text-[var(--accent-2)]" />
+              把「{detail.title}」转移到其他媒体库
+            </h3>
+            <p className="mt-2 text-sub leading-6 text-[var(--text-muted)]">
+              分错库时用它补救（例如韩剧被判进了「大陆华语剧」）。
+              <span className="text-white/80">磁盘上的整个条目目录</span>
+              （视频、NFO、海报、字幕）会连同库存记录一起搬到目标库；
+              目录名原样保留，需要规范化请到目标库运行「整理文件名」。
+            </p>
+
+            {/* —— 第一步：选目标库 —— */}
+            <p className="mt-5 text-caption font-semibold uppercase tracking-[0.16em] text-[var(--text-faint)]">
+              转移到
+            </p>
+            {candidates == null ? (
+              <p className="mt-2 text-sub text-[var(--text-muted)]">正在读取媒体库…</p>
+            ) : candidates.length === 0 ? (
+              <p className="mt-2 text-sub leading-6 text-[#ffd08a]">
+                没有其他{detail.kind === "movie" ? "电影" : "剧集"}
+                库可选——请先在「媒体库」页新建一个，再回来转移。
+              </p>
+            ) : (
+              <div className="mt-2 space-y-1.5">
+                {candidates.map((lib) => (
+                  <button
+                    key={lib.id}
+                    type="button"
+                    disabled={busy}
+                    onClick={() => setTargetId(lib.id)}
+                    className={`flex w-full items-center gap-3 rounded-xl border px-3.5 py-2.5 text-left transition disabled:cursor-not-allowed disabled:opacity-50 ${
+                      targetId === lib.id
+                        ? "border-[var(--accent-2)]/60 bg-[var(--accent-2)]/[0.1]"
+                        : "border-white/[0.08] bg-white/[0.03] hover:bg-white/[0.06]"
+                    }`}
+                  >
+                    <span
+                      className={`size-3.5 shrink-0 rounded-full border-2 ${
+                        targetId === lib.id
+                          ? "border-[var(--accent-2)] bg-[var(--accent-2)]"
+                          : "border-white/25"
+                      }`}
+                    />
+                    <span className="min-w-0 flex-1">
+                      <span className="block text-ui font-medium text-[var(--text)]">
+                        {lib.name}
+                        {lib.is_default && (
+                          <span className="ml-2 text-caption font-normal text-[var(--text-faint)]">
+                            默认库
+                          </span>
+                        )}
+                      </span>
+                      <span className="block truncate font-mono text-caption text-white/45">
+                        {lib.primary_root ?? "未配置根路径"}
+                      </span>
+                    </span>
+                  </button>
+                ))}
+              </div>
+            )}
+
+            {/* —— 第二步：预览「将要发生什么」 —— */}
+            {loadingPreview && (
+              <p className="mt-4 flex items-center gap-2 text-sub text-[var(--text-muted)]">
+                <span className="size-3.5 animate-spin rounded-full border-2 border-white/20 border-t-white/70" />
+                正在计算转移计划…
+              </p>
+            )}
+            {preview && <TransferPlanPreview preview={preview} sourceName={sourceLibraryName} />}
+            {error && <p className="mt-3 text-sub leading-6 text-[#ff9f9f]">{error}</p>}
+          </>
+        )}
+      </div>
+
+      {/* —— 底栏：进行中只留进度，不给"取消"（搬到一半停不下来）—— */}
+      <div className="flex items-center gap-3 border-t border-white/[0.07] px-6 py-4">
+        {running && (
+          <span className="flex min-w-0 flex-1 items-center gap-2 text-sub text-[#7dd3fc]">
+            <span className="size-3.5 shrink-0 animate-spin rounded-full border-2 border-[#7dd3fc]/30 border-t-[#7dd3fc]" />
+            <span className="truncate">
+              正在转移
+              {status && status.total > 0 ? ` · ${status.processed}/${status.total}` : ""}
+              ；跨盘转移需要完整复制文件，请勿关闭页面以外的操作
+            </span>
+          </span>
+        )}
+        <div className="ml-auto flex gap-3">
+          {finished ? (
+            <>
+              <button
+                type="button"
+                onClick={onClose}
+                className="btn-glass px-4 py-2 text-ui font-medium text-[var(--text)]"
+              >
+                留在本页
+              </button>
+              {status!.errors.length === 0 && status!.target_library_id != null && (
+                <button
+                  type="button"
+                  onClick={() => onTransferred(status!.target_library_id!)}
+                  className="btn-accent rounded-full px-5 py-2 text-ui font-semibold"
+                >
+                  去目标库查看
+                </button>
+              )}
+            </>
+          ) : (
+            <>
+              <button
+                type="button"
+                onClick={onClose}
+                disabled={busy}
+                className="btn-glass px-4 py-2 text-ui font-medium text-[var(--text)] disabled:opacity-40"
+              >
+                取消
+              </button>
+              <button
+                type="button"
+                onClick={run}
+                disabled={!canRun}
+                className="btn-accent flex items-center gap-2 rounded-full px-5 py-2 text-ui font-semibold disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                {starting && (
+                  <span className="size-3.5 animate-spin rounded-full border-2 border-white/30 border-t-white" />
+                )}
+                确认转移
+              </button>
+            </>
+          )}
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
+/** 转移计划预览：目标位置、体积、跨盘警示、阻断原因与跳过说明。 */
+function TransferPlanPreview({
+  preview,
+  sourceName,
+}: {
+  preview: TransferPreview;
+  sourceName: string | null;
+}) {
+  return (
+    <div className="mt-4 space-y-3">
+      {preview.blocked.length > 0 && (
+        <div className="rounded-xl border border-[#ff6b6b]/30 bg-[#ff6b6b]/[0.08] px-4 py-3 text-sub leading-6 text-[#ffb4b4]">
+          {preview.blocked.map((b) => (
+            <p key={b}>{b}</p>
+          ))}
+        </div>
+      )}
+
+      {preview.cross_device && preview.moves.length > 0 && (
+        <div className="rounded-xl border border-[#ffd08a]/30 bg-[#ffd08a]/[0.08] px-4 py-3 text-sub leading-6 text-[#ffd08a]">
+          目标库与当前位置<span className="font-semibold">不在同一块盘</span>
+          ：文件需要完整复制（{formatBytes(preview.total_bytes)}），耗时取决于体积与盘速；
+          复制会产生新文件，与下载器做种目录的硬链接关系将断开，两边各占一份空间。
+        </div>
+      )}
+
+      {preview.moves.length > 0 && (
+        <div className="rounded-xl border border-white/[0.08] bg-white/[0.03] p-3.5">
+          <p className="text-caption text-[var(--text-faint)]">
+            {preview.moves.length} 个路径 · {formatBytes(preview.total_bytes)}
+            {preview.missing_count > 0 && ` · ${preview.missing_count} 个缺失记录随迁`}
+          </p>
+          <div className="scroll-thin mt-2 max-h-44 space-y-2 overflow-y-auto">
+            {preview.moves.map((m) => (
+              <div key={m.source_path} className="tnum font-mono text-caption leading-5">
+                <p className="break-all text-white/45">
+                  {sourceName ? `${sourceName} · ` : ""}
+                  {m.source_path}
+                </p>
+                <p className="break-all text-white/80">
+                  ↳ {preview.target_library_name} · {m.target_path}
+                </p>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {preview.skips.length > 0 && (
+        <div className="rounded-xl border border-white/[0.08] bg-white/[0.02] p-3.5 text-caption leading-5 text-white/60">
+          {preview.skips.map((s) => (
+            <p key={s.file_path} className="break-all py-0.5">
+              <span className="font-mono">{s.file_path}</span>：{s.reason}
+            </p>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** 转移结论页：搬了哪些路径、随迁多少台账、订阅是否跟着改挂。 */
+function TransferResult({ status }: { status: TransferStatus }) {
+  const failed = status.errors.length > 0;
+  return (
+    <>
+      <h3 className="text-title-sm font-semibold text-[var(--text)]">
+        {failed ? "部分转移完成" : `「${status.title}」已转移到「${status.target_library_name}」`}
+      </h3>
+      <div className="scroll-thin mt-4 max-h-56 overflow-y-auto rounded-xl border border-white/[0.08] bg-white/[0.03] p-3.5">
+        {status.moved_paths.map((p) => (
+          <p
+            key={p}
+            className="tnum break-all py-0.5 font-mono text-caption leading-5 text-white/70"
+          >
+            {p}
+          </p>
+        ))}
+        {status.moved_paths.length === 0 && (
+          <p className="text-sub text-[var(--text-muted)]">没有搬运任何磁盘路径</p>
+        )}
+      </div>
+      {failed && (
+        <div className="mt-3 space-y-1 text-sub leading-5 text-[#ff9f9f]">
+          {status.errors.map((e) => (
+            <p key={e}>{e}</p>
+          ))}
+        </div>
+      )}
+      <p className="mt-3 text-sub leading-6 text-[var(--text-muted)]">
+        已随迁 {status.files_relocated} 条库存记录（{formatBytes(status.bytes_moved)}）
+        {status.removed_dirs > 0 && `，清理空目录 ${status.removed_dirs} 个`}。
+        {status.subscription_moved && "该片的订阅已一并改挂到目标库，后续剧集直接入新库。"}
+      </p>
+    </>
   );
 }
 

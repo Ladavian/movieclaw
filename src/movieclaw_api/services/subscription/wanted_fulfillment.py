@@ -82,6 +82,10 @@ async def close_fulfilled_wanted(session: AsyncSession, media_item_id: int) -> i
             )
         )
         await recompute_subscription_status(session, subscription, item)
+        # 内容已进库，该订阅在途种子的落点告警（若有）自动熄灭
+        from movieclaw_api.services.system_notice import resolve_notices
+
+        await resolve_notices(session, prefix=f"subscription.landing:{subscription_id}:")
     logger.info("库存对账：条目 #%s 关闭了 %d 个工单", media_item_id, len(fulfilled))
 
     # L4：通知媒体服务器刷新（未配置为 no-op；失败只告警）

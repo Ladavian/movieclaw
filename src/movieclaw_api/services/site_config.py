@@ -173,6 +173,10 @@ class SiteConfigService:
         await self._cookies.delete(site_id)
         # 用户资料快照是凭据的派生缓存，随配置一起删除
         await self._profiles.delete(site_id)
+        # 配置已不存在，它的验证失败告警（若有）随之作废
+        from movieclaw_api.services.system_notice import resolve_notices
+
+        await resolve_notices(self._session, dedupe_key=f"site:{site_id}")
         # 连带清理该站的本地种子快照与同步游标，避免重新添加时命中过期高水位
         await self._torrents.delete_site_data(site_id)
         # 作废共享客户端缓存并释放其连接

@@ -43,6 +43,9 @@ export const LIBRARY_KIND_META: Record<MediaType, { label: string; Icon: typeof 
   tv: { label: "剧集", Icon: TvIcon },
 };
 
+/** 每个库「最近添加」行的格数（也是本页向服务端要的条目数上限）。 */
+const RECENT_COUNT = 20;
+
 /** 收藏范围可选项的模块级缓存：这是后端静态常量，但 useRoutingOptions 被
  *  每张库卡片和表单弹窗各自调用——不缓存的话库首页一次挂载就打出 N 个
  *  相同请求。失败时清空缓存，下一个调用方重试。 */
@@ -223,10 +226,18 @@ export function LibraryView() {
         // 内容没变就复用旧引用，跳过整页卡片的无谓重渲染
         setLibraries((prev) => (prev && JSON.stringify(prev) === snapshot ? prev : libs));
         if (snapshot === lastLibsSnapshot.current) return;
-        // 封面拼图需要各库的条目海报；库的数量级很小，并发拉取即可
+        // 本页每个库只用到最近入账的 20 部（「最近添加」行 + 卡片封面拼图取前 4），
+        // 排序与截断都交给服务端——早先在这里拉整库再本地切片，一个几千部的库
+        // 光这一个请求就是几百 KB、后端还要把全库台账聚合一遍
         const entries = await Promise.all(
           libs.map(
-            async (lib) => [lib.id, await listLibraryItems(lib.id).catch(() => [])] as const,
+            async (lib) =>
+              [
+                lib.id,
+                await listLibraryItems(lib.id, { sort: "added_at", limit: RECENT_COUNT }).catch(
+                  () => [],
+                ),
+              ] as const,
           ),
         );
         if (seq !== reloadSeq.current) return;
@@ -285,15 +296,13 @@ export function LibraryView() {
     return () => clearTimeout(timer);
   }, [highlightId, libraries]);
 
-  // 每个非空库一行「最近添加」：按最近入账时间倒序取前 20，复用发现页的
+  // 每个非空库一行「最近添加」：服务端已按最近入账倒序给到前 20，复用发现页的
   // 横滚海报行；悬浮动作按条目三分支（追新/补齐/已入库，见 libraryCardAction）
   const recentRows = useMemo(
     () =>
       (libraries ?? [])
         .map((library) => {
-          const recent = [...(itemsByLibrary.get(library.id) ?? [])]
-            .sort((a, b) => (b.added_at ?? "").localeCompare(a.added_at ?? ""))
-            .slice(0, 20);
+          const recent = itemsByLibrary.get(library.id) ?? [];
           // MediaItem.id 即 tmdb_id 字符串，库类型固定故同行内唯一，可作动作映射键
           const actions = new Map(
             recent.map((it) => [String(it.tmdb_id), libraryCardAction(it)]),
@@ -522,9 +531,8 @@ function LibraryCard({
   const routingOptions = useRoutingOptions();
   // 收藏范围摘要（"收：动画 · 日韩"）：声明了才显示，一眼看清各库分工
   const collectSummary = matchRulesSummary(library, routingOptions);
-  // 封面海报取最近入库的 4 部（与下方「最近添加」行同一排序口径）
-  const posters = [...items]
-    .sort((a, b) => (b.added_at ?? "").localeCompare(a.added_at ?? ""))
+  // 封面海报取最近入库的 4 部（items 已是服务端按最近入账排好的那批）
+  const posters = items
     .map((s) => s.poster_url)
     .filter((u): u is string => Boolean(u))
     .slice(0, 4);

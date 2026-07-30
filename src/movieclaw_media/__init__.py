@@ -32,7 +32,8 @@ from movieclaw_media.library import (
     resolve_douban_to_tmdb,
 )
 from movieclaw_media.models import (
-    DiscoverPage,
+    DiscoverLayout,
+    DiscoverRowStub,
     MediaCard,
     MediaDetail,
     MediaFacts,
@@ -53,7 +54,8 @@ from movieclaw_media.tmdb import (
 )
 
 __all__ = [
-    "DiscoverPage",
+    "DiscoverLayout",
+    "DiscoverRowStub",
     "MediaCard",
     "MediaDetail",
     "MediaFacts",

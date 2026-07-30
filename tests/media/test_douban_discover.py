@@ -62,10 +62,12 @@ async def test_movie_collection_maps_to_unified_cards() -> None:
     client = StubDoubanClient(
         {"movie_real_time_hotest": {"subject_collection_items": [_item(i) for i in range(1, 6)]}}
     )
-    page = await DoubanDiscoverService(client).discover_page(MediaKind.MOVIE)  # type: ignore[arg-type]
+    row = await DoubanDiscoverService(client).discover_row(  # type: ignore[arg-type]
+        MediaKind.MOVIE, "douban-movie_real_time_hotest"
+    )
 
-    assert page.hero == []
-    card = page.rows[0].items[0]
+    assert row is not None
+    card = row.items[0]
     assert card.source is MediaSource.DOUBAN
     assert card.id == "1"
     assert card.year == 2026
@@ -190,19 +192,48 @@ async def test_collection_filters_wrong_media_type() -> None:
     client = StubDoubanClient(
         {"movie_real_time_hotest": {"subject_collection_items": items}}
     )
-    page = await DoubanDiscoverService(client).discover_page(MediaKind.MOVIE)  # type: ignore[arg-type]
-    assert [card.id for card in page.rows[0].items] == ["5", "6", "7", "8"]
+    row = await DoubanDiscoverService(client).discover_row(  # type: ignore[arg-type]
+        MediaKind.MOVIE, "douban-movie_real_time_hotest"
+    )
+    assert row is not None
+    assert [card.id for card in row.items] == ["5", "6", "7", "8"]
 
 
-async def test_single_collection_failure_is_isolated() -> None:
+async def test_row_failure_raises_and_other_rows_unaffected() -> None:
+    """单行失败只让那一行的请求报错（前端收起该行），不影响其他行。"""
     client = StubDoubanClient(
         {
             "movie_real_time_hotest": DoubanError("模拟失败"),
             "movie_weekly_best": {"subject_collection_items": [_item(i) for i in range(1, 6)]},
         }
     )
-    page = await DoubanDiscoverService(client).discover_page(MediaKind.MOVIE)  # type: ignore[arg-type]
-    assert [row.id for row in page.rows] == ["douban-movie_weekly_best"]
+    service = DoubanDiscoverService(client)  # type: ignore[arg-type]
+
+    with pytest.raises(DoubanError, match="模拟失败"):
+        await service.discover_row(MediaKind.MOVIE, "douban-movie_real_time_hotest")
+    row = await service.discover_row(MediaKind.MOVIE, "douban-movie_weekly_best")
+    assert row is not None
+    assert len(row.items) == 5
+
+
+async def test_sparse_row_returns_empty_items() -> None:
+    """条目太少的行返回空 items（前端按空行收起），而不是渲染半空行。"""
+    client = StubDoubanClient(
+        {"movie_classic": {"subject_collection_items": [_item(1), _item(2)]}}
+    )
+    row = await DoubanDiscoverService(client).discover_row(  # type: ignore[arg-type]
+        MediaKind.MOVIE, "douban-movie_classic"
+    )
+    assert row is not None
+    assert row.items == []
+
+
+async def test_unknown_row_returns_none() -> None:
+    """row_id 不在布局里返回 None（路由层译为 404），不打豆瓣。"""
+    client = StubDoubanClient({})
+    service = DoubanDiscoverService(client)  # type: ignore[arg-type]
+    assert await service.discover_row(MediaKind.MOVIE, "douban-nonexistent") is None
+    assert client.calls == []
 
 
 async def test_top250_requests_and_returns_full_collection() -> None:
@@ -211,35 +242,26 @@ async def test_top250_requests_and_returns_full_collection() -> None:
     client = StubDoubanClient(
         {"movie_top250": {"subject_collection_items": items}}
     )
-    page = await DoubanDiscoverService(client).discover_page(MediaKind.MOVIE)  # type: ignore[arg-type]
-
-    top250 = next(row for row in page.rows if row.id == "douban-movie_top250")
-    assert len(top250.items) == 250
-    assert ("movie_top250", 250) in client.calls
-    assert ("movie_real_time_hotest", 30) in client.calls
-
-
-async def test_tv_page_requests_all_configured_collections_in_order() -> None:
-    """剧集页应按配置顺序请求全部榜单，行序与配置一致（含动画与综艺行）。"""
-    client = StubDoubanClient(
-        {
-            spec.collection_id: {
-                "subject_collection_items": [_item(i, type="tv") for i in range(1, 6)]
-            }
-            for spec in _TV_COLLECTIONS
-        }
+    row = await DoubanDiscoverService(client).discover_row(  # type: ignore[arg-type]
+        MediaKind.MOVIE, "douban-movie_top250"
     )
-    page = await DoubanDiscoverService(client).discover_page(MediaKind.TV)  # type: ignore[arg-type]
 
-    assert [row.id for row in page.rows] == [
+    assert row is not None
+    assert len(row.items) == 250
+    assert client.calls == [("movie_top250", 250)]
+
+
+async def test_layout_lists_all_collections_without_requests() -> None:
+    """布局是纯配置：行序与榜单配置一致、无 Hero，且不触发任何豆瓣请求。"""
+    client = StubDoubanClient({})
+    service = DoubanDiscoverService(client)  # type: ignore[arg-type]
+
+    layout = service.layout(MediaKind.TV)
+    assert layout.has_hero is False
+    assert [row.id for row in layout.rows] == [
         f"douban-{spec.collection_id}" for spec in _TV_COLLECTIONS
     ]
-    assert page.rows[0].ranked
-
-
-async def test_all_collections_failure_raises_readable_error() -> None:
-    client = StubDoubanClient(
-        {spec.collection_id: DoubanError("豆瓣不可用") for spec in _MOVIE_COLLECTIONS}
-    )
-    with pytest.raises(DoubanError, match="豆瓣不可用"):
-        await DoubanDiscoverService(client).discover_page(MediaKind.MOVIE)  # type: ignore[arg-type]
+    assert layout.rows[0].ranked
+    assert service.layout(MediaKind.MOVIE).rows[0].id == f"douban-{_MOVIE_COLLECTIONS[0].collection_id}"
+    assert await service.discover_hero(MediaKind.TV) == []
+    assert client.calls == []

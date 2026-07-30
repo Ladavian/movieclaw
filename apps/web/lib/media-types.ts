@@ -44,9 +44,17 @@ export interface MediaRowData {
   items: MediaItem[];
 }
 
-/** 单个发现页（电影 / 剧集）的全部数据 */
-export interface DiscoverPageData {
-  /** Hero 大横幅轮播的精选项（均带 backdropUrl） */
-  hero: MediaItem[];
-  rows: MediaRowData[];
+/** 发现页布局里的一行占位（只有标识与标题，数据由单行接口逐行到达） */
+export interface DiscoverRowStub {
+  id: string;
+  title: string;
+  /** Netflix 式大数字排名行（Top 10） */
+  ranked?: boolean;
+}
+
+/** 发现页布局：Hero 有无 + 行清单。纯配置毫秒级返回，用于先撑起整页骨架 */
+export interface DiscoverLayoutData {
+  /** 是否有 Hero 大横幅（豆瓣视角没有） */
+  hasHero: boolean;
+  rows: DiscoverRowStub[];
 }

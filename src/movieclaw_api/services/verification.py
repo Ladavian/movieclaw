@@ -136,6 +136,24 @@ async def verify_site(site_id: str) -> None:
     async with db.session() as session:
         repo = CredentialRepository(session)
         await repo.update_status(site_id, status, last_error=error)
+        # 全局红灯：凭据失效意味着该站点的搜索/投递静默缺席，必须被感受到；
+        # 验证恢复则红灯熄灭
+        from movieclaw_api.services.system_notice import resolve_notices, upsert_notice
+        from movieclaw_db.models import NoticeSeverity
+
+        if status == ConfigStatus.ACTIVE:
+            await resolve_notices(session, dedupe_key=f"site:{site_id}")
+        else:
+            await upsert_notice(
+                session,
+                dedupe_key=f"site:{site_id}",
+                severity=NoticeSeverity.ERROR,
+                source="site",
+                title=f"站点「{site_id}」验证失败",
+                message=f"站点「{site_id}」凭据验证失败：{error or '原因未知'}。"
+                "该站点已不参与搜索与投递，请到「设置 → 站点」更新凭据",
+                payload={"site_id": site_id},
+            )
         # 验证成功时顺手把刚拉到的用户资料落为快照（零额外站点请求）；
         # 失败不动旧快照，保留上一次成功的数据供页面继续展示
         if status == ConfigStatus.ACTIVE and profile is not None:

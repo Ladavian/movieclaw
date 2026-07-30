@@ -30,6 +30,7 @@ from sqlalchemy import update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
 
+from movieclaw_api.services.system_notice import resolve_notices, upsert_notice
 from movieclaw_db.engine import get_database
 from movieclaw_db.models import (
     ActivityType,
@@ -43,6 +44,7 @@ from movieclaw_db.models import (
 from movieclaw_db.models.downloader_client import DownloaderClient
 from movieclaw_db.models.scheduled_task import TriggerType
 from movieclaw_db.models.site_credential import ConfigStatus
+from movieclaw_db.models.system_notice import NoticeSeverity
 from movieclaw_db.repositories import SubscriptionRepository
 from movieclaw_db.repositories.downloader_repo import DownloaderRepository
 from movieclaw_downloader import DownloaderConfig, TorrentStatus, create_downloader
@@ -262,7 +264,31 @@ async def _verify_landing(
     if not local_dir or not root:
         return
     if (Path(local_dir) / root).exists():
-        return  # 落点可见，等监听导入/库扫描接管即可
+        # 落点可见，等监听导入/库扫描接管即可；此前若报过"看不到"（映射
+        # 刚修好/卷刚挂上），问题已消失，红灯就地熄灭
+        await resolve_notices(
+            session,
+            dedupe_key=f"subscription.landing:{rows[0].subscription_id}:{info_hash}",
+        )
+        return
+
+    message = (
+        f"「{status.name}」已下载完成，但 movieclaw 在 {local_dir} 看不到它——"
+        f"下载器「{downloader.name}」可能无法访问该路径（路径映射缺失或卷未挂载），"
+        "或文件已在下载器中被移动。请检查「设置 → 下载器」的路径映射，"
+        "或改用监听导入规则后把文件移入监听目录"
+    )
+    # 全局红灯（幂等 upsert，问题在就常亮）：时间线活动埋在单个订阅详情页里，
+    # 这类"不修就永远卡着"的错误必须在任何页面都能被感受到
+    await upsert_notice(
+        session,
+        dedupe_key=f"subscription.landing:{rows[0].subscription_id}:{info_hash}",
+        severity=NoticeSeverity.ERROR,
+        source="subscription",
+        title=f"「{status.name}」下载完成但无法入库",
+        message=message,
+        payload={"subscription_id": rows[0].subscription_id, "info_hash": info_hash},
+    )
 
     # 去重：同一（订阅, 种子）只告警一次，避免每 5 分钟刷屏
     existing = (
@@ -287,12 +313,7 @@ async def _verify_landing(
             subscription_id=rows[0].subscription_id,
             wanted_item_id=rows[0].id,
             type=ActivityType.IMPORT_FAILED,
-            message=(
-                f"「{status.name}」已下载完成，但 movieclaw 在 {local_dir} 看不到它——"
-                f"下载器「{downloader.name}」可能无法访问该路径（路径映射缺失或卷未挂载），"
-                "或文件已在下载器中被移动。请检查「设置 → 下载器」的路径映射，"
-                "或改用监听导入规则后把文件移入监听目录"
-            ),
+            message=message,
             payload={
                 "info_hash": info_hash,
                 "reason": "path_unreachable",
@@ -342,6 +363,10 @@ async def _requeue(
             )
         )
     await session.commit()
+    # 工单退回后旧种子的落点告警已无意义（重找会产生新种子/新告警）
+    await resolve_notices(
+        session, dedupe_key=f"subscription.landing:{rows[0].subscription_id}:{info_hash}"
+    )
     await repo.add_activity(
         SubscriptionActivity(
             subscription_id=rows[0].subscription_id,

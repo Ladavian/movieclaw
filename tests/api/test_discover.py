@@ -11,7 +11,8 @@ from movieclaw_api.services.media_discover import reset_media_service
 from movieclaw_api.settings.store import reset_setting_store
 from movieclaw_db.crypto import reset_secret_box
 from movieclaw_media.models import (
-    DiscoverPage,
+    DiscoverLayout,
+    DiscoverRowStub,
     MediaCard,
     MediaDetail,
     MediaFacts,
@@ -53,8 +54,8 @@ def client(tmp_path, monkeypatch):
     get_settings.cache_clear()
 
 
-def _sample_page() -> DiscoverPage:
-    card = MediaCard(
+def _sample_card() -> MediaCard:
+    return MediaCard(
         id="42",
         type=MediaKind.MOVIE,
         title="示例电影",
@@ -66,15 +67,22 @@ def _sample_page() -> DiscoverPage:
         poster_url="https://image.tmdb.org/t/p/w500/x.jpg",
         backdrop_url="https://image.tmdb.org/t/p/w1280/y.jpg",
     )
-    return DiscoverPage(
-        hero=[card],
-        rows=[MediaRow(id="popular", title="热门电影", items=[card])],
-    )
 
 
 class _StubService:
-    async def discover_page(self, kind: MediaKind) -> DiscoverPage:
-        return _sample_page()
+    def layout(self, kind: MediaKind) -> DiscoverLayout:
+        return DiscoverLayout(
+            has_hero=True,
+            rows=[DiscoverRowStub(id="popular", title="热门电影")],
+        )
+
+    async def discover_hero(self, kind: MediaKind) -> list[MediaCard]:
+        return [_sample_card()]
+
+    async def discover_row(self, kind: MediaKind, row_id: str) -> MediaRow | None:
+        if row_id != "popular":
+            return None
+        return MediaRow(id="popular", title="热门电影", items=[_sample_card()])
 
     async def search(self, keyword: str) -> list[MediaSearchItem]:
         return [
@@ -88,26 +96,60 @@ class _StubService:
         ]
 
     async def media_detail(self, douban_id: str):
-        page = _sample_page()
-        page.hero[0].id = douban_id
+        card = _sample_card()
+        card.id = douban_id
         return MediaDetail(
-            card=page.hero[0],
+            card=card,
             facts=MediaFacts(aliases=["示例别名"], source_url="https://m.douban.com/"),
         )
 
 
-def test_discover_page_success(client: TestClient, monkeypatch) -> None:
-    """成功链路：返回统一信封包装的页面数据，字段为 snake_case。"""
+def test_discover_layout_success(client: TestClient, monkeypatch) -> None:
+    """布局端点：返回 Hero 有无与行清单（行只有标识与标题，无条目数据）。"""
     from movieclaw_api.api.routes import discover as discover_route
 
     monkeypatch.setattr(discover_route, "get_media_service", lambda: _StubService())
 
-    resp = client.get("/api/v1/discover/movie")
+    resp = client.get("/api/v1/discover/movie/layout")
     assert resp.status_code == 200
     data = resp.json()["data"]
-    assert data["hero"][0]["poster_url"].startswith("https://image.tmdb.org")
-    assert data["rows"][0]["title"] == "热门电影"
-    assert data["rows"][0]["ranked"] is False
+    assert data["has_hero"] is True
+    assert data["rows"] == [{"id": "popular", "title": "热门电影", "ranked": False}]
+
+
+def test_discover_hero_success(client: TestClient, monkeypatch) -> None:
+    """Hero 端点：返回大横幅精选卡片列表。"""
+    from movieclaw_api.api.routes import discover as discover_route
+
+    monkeypatch.setattr(discover_route, "get_media_service", lambda: _StubService())
+
+    resp = client.get("/api/v1/discover/movie/hero")
+    assert resp.status_code == 200
+    data = resp.json()["data"]
+    assert data[0]["poster_url"].startswith("https://image.tmdb.org")
+
+
+def test_discover_row_success(client: TestClient, monkeypatch) -> None:
+    """单行端点：返回统一信封包装的一行数据，字段为 snake_case。"""
+    from movieclaw_api.api.routes import discover as discover_route
+
+    monkeypatch.setattr(discover_route, "get_media_service", lambda: _StubService())
+
+    resp = client.get("/api/v1/discover/movie/rows/popular")
+    assert resp.status_code == 200
+    data = resp.json()["data"]
+    assert data["title"] == "热门电影"
+    assert data["ranked"] is False
+    assert data["items"][0]["id"] == "42"
+
+
+def test_discover_row_unknown_returns_404(client: TestClient, monkeypatch) -> None:
+    """row_id 不在布局里：404 而不是 500。"""
+    from movieclaw_api.api.routes import discover as discover_route
+
+    monkeypatch.setattr(discover_route, "get_media_service", lambda: _StubService())
+    resp = client.get("/api/v1/discover/movie/rows/nonexistent")
+    assert resp.status_code == 404
 
 
 def test_discover_douban_source_uses_independent_service(client: TestClient, monkeypatch) -> None:
@@ -115,9 +157,9 @@ def test_discover_douban_source_uses_independent_service(client: TestClient, mon
     from movieclaw_api.api.routes import discover as discover_route
 
     monkeypatch.setattr(discover_route, "get_douban_media_service", lambda: _StubService())
-    resp = client.get("/api/v1/discover/movie?source=douban")
+    resp = client.get("/api/v1/discover/movie/rows/popular?source=douban")
     assert resp.status_code == 200
-    assert resp.json()["data"]["rows"][0]["title"] == "热门电影"
+    assert resp.json()["data"]["title"] == "热门电影"
 
 
 def test_douban_search_returns_lightweight_results(client: TestClient, monkeypatch) -> None:
@@ -180,12 +222,12 @@ def test_douban_detail_uses_independent_route(client: TestClient, monkeypatch) -
 
 def test_discover_rejects_unknown_kind(client: TestClient) -> None:
     """kind 只接受 movie / tv，其余按参数校验 422 拒绝。"""
-    assert client.get("/api/v1/discover/book").status_code == 422
+    assert client.get("/api/v1/discover/book/layout").status_code == 422
 
 
 def test_discover_without_key_returns_guidance(client: TestClient) -> None:
-    """TMDB_API_KEY 置空（禁用内置 Key）：502 + 中文引导信息。"""
-    resp = client.get("/api/v1/discover/movie")
+    """TMDB_API_KEY 置空（禁用内置 Key）：布局端点 502 + 中文引导信息。"""
+    resp = client.get("/api/v1/discover/movie/layout")
     assert resp.status_code == 502
     body = resp.json()
     assert body["success"] is False

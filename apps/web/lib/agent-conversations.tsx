@@ -80,6 +80,11 @@ export interface AgentTurn {
   runId?: string;
   input: string;
   status: "running" | "done" | "error";
+  /** 本轮开始时刻（epoch ms）：进行中据此显示实时耗时；回放时取用户消息的转录时间戳 */
+  startedAt: number;
+  /** 回放专用的结束时刻（本轮最后一条转录消息的时间戳）。历史轮次没有 result
+   *  里的精确 elapsed_ms，用它估算耗时，页脚才不会只有历史会话是空的 */
+  endedAt?: number;
   /** agent_start 事件带回的实际路由信息 */
   provider?: string;
   model?: string;
@@ -153,7 +158,13 @@ function entriesToTurns(entries: AgentSessionEntry[]): AgentTurn[] {
   for (const entry of entries) {
     const message = entry.message;
     if (message.role === "user") {
-      turns.push({ id: entry.uuid, input: messageText(message), status: "done", segments: [] });
+      turns.push({
+        id: entry.uuid,
+        input: messageText(message),
+        status: "done",
+        segments: [],
+        startedAt: Date.parse(entry.timestamp),
+      });
       continue;
     }
     // system 不入转录；万一出现无归属轮次的孤儿消息也直接跳过
@@ -183,7 +194,8 @@ function entriesToTurns(entries: AgentSessionEntry[]): AgentTurn[] {
           () => ({ output: messageText(message) }),
         ) ?? turn;
     }
-    turns[turns.length - 1] = turn;
+    // 轮内每来一条消息就把结束时刻推后，最终停在本轮最后一条上
+    turns[turns.length - 1] = { ...turn, endedAt: Date.parse(entry.timestamp) };
   }
   return turns;
 }
@@ -214,6 +226,7 @@ function conversationFromDetail(detail: AgentSessionDetail): AgentConversation {
         runId: summary.active_run_id!,
         status: "running",
         segments: [],
+        endedAt: undefined,
         result: undefined,
         error: undefined,
         stopped: undefined,
@@ -596,7 +609,9 @@ export function AgentConversationsProvider({ children }: { children: React.React
           title: input.slice(0, 30),
           updatedAt: Date.now(),
           running: true,
-          turns: [{ id: turnId, runId, input, status: "running", segments: [] }],
+          turns: [
+            { id: turnId, runId, input, status: "running", segments: [], startedAt: Date.now() },
+          ],
           loaded: true,
         },
         ...previous,
@@ -619,7 +634,7 @@ export function AgentConversationsProvider({ children }: { children: React.React
                 running: true,
                 turns: [
                   ...conversation.turns,
-                  { id: turnId, input, status: "running", segments: [] },
+                  { id: turnId, input, status: "running", segments: [], startedAt: Date.now() },
                 ],
               }
             : conversation,

@@ -1,12 +1,12 @@
 """豆瓣公开移动端榜单的最小异步客户端与发现页编排。
 
 豆瓣视角只承担榜单浏览，不抓取完整详情。接口并非正式开放 API，因此请求保持
-低频并使用长缓存；任一榜单失败只隐藏该行，避免影响 TMDB 视角。
+低频并使用长缓存；发现页按「布局 + 单行」提供，任一榜单失败只影响那一行
+（该行接口报错，前端收起该行），不拖垮整页。
 """
 
 from __future__ import annotations
 
-import asyncio
 import logging
 import re
 from dataclasses import dataclass
@@ -18,7 +18,8 @@ from parsel import Selector
 
 from movieclaw_cache import AsyncTTLCache, CacheStore, SwrCache
 from movieclaw_media.models import (
-    DiscoverPage,
+    DiscoverLayout,
+    DiscoverRowStub,
     MediaCard,
     MediaCastMember,
     MediaDetail,
@@ -297,15 +298,42 @@ _TV_COLLECTIONS = (
 
 
 class DoubanDiscoverService:
-    """把豆瓣榜单转换为项目统一的发现页模型，不提供条目详情。"""
+    """把豆瓣榜单转换为项目统一的发现页模型，不提供条目详情。
+
+    发现页按「布局 + 单行」两级提供：布局是纯配置即时返回；每行独立拉取。
+    豆瓣客户端限速为每秒 1 个请求，逐行接口让先就绪的行先渲染，前端不必
+    等最慢的榜单——这正是豆瓣视角首访体验的关键。
+    """
 
     def __init__(self, client: DoubanClient) -> None:
         self._client = client
         self._cache = AsyncTTLCache()
 
-    async def discover_page(self, kind: MediaKind) -> DiscoverPage:
+    def layout(self, kind: MediaKind) -> DiscoverLayout:
+        """发现页布局：行清单来自静态配置，不触发任何豆瓣请求。"""
+        specs = _MOVIE_COLLECTIONS if kind is MediaKind.MOVIE else _TV_COLLECTIONS
+        return DiscoverLayout(
+            has_hero=False,
+            rows=[
+                DiscoverRowStub(
+                    id=f"douban-{spec.collection_id}", title=spec.title, ranked=spec.ranked
+                )
+                for spec in specs
+            ],
+        )
+
+    async def discover_hero(self, kind: MediaKind) -> list[MediaCard]:
+        """豆瓣视角没有 Hero 大横幅；保留方法让路由层对两个数据源同形调用。"""
+        return []
+
+    async def discover_row(self, kind: MediaKind, row_id: str) -> MediaRow | None:
+        """拉取布局中的一行；row_id 不在布局里时返回 None（路由层译为 404）。"""
+        specs = _MOVIE_COLLECTIONS if kind is MediaKind.MOVIE else _TV_COLLECTIONS
+        spec = next((s for s in specs if f"douban-{s.collection_id}" == row_id), None)
+        if spec is None:
+            return None
         return await self._cache.get_or_set(
-            f"douban-page:{kind.value}", _PAGE_TTL, lambda: self._build_page(kind)
+            f"douban-row:{kind.value}:{row_id}", _PAGE_TTL, lambda: self._build_row(kind, spec)
         )
 
     async def search(self, keyword: str) -> list[MediaSearchItem]:
@@ -391,37 +419,19 @@ class DoubanDiscoverService:
             ),
         )
 
-    async def _build_page(self, kind: MediaKind) -> DiscoverPage:
-        specs = _MOVIE_COLLECTIONS if kind is MediaKind.MOVIE else _TV_COLLECTIONS
-        results = await asyncio.gather(
-            *(self._client.collection(spec.collection_id, count=spec.count) for spec in specs),
-            return_exceptions=True,
+    async def _build_row(self, kind: MediaKind, spec: _Collection) -> MediaRow:
+        data = await self._client.collection(spec.collection_id, count=spec.count)
+        items = [
+            card
+            for raw in data.get("subject_collection_items", [])
+            if (card := self._to_card(raw, kind)) is not None
+        ]
+        # 条目太少不值得占一行位置：清空 items，前端按「空行」统一收起
+        if len(items) < _MIN_ROW_ITEMS:
+            items = []
+        return MediaRow(
+            id=f"douban-{spec.collection_id}", title=spec.title, ranked=spec.ranked, items=items
         )
-        rows: list[MediaRow] = []
-        for spec, result in zip(specs, results, strict=True):
-            if isinstance(result, BaseException):
-                logger.warning("豆瓣发现行「%s」不可用：%s", spec.title, result)
-                continue
-            items = [
-                card
-                for raw in result.get("subject_collection_items", [])
-                if (card := self._to_card(raw, kind)) is not None
-            ]
-            if len(items) >= _MIN_ROW_ITEMS:
-                rows.append(
-                    MediaRow(
-                        id=f"douban-{spec.collection_id}",
-                        title=spec.title,
-                        ranked=spec.ranked,
-                        items=items,
-                    )
-                )
-        if not rows:
-            first_error = next((r for r in results if isinstance(r, DoubanError)), None)
-            if first_error:
-                raise first_error
-            raise DoubanError("豆瓣暂未返回可展示的榜单数据，请稍后重试")
-        return DiscoverPage(hero=[], rows=rows)
 
     @staticmethod
     def _to_card(raw: dict[str, Any], kind: MediaKind) -> MediaCard | None:

@@ -68,9 +68,9 @@ def _service(responses: dict[str, Any]) -> MediaDiscoverService:
 async def test_card_mapping_fields() -> None:
     """TMDB 原始条目 → MediaCard 的字段映射：图床拼接 / 年份截取 / 评分取整 / 类型翻译。"""
     svc = _service({"trending/movie/week": {"results": [_movie(1)]}})
-    page = await svc.discover_page(MediaKind.MOVIE)
+    hero = await svc.discover_hero(MediaKind.MOVIE)
 
-    card = page.hero[0]
+    card = hero[0]
     assert card.id == "1"
     assert card.title == "电影1"
     assert card.year == 2026
@@ -94,14 +94,14 @@ async def test_card_drops_items_missing_essentials() -> None:
         ]
     }
     svc = _service({"movie/popular": rows})
-    page = await svc.discover_page(MediaKind.MOVIE)
+    popular = await svc.discover_row(MediaKind.MOVIE, "popular")
 
-    popular = next(r for r in page.rows if r.id == "popular")
+    assert popular is not None
     assert [c.id for c in popular.items] == ["1", "4", "5", "6"]
 
 
 # ---------------------------------------------------------------------------
-# 页面编排
+# 布局与逐行编排
 # ---------------------------------------------------------------------------
 
 
@@ -115,110 +115,83 @@ async def test_hero_requires_backdrop_and_overview() -> None:
         ]
     }
     svc = _service({"trending/movie/week": trending})
-    page = await svc.discover_page(MediaKind.MOVIE)
-    assert [c.id for c in page.hero] == ["3"]
+    hero = await svc.discover_hero(MediaKind.MOVIE)
+    assert [c.id for c in hero] == ["3"]
 
 
 async def test_ranked_row_limits_to_top10() -> None:
     """今日热榜行是 Top 10 排名行：ranked=True 且最多 10 条。"""
     trending_day = {"results": [_movie(i) for i in range(1, 15)]}
     svc = _service({"trending/movie/day": trending_day})
-    page = await svc.discover_page(MediaKind.MOVIE)
+    top = await svc.discover_row(MediaKind.MOVIE, "trending-day")
 
-    top = next(r for r in page.rows if r.id == "trending-day")
+    assert top is not None
     assert top.ranked is True
     assert len(top.items) == 10
 
 
-async def test_pages_render_all_configured_rows_in_order() -> None:
-    """全部端点有数据时，电影/剧集页的行序应与行定义完整一致（含地区/平台/类型行）。"""
-    enough = {"results": [_movie(i) for i in range(1, 8)]}
-    movie_svc = _service(
-        {
-            path: enough
-            for path in (
-                "trending/movie/day", "movie/now_playing", "movie/upcoming",
-                "movie/popular", "movie/top_rated", "discover/movie",
-            )
-        }
-    )
-    movie_page = await movie_svc.discover_page(MediaKind.MOVIE)
-    assert [r.id for r in movie_page.rows] == [s.row_id for s in _movie_rows("CN")]
+async def test_layout_lists_all_configured_rows_in_order() -> None:
+    """布局是纯配置：行序与行定义完整一致（含地区/平台/类型行），不触发请求。"""
+    svc = _service({})
 
-    tv_item = {
-        "id": 9,
-        "name": "剧集9",
-        "first_air_date": "2025-03-01",
-        "vote_average": 8.0,
-        "poster_path": "/tv9.jpg",
-    }
-    tv_svc = _service(
-        {
-            path: {"results": [dict(tv_item, id=i) for i in range(1, 8)]}
-            for path in (
-                "trending/tv/day", "tv/on_the_air", "tv/popular", "tv/top_rated", "discover/tv",
-            )
-        }
-    )
-    tv_page = await tv_svc.discover_page(MediaKind.TV)
-    assert [r.id for r in tv_page.rows] == [s.row_id for s in _tv_rows()]
+    movie_layout = svc.layout(MediaKind.MOVIE)
+    assert movie_layout.has_hero is True
+    assert [r.id for r in movie_layout.rows] == [s.row_id for s in _movie_rows("CN")]
+
+    tv_layout = svc.layout(MediaKind.TV)
+    assert [r.id for r in tv_layout.rows] == [s.row_id for s in _tv_rows()]
+    assert tv_layout.rows[0].ranked
+
+    client: StubTmdbClient = svc._client  # type: ignore[assignment]
+    assert client.calls == []
 
 
-async def test_single_row_failure_is_isolated() -> None:
-    """单个榜单失败只丢那一行，其余行照常返回（错误隔离口径与站点搜索一致）。"""
+async def test_row_failure_raises_and_other_rows_unaffected() -> None:
+    """单行失败只让那一行的请求报错（前端收起该行），其余行照常返回。"""
     svc = _service(
         {
             "movie/popular": {"results": [_movie(i) for i in range(1, 8)]},
             "movie/top_rated": TmdbError("模拟失败"),
         }
     )
-    page = await svc.discover_page(MediaKind.MOVIE)
+    with pytest.raises(TmdbError, match="模拟失败"):
+        await svc.discover_row(MediaKind.MOVIE, "top-rated")
+    popular = await svc.discover_row(MediaKind.MOVIE, "popular")
+    assert popular is not None
+    assert len(popular.items) == 7
 
-    row_ids = [r.id for r in page.rows]
-    assert "popular" in row_ids
-    assert "top-rated" not in row_ids
+
+async def test_sparse_row_returns_empty_items() -> None:
+    """条目太少的行（如所选地区暂无热映数据）返回空 items，由前端收起。"""
+    svc = _service({"movie/now_playing": {"results": [_movie(1), _movie(2)]}})
+    row = await svc.discover_row(MediaKind.MOVIE, "now-playing")
+    assert row is not None
+    assert row.items == []
 
 
-async def test_sparse_row_is_dropped() -> None:
-    """条目太少的行（如所选地区暂无热映数据）整行隐藏，不渲染半空行。"""
+async def test_unknown_row_returns_none() -> None:
+    """row_id 不在布局里返回 None（路由层译为 404），不打 TMDB。"""
+    svc = _service({})
+    assert await svc.discover_row(MediaKind.MOVIE, "nonexistent") is None
+    client: StubTmdbClient = svc._client  # type: ignore[assignment]
+    assert client.calls == []
+
+
+async def test_row_and_hero_are_cached() -> None:
+    """行与 Hero 结果有 TTL 缓存：第二次请求不再回源 TMDB。"""
     svc = _service(
         {
-            "movie/now_playing": {"results": [_movie(1), _movie(2)]},
-            "movie/popular": {"results": [_movie(i) for i in range(10, 16)]},
+            "movie/popular": {"results": [_movie(i) for i in range(1, 8)]},
+            "trending/movie/week": {"results": [_movie(i) for i in range(1, 8)]},
         }
     )
-    page = await svc.discover_page(MediaKind.MOVIE)
-    assert all(r.id != "now-playing" for r in page.rows)
-
-
-async def test_total_failure_raises_first_error() -> None:
-    """整页全军覆没时向上抛出第一个真实错误（而不是静默返回空页面）。"""
-    boom = TmdbError("TMDB API Key 无效")
-    responses = dict.fromkeys(
-        [
-            "trending/movie/week",
-            "trending/movie/day",
-            "movie/popular",
-            "movie/now_playing",
-            "movie/top_rated",
-            "movie/upcoming",
-            "discover/movie",
-        ],
-        boom,
-    )
-    svc = _service(responses)
-    with pytest.raises(TmdbError, match="Key 无效"):
-        await svc.discover_page(MediaKind.MOVIE)
-
-
-async def test_page_is_cached() -> None:
-    """发现页结果有 TTL 缓存：第二次请求不再回源 TMDB。"""
-    svc = _service({"movie/popular": {"results": [_movie(i) for i in range(1, 8)]}})
-    await svc.discover_page(MediaKind.MOVIE)
+    await svc.discover_row(MediaKind.MOVIE, "popular")
+    await svc.discover_hero(MediaKind.MOVIE)
     client: StubTmdbClient = svc._client  # type: ignore[assignment]
     calls_after_first = len(client.calls)
 
-    await svc.discover_page(MediaKind.MOVIE)
+    await svc.discover_row(MediaKind.MOVIE, "popular")
+    await svc.discover_hero(MediaKind.MOVIE)
     assert len(client.calls) == calls_after_first
 
 

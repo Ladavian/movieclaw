@@ -229,6 +229,33 @@ class LibraryFileRepository:
         row.updated_at = utcnow()
         await self._session.commit()
 
+    async def relocate_to_library(
+        self,
+        file_id: int,
+        *,
+        library_id: int,
+        file_path: str,
+        keep_missing: bool = False,
+    ) -> None:
+        """条目转移：把台账行改挂到另一个库并迁到新路径。
+
+        与 ``relocate`` 的区别只在多改一个 ``library_id``——身份锚、季集、
+        介质规格、来源追溯一概原样保留（转移改的是"这份拷贝归哪个库管"，
+        不是"这是哪部片子"）。
+
+        ``keep_missing``：缺失行（磁盘上没有实体）只做逻辑随迁，不能顺手
+        清掉 missing 标记——那会让一个并不存在的文件在新库里显示为在位。
+        """
+        row = await self._session.get(LibraryFile, file_id)
+        if row is None:
+            return
+        row.library_id = library_id
+        row.file_path = file_path
+        if not keep_missing:
+            row.missing_since = None
+        row.updated_at = utcnow()
+        await self._session.commit()
+
     async def claim_identity(
         self,
         file_id: int,

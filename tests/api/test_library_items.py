@@ -2,15 +2,16 @@
 
 from __future__ import annotations
 
+from datetime import date
+
 import pytest_asyncio
+from sqlmodel import select
 
 from movieclaw_api.api.routes.libraries import list_library_items
 from movieclaw_api.core.config import get_settings
 from movieclaw_api.schemas.library import derive_air_status
 from movieclaw_db.engine import dispose_db, get_database, init_db
 from movieclaw_db.migrations import run_migrations
-from datetime import date
-
 from movieclaw_db.models import FileSource, LibraryFile, MediaEpisode, MediaItem, utcnow
 from movieclaw_db.repositories.library_repo import LibraryRepository
 
@@ -94,7 +95,7 @@ async def test_items_air_status_and_missing_episodes(db) -> None:
         )
         await session.flush()
 
-        resp = await list_library_items(library.id, session)
+        resp = await list_library_items(library.id, session=session)
         rows = {r.media_item_id: r for r in resp.data}
 
         assert rows[airing.id].air_status == "airing"
@@ -133,7 +134,7 @@ async def test_items_missing_episodes_counts_across_libraries(db) -> None:
         )
         await session.flush()
 
-        resp = await list_library_items(main.id, session)
+        resp = await list_library_items(main.id, session=session)
         row = {r.media_item_id: r for r in resp.data}[item.id]
 
         # 本库库存仍按本库口径展示（海报墙显示的是这个库里有什么）
@@ -174,12 +175,116 @@ async def test_items_movie_and_unknown_status(db) -> None:
         )
         await session.flush()
 
-        resp = await list_library_items(library.id, session)
+        resp = await list_library_items(library.id, session=session)
         rows = {r.media_item_id: r for r in resp.data}
 
         assert rows[movie.id].air_status is None
         assert rows[movie.id].missing_episode_count == 0
         assert rows[unknown.id].air_status is None
+
+
+async def test_items_sort_and_paging(db) -> None:
+    """服务端排序 + 分页：按标题/最近入账各自有序，翻页不重不漏。"""
+    from datetime import timedelta
+
+    from movieclaw_api.api.routes.libraries import list_library_item_ids
+
+    async with db.session() as session:
+        library = await LibraryRepository(session).create(
+            name="电影库", kind="movie", root_paths=["/movies"]
+        )
+        assert library.id
+        # 标题序 A→D 与入账序（A 最新）刻意相反，才能验出排序真按各自的键走
+        base = utcnow()
+        titles = ["A片", "B片", "C片", "D片"]
+        ids: list[int] = []
+        for index, title in enumerate(titles):
+            item = MediaItem(kind="movie", tmdb_id=500 + index, title=title, original_title=title)
+            session.add(item)
+            await session.flush()
+            assert item.id
+            ids.append(item.id)
+            session.add(
+                LibraryFile(
+                    library_id=library.id,
+                    media_item_id=item.id,
+                    season_number=0,
+                    episode_number=0,
+                    file_path=f"/movies/{title}/{title}.mkv",
+                    size_bytes=1,
+                    source=FileSource.SCANNED,
+                    created_at=base - timedelta(minutes=index),  # A 最新、D 最旧
+                )
+            )
+        await session.flush()
+
+        by_title = await list_library_items(library.id, session=session)
+        assert [r.title for r in by_title.data] == titles
+
+        recent = await list_library_items(library.id, sort="added_at", limit=2, session=session)
+        assert [r.title for r in recent.data] == ["A片", "B片"]
+
+        page1 = await list_library_items(library.id, limit=2, session=session)
+        page2 = await list_library_items(library.id, limit=2, offset=2, session=session)
+        assert [r.title for r in page1.data] + [r.title for r in page2.data] == titles
+
+        # 补探优先：给 A 片探出音轨后它就不再是"待处理"，让位给尚未探测的 B 片
+        a_file = (
+            await session.execute(select(LibraryFile).where(LibraryFile.media_item_id == ids[0]))
+        ).scalar_one()
+        a_file.audio_streams = []
+        session.add(a_file)
+        await session.flush()
+        probing = await list_library_items(library.id, sort="probing", limit=2, session=session)
+        assert [r.title for r in probing.data] == ["B片", "C片"]
+
+        empty = await list_library_items(library.id, limit=2, offset=4, session=session)
+        assert empty.data == []
+
+        id_resp = await list_library_item_ids(library.id, session=session)
+        assert sorted(id_resp.data) == sorted(ids)
+
+
+async def test_items_pinyin_order_and_index(db) -> None:
+    """按标题排序走拼音序，A-Z 索引条的分档与 offset 与之同源。"""
+    from movieclaw_api.api.routes.libraries import list_library_item_index
+
+    async with db.session() as session:
+        library = await LibraryRepository(session).create(
+            name="剧集库", kind="tv", root_paths=["/tv"]
+        )
+        assert library.id
+        # 码点序会排成「三体 < 漫长的季节 < 爱很美味 < 重庆森林」（全错）；
+        # 拼音序应是 爱(a) < 漫长(m) < 三体(s) < 重庆(chongqing→c) 之后的 C < M < S
+        titles = ["三体", "漫长的季节", "爱很美味", "重庆森林", "9号秘事"]
+        for index, title in enumerate(titles):
+            item = MediaItem(kind="tv", tmdb_id=600 + index, title=title, original_title=title)
+            session.add(item)
+            await session.flush()
+            assert item.id
+            session.add(_file(library.id, item.id, 1, 1))
+        await session.flush()
+
+        rows = await list_library_items(library.id, session=session)
+        assert [r.title for r in rows.data] == [
+            "爱很美味",  # a
+            "重庆森林",  # chongqing——多音字，码点序绝排不到这
+            "漫长的季节",  # m
+            "三体",  # s
+            "9号秘事",  # 数字归 #，排在最后
+        ]
+
+        index_rows = await list_library_item_index(library.id, session=session)
+        assert [(e.initial, e.count, e.offset) for e in index_rows.data] == [
+            ("A", 1, 0),
+            ("C", 1, 1),
+            ("M", 1, 2),
+            ("S", 1, 3),
+            ("#", 1, 4),
+        ]
+        # 索引条给的 offset 直接可用：点「M」拿到的就是该档第一格
+        jumped = await list_library_items(library.id, limit=1, offset=2, session=session)
+        assert [r.title for r in jumped.data] == ["漫长的季节"]
 
 
 def test_derive_air_status_mapping() -> None:

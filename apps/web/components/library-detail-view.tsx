@@ -33,7 +33,11 @@ import {
   listIdentityReview,
   listIgnored,
   listLibraries,
+  listLibraryItemIds,
+  listLibraryItemIndex,
   listLibraryItems,
+  type LibraryIndexEntry,
+  type LibraryItemSort,
   listMissing,
   listUnidentified,
   redownloadMissing,
@@ -82,13 +86,27 @@ function busyText(progress: ScanProgress | null): string {
  * 单库页（/library/[id]）：库头部 + **真实库存**海报墙（Emby 进库后的浏览视图）。
  *
  * 三个分区：
- * 1. 库存（library_file 台账聚合）：已在磁盘上的作品，格下标注集数/规格/大小；
- * 2. 待识别：扫描认不出身份的文件，按条目目录成组，点候选或填 TMDB ID 整组认领；
- * 3. 追踪中：入库目标是本库、但还没有文件落地的订阅（弱化展示，点进订阅详情）。
+ * 1. 追踪中：入库目标是本库、但还没有文件落地的订阅——自动化正在进行的部分，
+ *    时效性最强，置顶展示（格子样式仍弱化，点进订阅详情）；
+ * 2. 库存（library_file 台账聚合）：已在磁盘上的作品，格下标注集数/规格/大小；
+ * 3. 待识别：扫描认不出身份的文件，按条目目录成组，点候选或填 TMDB ID 整组认领。
  */
+/** 海报墙每次向服务端要的格数（首屏一批，滚到底再追加一批）。 */
+const WALL_PAGE_SIZE = 60;
+
 export function LibraryDetailView({ libraryId }: { libraryId: number }) {
   const [libraries, setLibraries] = useState<MediaLibrary[] | null>(null);
   const [items, setItems] = useState<LibraryItem[]>([]);
+  // 服务端还有没有下一页；滚动加载的哨兵据此决定是否继续观察
+  const [wallHasMore, setWallHasMore] = useState(false);
+  // 本库全部条目 id：海报墙分页后这份名单仍要完整——「追踪中」要靠它把
+  // 已入库的订阅剔掉，而已入库的那部可能在第 5 页上，光看当前页会误判
+  const [ownedIds, setOwnedIds] = useState<Set<number>>(() => new Set());
+  // A-Z 索引条的分档（按标题排序时才有意义）
+  const [wallIndex, setWallIndex] = useState<LibraryIndexEntry[]>([]);
+  // 当前窗口在整份排序里的起点：0 = 从头开始；点字母跳转后是该档的 offset。
+  // 轮询要按这个起点重拉，否则每 3 秒把用户拽回墙首
+  const [wallStart, setWallStart] = useState(0);
   const [unidentified, setUnidentified] = useState<UnidentifiedGroup[]>([]);
   const [review, setReview] = useState<ReviewGroup[]>([]);
   const [ignored, setIgnored] = useState<UnidentifiedGroup[]>([]);
@@ -107,18 +125,34 @@ export function LibraryDetailView({ libraryId }: { libraryId: number }) {
   // 轮询乱序守卫：扫描期间后端响应时间抖动大，上一轮的慢响应可能晚于
   // 下一轮到达，不作废就会用旧快照覆盖新状态（进度回跳、胶囊闪烁）
   const reloadSeq = useRef(0);
+  // 海报墙已加载的格数：轮询按这个数重拉第一页，用户滚到第几屏就刷新到第几屏
+  // ——否则每轮轮询都把墙缩回首屏，正在看的位置被抽走
+  const wallLoaded = useRef(WALL_PAGE_SIZE);
+  // 当前排序（扫描补探阶段切到「待补探优先」）。放 ref 而不进依赖：reload
+  // 每轮都读最新值，不必为切排序重建回调链
+  const wallSort = useRef<LibraryItemSort>("title");
+  // 当前窗口起点的 ref 版：reload 每轮读它，不进依赖（同 wallSort）
+  const wallOffset = useRef(0);
   const reload = useCallback(() => {
     const seq = ++reloadSeq.current;
+    const wanted = wallLoaded.current;
+    const from = wallOffset.current;
     Promise.all([
       listLibraries(),
-      listLibraryItems(libraryId).catch(() => []),
+      listLibraryItems(libraryId, {
+        sort: wallSort.current,
+        limit: wanted,
+        offset: from,
+      }).catch(() => []),
+      listLibraryItemIds(libraryId).catch(() => []),
+      listLibraryItemIndex(libraryId).catch(() => []),
       listUnidentified(libraryId).catch(() => []),
       listIdentityReview(libraryId).catch(() => []),
       listIgnored(libraryId).catch(() => []),
       listMissing(libraryId).catch(() => []),
       listSubscriptions().catch(() => []),
     ])
-      .then(([libs, libraryItems, unknown, reviewGroups, ignoredGroups, missingItems, subs]) => {
+      .then(([libs, libraryItems, ids, index, unknown, reviewGroups, ignoredGroups, missingItems, subs]) => {
         if (seq !== reloadSeq.current) return;
         setFailed(false);
         // 轮询快照内容没变时复用旧引用：库存墙逐条目复用（配合 InventoryCell
@@ -126,6 +160,14 @@ export function LibraryDetailView({ libraryId }: { libraryId: number }) {
         // 每 3 秒就把几百个格子全部重画一遍，表现为周期性卡顿
         setLibraries((prev) => (prev ? keepIfEqual(prev, libs) : libs));
         setItems((prev) => reconcileList(prev, libraryItems, (i) => i.media_item_id));
+        wallLoaded.current = Math.max(WALL_PAGE_SIZE, libraryItems.length);
+        // 拿满这一页就假定后面还有；真到底时下一次追加会拿到空数组并收尾
+        setWallHasMore(libraryItems.length >= wanted);
+        // 内容没变就复用旧集合，别让「追踪中」每轮轮询白白重算重画
+        setOwnedIds((prev) =>
+          ids.length === prev.size && ids.every((i) => prev.has(i)) ? prev : new Set(ids),
+        );
+        setWallIndex((prev) => keepIfEqual(prev, index));
         setUnidentified((prev) => keepIfEqual(prev, unknown));
         setReview((prev) => keepIfEqual(prev, reviewGroups));
         setIgnored((prev) => keepIfEqual(prev, ignoredGroups));
@@ -147,6 +189,59 @@ export function LibraryDetailView({ libraryId }: { libraryId: number }) {
   useEffect(() => {
     reload();
   }, [reload]);
+
+  // 海报墙滚到底时向服务端追加一页。并发闸门用 ref：哨兵在快速滚动中会
+  // 连续触发几次，不挡住就是同一页被拉好几遍
+  const loadingMore = useRef(false);
+  const loadMore = useCallback(() => {
+    if (loadingMore.current) return;
+    loadingMore.current = true;
+    const offset = wallOffset.current + wallLoaded.current;
+    listLibraryItems(libraryId, { sort: wallSort.current, limit: WALL_PAGE_SIZE, offset })
+      .then((next) => {
+        wallLoaded.current += next.length;
+        // 追加与轮询可能交叠着回来，同一条目被拿到两次——按 id 去重再拼
+        setItems((current) => {
+          const seen = new Set(current.map((i) => i.media_item_id));
+          return [...current, ...next.filter((i) => !seen.has(i.media_item_id))];
+        });
+        setWallHasMore(next.length >= WALL_PAGE_SIZE);
+      })
+      .catch(() => setWallHasMore(false))
+      .finally(() => {
+        loadingMore.current = false;
+      });
+  }, [libraryId]);
+
+  // 海报墙顶部的锚：跳字母后滚回墙首，否则用户停在原来的滚动位置上，
+  // 看到的是新一批的中间，像是"点了没反应"
+  const wallTop = useRef<HTMLDivElement>(null);
+  /**
+   * 跳到某个首字母档：换掉整个窗口（而不是继续往后追加），此后照常向下滚动加载。
+   * offset=0 即回到墙首，索引条的「全部」走的也是这条路。
+   */
+  const jumpTo = useCallback(
+    (offset: number) => {
+      loadingMore.current = true; // 跳转期间挡住哨兵，别让旧窗口的追加插进来
+      // 作废在途的轮询：它拿的是旧窗口的那一页，晚一步回来就把用户刚跳到的
+      // 位置又拽回去（表现为"点了字母，一秒后自己跳回墙首"）
+      reloadSeq.current += 1;
+      wallOffset.current = offset;
+      listLibraryItems(libraryId, { sort: "title", limit: WALL_PAGE_SIZE, offset })
+        .then((page) => {
+          wallLoaded.current = Math.max(WALL_PAGE_SIZE, page.length);
+          setWallStart(offset);
+          setItems(page);
+          setWallHasMore(page.length >= WALL_PAGE_SIZE);
+          wallTop.current?.scrollIntoView({ block: "start", behavior: "smooth" });
+        })
+        .catch(() => {})
+        .finally(() => {
+          loadingMore.current = false;
+        });
+    },
+    [libraryId],
+  );
 
   // 进入页面先探一次元数据刷新状态（可能是别的入口/上次会话发起的）
   useEffect(() => {
@@ -219,24 +314,29 @@ export function LibraryDetailView({ libraryId }: { libraryId: number }) {
   const probing = Boolean(
     library?.scanning && library.scan_progress?.phase === "probing",
   );
-  const displayItems = useMemo(() => {
-    if (!probing) return items;
-    return [...items].sort(
-      (a, b) => Number(b.probe_pending_count > 0) - Number(a.probe_pending_count > 0),
-    );
-  }, [items, probing]);
+  // 排序切换是**服务端**的事（墙是分页的，本地排只能排到已加载的那几屏）：
+  // 阶段一变就换排序键重拉第一页，回到首屏看的就是正在处理的那几部
+  useEffect(() => {
+    const next: LibraryItemSort = probing ? "probing" : "title";
+    if (wallSort.current === next) return;
+    wallSort.current = next;
+    wallLoaded.current = WALL_PAGE_SIZE;
+    // 换了排序，之前跳到的字母位置就没意义了，窗口回到墙首
+    wallOffset.current = 0;
+    setWallStart(0);
+    reload();
+  }, [probing, reload]);
 
   // 追踪中：目标是本库、且尚未在库存中出现的订阅
   const pending = useMemo(() => {
     if (!libraries || !library) return [];
-    const ownedMedia = new Set(items.map((i) => i.media_item_id));
     return subscriptions.filter(
       (s) =>
         effectiveLibraryId(s, libraries) === library.id &&
-        !ownedMedia.has(s.media.media_item_id ?? -1) &&
+        !ownedIds.has(s.media.media_item_id ?? -1) &&
         s.progress.imported === 0,
     );
-  }, [libraries, library, subscriptions, items]);
+  }, [libraries, library, subscriptions, ownedIds]);
 
   // 只有一次都没加载成功过才整页报错；已有数据在手时，瞬时失败只在页内
   // 挂提示条（stale-while-error）——为一次网络抖动把整面海报墙换成错误屏，
@@ -500,32 +600,9 @@ export function LibraryDetailView({ libraryId }: { libraryId: number }) {
         onChanged={reload}
       />
 
-      {/* —— 库存海报墙 —— */}
-      {items.length === 0 && unidentified.length === 0 ? (
-        <p className="mt-16 text-center text-ui leading-7 text-[var(--text-muted)]">
-          这个库还没有内容。
-          <br />
-          点右上角 ⋯ 里的「扫描库」把根路径下已有的影片识别入库；订阅的内容下载完成后也会自动进来。
-        </p>
-      ) : (
-        <div className="mt-6 grid gap-x-4 gap-y-7 px-6 [grid-template-columns:repeat(auto-fill,minmax(148px,1fr))] max-md:mt-4 max-md:gap-x-3 max-md:gap-y-5 max-md:px-4 max-md:[grid-template-columns:repeat(auto-fill,minmax(140px,1fr))]">
-          {displayItems.map((item) => (
-            <InventoryCell
-              key={item.media_item_id}
-              item={item}
-              libraryId={libraryId}
-              workingLabel={
-                refreshPhaseById.get(item.media_item_id) ??
-                (probing && item.probe_pending_count > 0 ? "正在读取规格" : undefined)
-              }
-            />
-          ))}
-        </div>
-      )}
-
-      {/* —— 追踪中（订阅已指向本库、文件未落地）—— */}
+      {/* —— 追踪中（订阅已指向本库、文件未落地）：自动化正在进行的部分，置顶优先 —— */}
       {pending.length > 0 && (
-        <div className="mt-10 px-6 max-md:mt-7 max-md:px-4">
+        <div className="mt-6 px-6 max-md:mt-4 max-md:px-4">
           <h3 className="text-on-image text-body-lg font-semibold text-white/85">
             追踪中
             <span className="ml-2 text-sub font-normal text-[var(--text-faint)]">
@@ -538,6 +615,50 @@ export function LibraryDetailView({ libraryId }: { libraryId: number }) {
             ))}
           </div>
         </div>
+      )}
+
+      {/* —— 库存海报墙（追踪中置顶时补「已入库」标题，两片海报墙不致连读）—— */}
+      {items.length === 0 && unidentified.length === 0 ? (
+        <p className="mt-16 text-center text-ui leading-7 text-[var(--text-muted)]">
+          这个库还没有内容。
+          <br />
+          点右上角 ⋯ 里的「扫描库」把根路径下已有的影片识别入库；订阅的内容下载完成后也会自动进来。
+        </p>
+      ) : (
+        <>
+          {pending.length > 0 && (
+            <h3 className="text-on-image mt-10 px-6 text-body-lg font-semibold text-white/85 max-md:mt-7 max-md:px-4">
+              已入库
+            </h3>
+          )}
+          <div ref={wallTop} className={pending.length > 0 ? "mt-4" : "mt-6 max-md:mt-4"}>
+            {/* 索引条与墙并排：条固定在视口右侧（sticky），墙照常滚 */}
+            <div className="flex items-start gap-2 px-6 max-md:gap-1 max-md:px-4">
+              <div className="grid flex-1 gap-x-4 gap-y-7 [grid-template-columns:repeat(auto-fill,minmax(148px,1fr))] max-md:gap-x-3 max-md:gap-y-5 max-md:[grid-template-columns:repeat(auto-fill,minmax(140px,1fr))]">
+                {items.map((item) => (
+                  <InventoryCell
+                    key={item.media_item_id}
+                    item={item}
+                    libraryId={libraryId}
+                    workingLabel={
+                      refreshPhaseById.get(item.media_item_id) ??
+                      (probing && item.probe_pending_count > 0 ? "正在读取规格" : undefined)
+                    }
+                  />
+                ))}
+              </div>
+              {/* 补探阶段排序不是拼音序，字母跳转会跳错位置——那几分钟里收起来 */}
+              {!probing && <WallIndexBar index={wallIndex} start={wallStart} onJump={jumpTo} />}
+            </div>
+          </div>
+          <WallLoadMore
+            hasMore={wallHasMore}
+            loaded={items.length}
+            start={wallStart}
+            total={library.stats.item_count}
+            onReach={loadMore}
+          />
+        </>
       )}
 
       <LibraryFormDialog
@@ -805,6 +926,109 @@ const InventoryCell = memo(function InventoryCell({
     </div>
   );
 });
+
+/**
+ * 海报墙底部的滚动加载哨兵。
+ *
+ * 提前 600px 触发下一页，正常滚动速度下新一批在滚到底之前就已到位，看不出
+ * 分页。已加载数变化后重新观察：一页塞不满视口时哨兵仍在屏内，重新观察会
+ * 立刻再触发一次，直到填满或到底——否则墙会停在半屏、再也不加载。
+ */
+function WallLoadMore({
+  hasMore,
+  loaded,
+  start,
+  total,
+  onReach,
+}: {
+  hasMore: boolean;
+  loaded: number;
+  /** 当前窗口在整份排序里的起点（跳字母后不为 0），决定进度文案的口径 */
+  start: number;
+  total: number;
+  onReach: () => void;
+}) {
+  const sentinel = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const target = sentinel.current;
+    if (!target || !hasMore) return;
+    const observer = new IntersectionObserver(
+      ([entry]) => {
+        if (entry.isIntersecting) onReach();
+      },
+      { rootMargin: "600px 0px" },
+    );
+    observer.observe(target);
+    return () => observer.disconnect();
+  }, [hasMore, loaded, onReach]);
+
+  return (
+    <div
+      ref={sentinel}
+      className="mt-8 flex h-10 items-center justify-center text-sub text-[var(--text-muted)]"
+      aria-live="polite"
+    >
+      {hasMore
+        ? `加载中…（第 ${start + 1}–${start + loaded} 部 / 共 ${Math.max(total, start + loaded)}）`
+        : null}
+    </div>
+  );
+}
+
+/** A-Z 索引条的完整档位（与后端 sort_key.INITIALS 同序）：# 收尾。 */
+const WALL_INITIALS = [...Array.from({ length: 26 }, (_, i) => String.fromCharCode(65 + i)), "#"];
+
+/**
+ * 海报墙右侧的 A-Z 快速定位条。
+ *
+ * 中文按拼音首字母分档（后端算好，见 sort_key 模块）。点一下把窗口整体换到
+ * 该档起点——墙是分页的，"跳到 S"意味着重新取一页，而不是在已加载的几屏里找。
+ * 空档（该字母下没有作品）保留位置但不可点：字母位置固定，肌肉记忆才成立。
+ */
+function WallIndexBar({
+  index,
+  start,
+  onJump,
+}: {
+  index: LibraryIndexEntry[];
+  /** 当前窗口起点，用来高亮"现在停在哪一档" */
+  start: number;
+  onJump: (offset: number) => void;
+}) {
+  const byInitial = useMemo(() => new Map(index.map((e) => [e.initial, e])), [index]);
+  // 当前档 = 起点落在哪一档的区间里
+  const active = useMemo(
+    () => index.findLast((e) => e.offset <= start)?.initial ?? null,
+    [index, start],
+  );
+  if (index.length === 0) return null;
+
+  return (
+    <div className="sticky top-4 flex shrink-0 flex-col items-center gap-px py-1 text-micro font-semibold leading-none text-[var(--text-faint)]">
+      {WALL_INITIALS.map((initial) => {
+        const entry = byInitial.get(initial);
+        return (
+          <button
+            key={initial}
+            type="button"
+            disabled={!entry}
+            onClick={() => entry && onJump(entry.offset)}
+            title={entry ? `${initial} · ${entry.count} 部` : undefined}
+            className={`flex size-[18px] items-center justify-center rounded transition-colors ${
+              !entry
+                ? "cursor-default text-white/15"
+                : initial === active
+                  ? "bg-[var(--accent)]/25 text-white"
+                  : "text-white/55 hover:bg-white/10 hover:text-white"
+            }`}
+          >
+            {initial}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
 
 /** 追踪中格：订阅状态行沿用订阅页语言，点击进订阅详情。 */
 function PendingCell({ sub }: { sub: Subscription }) {

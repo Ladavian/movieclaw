@@ -290,6 +290,7 @@ def scan_progress(library_id: int) -> ScanState | None:
 async def scan_library(library_id: int) -> ScanSummary:
     """扫描一个库的全部根路径（后台任务入口；自开会话，不向外抛异常）。"""
     from movieclaw_api.services.library.organize import is_organizing
+    from movieclaw_api.services.library.transfer import is_transferring
 
     summary = ScanSummary(library_id=library_id)
     running = _scan_tasks.state_of(library_id)
@@ -302,6 +303,13 @@ async def scan_library(library_id: int) -> ScanSummary:
     # 更新，无需扫描补账，漏掉的变更由下轮对账兜底）
     if is_organizing(library_id):
         summary.errors.append("该库正在整理文件名，扫描已跳过（整理完成后可重新扫描）")
+        return summary
+    # 与条目转移互斥，理由与整理完全相同：转移正在把整个条目目录搬进/搬出
+    # 本库，扫描此刻介入会把搬走的旧路径标 missing、把搬来的新路径当新文件
+    # 重走识别链。转移期间台账已同步随迁，无需扫描补账。搬运本身产生的
+    # watchdog 事件也在这里被挡下
+    if is_transferring(library_id):
+        summary.errors.append("该库正在转移条目，扫描已跳过（转移完成后可重新扫描）")
         return summary
     # 状态先立起来再干活：从这一行到 finally 之间的任何路径，"在跑"与
     # "跑到哪了"都由同一个对象回答，接口不可能取到半截状态
@@ -1620,6 +1628,7 @@ async def reidentify_item(library_id: int, media_item_id: int) -> ReidentifySumm
     """
     summary = ReidentifySummary(library_id=library_id, media_item_id=media_item_id)
     from movieclaw_api.services.library.organize import is_organizing
+    from movieclaw_api.services.library.transfer import is_transferring
 
     running = _scan_tasks.state_of(library_id)
     if running is not None:
@@ -1627,6 +1636,9 @@ async def reidentify_item(library_id: int, media_item_id: int) -> ReidentifySumm
         return summary
     if is_organizing(library_id):
         summary.errors.append("该库正在整理文件名，请等整理完成后再重新识别")
+        return summary
+    if is_transferring(library_id):
+        summary.errors.append("该库正在转移条目，请等转移完成后再重新识别")
         return summary
     # 与扫描互斥：重识别正在改身份锚，此刻扫描介入会打架。占的是同一把库级
     # 锁，但阶段标成 REIDENTIFYING——接口据此如实说"正在重新识别"，不会

@@ -1,9 +1,9 @@
 """影视数据层的对外数据模型。
 
 字段形态刻意对齐前端发现页的渲染需求（apps/web/lib/media-types.ts）：
-后端把「Hero 精选 + 分类横滚行」聚合成一屏完整数据，前端拿到即渲染，
-不在浏览器端做二次编排。命名沿用项目 API 惯例的 snake_case，前端在
-lib/api/discover.ts 做一次 camelCase 映射。
+后端先给出「布局」（行清单），前端据此撑起骨架，再按行拉取数据渐进填充；
+每行内部仍是拿到即渲染，不在浏览器端做二次编排。命名沿用项目 API 惯例的
+snake_case，前端在 lib/api/discover.ts 做一次 camelCase 映射。
 """
 
 from __future__ import annotations
@@ -60,11 +60,23 @@ class MediaRow(BaseModel):
     items: list[MediaCard]
 
 
-class DiscoverPage(BaseModel):
-    """一个完整发现页（发现电影 / 发现剧集各一份）。"""
+class DiscoverRowStub(BaseModel):
+    """布局里的一行占位（只有标识与标题，不含条目数据）。
 
-    hero: list[MediaCard] = Field(description="Hero 大横幅轮播的精选项（均带 backdrop_url）")
-    rows: list[MediaRow]
+    前端拿到布局后先按行清单撑起整页骨架，再逐行请求数据填充——
+    这是发现页渐进加载的关键：不必等最慢的榜单，先到先渲染。
+    """
+
+    id: str
+    title: str
+    ranked: bool = Field(default=False, description="是否为 Top 10 大数字排名行")
+
+
+class DiscoverLayout(BaseModel):
+    """发现页布局（发现电影 / 发现剧集各一份）：纯配置，毫秒级返回。"""
+
+    has_hero: bool = Field(description="是否有 Hero 大横幅（豆瓣视角没有）")
+    rows: list[DiscoverRowStub]
 
 
 class MediaSearchItem(BaseModel):

@@ -34,6 +34,7 @@ from movieclaw_api.api.routes.search import router as search_router
 from movieclaw_api.api.routes.sites import router as sites_router
 from movieclaw_api.api.routes.spec import router as spec_router
 from movieclaw_api.api.routes.subscriptions import router as subscriptions_router
+from movieclaw_api.api.routes.system_notices import router as system_notices_router
 from movieclaw_api.api.routes.ui import router as ui_router
 
 api_router = APIRouter()
@@ -64,6 +65,7 @@ _PROTECTED_ROUTERS = [
     fs_router,
     rule_sets_router,
     logs_router,
+    system_notices_router,
     network_router,
     people_router,
     spec_router,

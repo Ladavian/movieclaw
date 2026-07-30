@@ -1,28 +1,30 @@
-"""发现页数据编排：把 TMDB 的多个榜单接口聚合成前端一屏可渲染的页面。
+"""发现页数据编排：把 TMDB 的榜单接口转换为前端可渲染的行数据。
 
 页面构成（Netflix 式）
 --------------------
 - hero：本周趋势榜里挑「有宽幅剧照且有中文简介」的前几名做大横幅轮播；
-- rows：每行对应一个 TMDB 榜单/发现查询（行定义见 _movie_rows / _tv_rows），
-  全部并发拉取；单行失败只丢那一行、不拖垮整页（对齐站点搜索的错误隔离
-  口径），全部失败才向上抛错。
+- rows：每行对应一个 TMDB 榜单/发现查询（行定义见 _movie_rows / _tv_rows）。
+
+发现页按「布局 + 单行」两级提供：布局（行清单）是纯配置即时返回，前端据此
+撑起骨架后逐行拉数据渐进填充；单行失败只影响那一行（该行接口报错，前端
+收起该行），不拖垮整页——错误隔离口径与站点搜索一致。
 
 缓存口径
 --------
-页面 30 分钟、类型表 24 小时、详情 6 小时——都是全站共享的只读榜单数据，
+行/Hero 30 分钟、类型表 24 小时、详情 6 小时——都是全站共享的只读榜单数据，
 无个性化成分，进程内 TTL 缓存即可（见 cache.py 的说明）。
 """
 
 from __future__ import annotations
 
-import asyncio
 import logging
 from dataclasses import dataclass, field
 from typing import Any
 
 from movieclaw_cache import AsyncTTLCache
 from movieclaw_media.models import (
-    DiscoverPage,
+    DiscoverLayout,
+    DiscoverRowStub,
     MediaCard,
     MediaCastMember,
     MediaDetail,
@@ -223,46 +225,46 @@ class MediaDiscoverService:
     # 发现页
     # ------------------------------------------------------------------
 
-    async def discover_page(self, kind: MediaKind) -> DiscoverPage:
+    def layout(self, kind: MediaKind) -> DiscoverLayout:
+        """发现页布局：行清单来自静态配置，不触发任何 TMDB 请求。"""
+        return DiscoverLayout(
+            has_hero=True,
+            rows=[
+                DiscoverRowStub(id=s.row_id, title=s.title, ranked=s.ranked)
+                for s in self._row_specs(kind)
+            ],
+        )
+
+    async def discover_hero(self, kind: MediaKind) -> list[MediaCard]:
+        """Hero 大横幅精选：本周趋势榜里挑「有宽幅剧照且有简介」的前几名。"""
         return await self._cache.get_or_set(
-            f"page:{kind.value}", _PAGE_TTL, lambda: self._build_page(kind)
+            f"hero:{kind.value}", _PAGE_TTL, lambda: self._build_hero(kind)
         )
 
-    async def _build_page(self, kind: MediaKind) -> DiscoverPage:
+    async def discover_row(self, kind: MediaKind, row_id: str) -> MediaRow | None:
+        """拉取布局中的一行；row_id 不在布局里时返回 None（路由层译为 404）。"""
+        spec = next((s for s in self._row_specs(kind) if s.row_id == row_id), None)
+        if spec is None:
+            return None
+        return await self._cache.get_or_set(
+            f"row:{kind.value}:{row_id}", _PAGE_TTL, lambda: self._build_row(kind, spec)
+        )
+
+    def _row_specs(self, kind: MediaKind) -> tuple[_RowSpec, ...]:
+        return _movie_rows(self._region) if kind is MediaKind.MOVIE else _tv_rows()
+
+    async def _build_hero(self, kind: MediaKind) -> list[MediaCard]:
         genre_map = await self._genre_map(kind)
-        specs = _movie_rows(self._region) if kind is MediaKind.MOVIE else _tv_rows()
+        cards = await self._fetch_cards(f"trending/{kind.value}/week", {}, kind, genre_map)
+        return [c for c in cards if c.backdrop_url and c.overview][:_HERO_COUNT]
 
-        results = await asyncio.gather(
-            self._fetch_cards(f"trending/{kind.value}/week", {}, kind, genre_map),
-            *(self._fetch_cards(s.path, s.params, kind, genre_map) for s in specs),
-            return_exceptions=True,
-        )
-        hero_result, row_results = results[0], results[1:]
-
-        hero: list[MediaCard] = []
-        if isinstance(hero_result, BaseException):
-            logger.warning("发现页 Hero 数据拉取失败：%s", hero_result)
-        else:
-            # Hero 只收「有宽幅剧照且有简介」的条目，保证大横幅视觉与文案完整
-            hero = [c for c in hero_result if c.backdrop_url and c.overview][:_HERO_COUNT]
-
-        rows: list[MediaRow] = []
-        for spec, result in zip(specs, row_results):
-            if isinstance(result, BaseException):
-                logger.warning("发现页榜单「%s」拉取失败：%s", spec.title, result)
-                continue
-            items = result[: spec.limit]
-            if len(items) < _MIN_ROW_ITEMS:
-                continue
-            rows.append(MediaRow(id=spec.row_id, title=spec.title, ranked=spec.ranked, items=items))
-
-        if not rows and not hero:
-            # 整页全军覆没：把第一个真实错误抛给用户（通常是 Key 无效/网络不通）
-            first_error = next((r for r in results if isinstance(r, BaseException)), None)
-            if isinstance(first_error, TmdbError):
-                raise first_error
-            raise TmdbError("TMDB 未返回任何可用数据，请稍后重试")
-        return DiscoverPage(hero=hero, rows=rows)
+    async def _build_row(self, kind: MediaKind, spec: _RowSpec) -> MediaRow:
+        genre_map = await self._genre_map(kind)
+        items = (await self._fetch_cards(spec.path, spec.params, kind, genre_map))[: spec.limit]
+        # 条目太少不值得占一行位置：清空 items，前端按「空行」统一收起
+        if len(items) < _MIN_ROW_ITEMS:
+            items = []
+        return MediaRow(id=spec.row_id, title=spec.title, ranked=spec.ranked, items=items)
 
     async def _fetch_cards(
         self, path: str, params: dict[str, Any], kind: MediaKind, genre_map: dict[int, str]

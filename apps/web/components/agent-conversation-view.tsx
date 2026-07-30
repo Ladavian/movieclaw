@@ -5,7 +5,7 @@ import { memo, useEffect, useMemo, useRef, useState } from "react";
 import { Composer } from "@/components/composer";
 import { HighlightedCode } from "@/components/highlighted-code";
 import { LlmSetupNotice, useLlmConfigured } from "@/components/llm-gate";
-import { ChevronRightIcon, SparkIcon } from "@/components/icons";
+import { CheckIcon, ChevronRightIcon, CopyIcon } from "@/components/icons";
 import { Markdown } from "@/components/markdown";
 import type { CodeLang } from "@/lib/shiki";
 import {
@@ -18,9 +18,17 @@ import {
 import { usePageTitle } from "@/lib/use-page-title";
 
 /**
- * Agent 会话页（/runs/[id]）—— 仿 ChatGPT 的对话交互：
- * 顶部标题条 + 可滚动消息列（用户右侧气泡 / Agent 左侧全宽块）+ 底部固定
+ * Agent 会话页（/runs/[id]）—— 对齐 ChatGPT / Claude 的对话交互：
+ * 顶部标题条 + 可滚动消息列（用户右侧气泡 / Agent 左侧全宽正文）+ 底部固定
  * Composer。流式生成中支持停止；随时可追问下一轮（自动携带多轮历史）。
+ *
+ * 呈现取舍（刻意做减法）：
+ * - 回复不挂模型头像。整栏正文本身就是「谁在说话」的最强信号，头像只会在
+ *   每一轮里重复一次同样的信息，还把正文推离左边界；
+ * - 轮次页脚只留耗时一项。供应商/模型/token 这些明细是排查信息不是阅读信息，
+ *   收进 title 悬浮提示，需要时才看；
+ * - 不写「正在启动」这类阶段旁白。进行中就用页脚的进度环 + 实时秒数表达，
+ *   一个持续推进的动画比一句会过期的文案更可信。
  */
 export function AgentConversationView({ conversationId }: { conversationId: string }) {
   const { get, open, send, stop } = useAgentConversations();
@@ -41,9 +49,11 @@ export function AgentConversationView({ conversationId }: { conversationId: stri
   }, [conversationId, open]);
 
   // 自动滚动：仅当用户本就贴近底部时跟随新内容（ChatGPT 同款行为——
-  // 用户上滚查看历史时不打断）
+  // 用户上滚查看历史时不打断）。离开底部时给一个「回到底部」按钮，否则
+  // 生成中的新内容在视野外持续增长，用户只能手动滚很久才追得上。
   const scrollRef = useRef<HTMLDivElement>(null);
   const nearBottomRef = useRef(true);
+  const [atBottom, setAtBottom] = useState(true);
   useEffect(() => {
     const el = scrollRef.current;
     if (el && nearBottomRef.current) el.scrollTop = el.scrollHeight;
@@ -79,35 +89,47 @@ export function AgentConversationView({ conversationId }: { conversationId: stri
     // 沉浸页：内容直接铺在页面纯色底（.page-solid）上，不再包阅读面板卡片；
     // immersive-theme 在容器内切换为中性灰阶 + 系统字体的阅读配色
     <div className="immersive-theme flex h-full flex-col">
-      {/* 顶部条：会话标题 + 运行状态 */}
+      {/* 顶部条：只留会话标题。「生成中 / 就绪」的全局状态点已由每轮页脚的
+          进度环取代——状态属于那一轮，放在正文旁边比钉在标题上更有指向性 */}
       <header className="flex h-14 shrink-0 items-center px-5 max-md:h-11 max-md:px-4">
-        <div className="flex min-w-0 items-center gap-2.5">
-          <h1 className="truncate text-body font-semibold tracking-[-0.01em]">
-            {conversation.title}
-          </h1>
-          <span className="flex shrink-0 items-center gap-1.5 rounded-full bg-white/[0.06] px-2.5 py-0.5 text-caption text-[var(--text-muted)]">
-            <span
-              className={`size-1.5 rounded-full ${running ? "animate-pulse bg-[#6aa7ff]" : "bg-[#4ade80]"}`}
-            />
-            {running ? "生成中" : "就绪"}
-          </span>
-        </div>
+        <h1 className="truncate text-body font-semibold tracking-[-0.01em]">
+          {conversation.title}
+        </h1>
       </header>
 
       {/* 消息列 */}
-      <div
-        ref={scrollRef}
-        onScroll={(e) => {
-          const el = e.currentTarget;
-          nearBottomRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 120;
-        }}
-        className="scroll-thin min-h-0 flex-1 overflow-y-auto px-6 py-6 max-md:px-4 max-md:py-4"
-      >
-        <div className="mx-auto max-w-3xl space-y-6">
-          {conversation.turns.map((turn) => (
-            <TurnView key={turn.id} turn={turn} />
-          ))}
+      <div className="relative flex min-h-0 flex-1 flex-col">
+        <div
+          ref={scrollRef}
+          onScroll={(e) => {
+            const el = e.currentTarget;
+            const near = el.scrollHeight - el.scrollTop - el.clientHeight < 120;
+            nearBottomRef.current = near;
+            // 只在跨越阈值时落 state，滚动过程中不做无谓的重渲染
+            setAtBottom((previous) => (previous === near ? previous : near));
+          }}
+          className="scroll-thin min-h-0 flex-1 overflow-y-auto px-6 py-6 max-md:px-4 max-md:py-4"
+        >
+          <div className="mx-auto max-w-3xl space-y-8">
+            {conversation.turns.map((turn) => (
+              <TurnView key={turn.id} turn={turn} />
+            ))}
+          </div>
         </div>
+
+        {!atBottom && (
+          <button
+            type="button"
+            aria-label="回到最新消息"
+            onClick={() => {
+              const el = scrollRef.current;
+              if (el) el.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
+            }}
+            className="absolute bottom-3 left-1/2 flex size-8 -translate-x-1/2 items-center justify-center rounded-full border border-white/10 bg-[#232325] text-[var(--text-muted)] shadow-lg transition-colors hover:text-[var(--text)]"
+          >
+            <ChevronRightIcon className="size-4 rotate-90" />
+          </button>
+        )}
       </div>
 
       {/* 底部输入：生成中可继续打字，发送键变停止键。
@@ -139,7 +161,7 @@ export function AgentConversationView({ conversationId }: { conversationId: stri
  *  重建全部历史轮次的元素树。 */
 const TurnView = memo(function TurnView({ turn }: { turn: AgentTurn }) {
   return (
-    <div className="space-y-4">
+    <div className="group/turn space-y-3">
       {/* 用户消息：右侧玻璃气泡 */}
       <div className="flex justify-end">
         <div className="max-w-[80%] whitespace-pre-wrap rounded-2xl bg-[var(--glass-fill-active)] px-4 py-3 text-body leading-6 text-[var(--text)]">
@@ -147,60 +169,155 @@ const TurnView = memo(function TurnView({ turn }: { turn: AgentTurn }) {
         </div>
       </div>
 
-      {/* Agent 回应：左侧全宽块（ChatGPT 式，不用窄气泡） */}
-      <div className="flex gap-3">
-        <span className="icon-chip mt-0.5 flex size-7 shrink-0 items-center justify-center !rounded-lg">
-          <SparkIcon
-            className={`size-4 ${
-              turn.status === "running"
-                ? "animate-pulse text-[var(--accent-2)]"
-                : turn.status === "error"
-                  ? "text-[#ff6b6b]"
-                  : "text-[var(--text-muted)]"
-            }`}
-          />
-        </span>
-        <div className="min-w-0 flex-1 space-y-2.5 pt-1">
-          {turn.segments.map((segment, index) => {
-            // 时间线按序渲染：process 折叠块与正文交替出现
-            const isLast = index === turn.segments.length - 1;
-            const active = turn.status === "running" && isLast;
-            return segment.kind === "process" ? (
-              <ProcessBlock key={index} segment={segment} active={active} />
-            ) : (
-              <div key={index}>
-                <Markdown text={segment.text} />
-                {active && <StreamingCursor />}
-              </div>
-            );
-          })}
-
-          {turn.status === "running" && turn.segments.length === 0 && (
-            <p className="text-ui text-[var(--text-faint)]">
-              正在启动
-              <StreamingCursor />
-            </p>
-          )}
-
-          {turn.status === "error" && (
-            <div className="rounded-xl border border-[#ff6b6b]/30 bg-[#ff6b6b]/10 px-3.5 py-2.5 text-ui leading-5 text-[#ff6b6b]">
-              {turn.error}
+      {/* Agent 回应：整栏正文，不挂头像、不套气泡（ChatGPT / Claude 同款版式） */}
+      <div className="min-w-0 space-y-2.5">
+        {turn.segments.map((segment, index) => {
+          // 时间线按序渲染：process 折叠块与正文交替出现
+          const isLast = index === turn.segments.length - 1;
+          const active = turn.status === "running" && isLast;
+          return segment.kind === "process" ? (
+            <ProcessBlock key={index} segment={segment} active={active} />
+          ) : (
+            <div key={index}>
+              <Markdown text={segment.text} />
+              {active && <StreamingCursor />}
             </div>
-          )}
+          );
+        })}
 
-          {turn.status === "done" && (
-            <p className="text-caption text-[var(--text-faint)]">
-              {turn.stopped
-                ? "已停止生成"
-                : turn.result &&
-                  `${turn.provider} · ${turn.model}${turn.result.steps > 1 ? ` · ${turn.result.steps} 步` : ""} · ${turn.result.usage.prompt_tokens}/${turn.result.usage.completion_tokens} tokens · ${(turn.result.elapsed_ms / 1000).toFixed(1)}s`}
-            </p>
-          )}
-        </div>
+        {turn.status === "error" && (
+          <div className="rounded-xl border border-[#ff6b6b]/30 bg-[#ff6b6b]/10 px-3.5 py-2.5 text-ui leading-5 text-[#ff6b6b]">
+            {turn.error}
+          </div>
+        )}
+
+        <TurnFooter turn={turn} />
       </div>
     </div>
   );
 });
+
+/* —— 轮次页脚：进度与耗时 —— */
+
+/** 耗时文案：不足一分钟按秒（终态保留一位小数），超过则「x 分 y 秒」。 */
+function formatDuration(ms: number, precise: boolean): string {
+  const seconds = Math.max(0, ms) / 1000;
+  if (seconds < 60) return `${precise ? seconds.toFixed(1) : Math.floor(seconds)}s`;
+  const minutes = Math.floor(seconds / 60);
+  return `${minutes} 分 ${Math.floor(seconds - minutes * 60)} 秒`;
+}
+
+/** 进行中的实时耗时。秒级跳动即可——十分之一秒的滚动数字只会制造焦虑，
+ *  「还在推进」这件事由进度环表达，秒数负责量级。 */
+function useElapsed(startedAt: number, running: boolean): number {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (!running) return;
+    setNow(Date.now());
+    const timer = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, [running]);
+  return now - startedAt;
+}
+
+/**
+ * 一轮的收尾行：进行中 = 进度环 + 实时耗时；完成 = 最终耗时 + 复制。
+ * 模型、供应商、token、步数只进 title 悬浮提示——它们是排查用的元数据，
+ * 常驻上屏会和正文抢注意力。
+ */
+function TurnFooter({ turn }: { turn: AgentTurn }) {
+  const running = turn.status === "running";
+  const live = useElapsed(turn.startedAt, running);
+
+  if (turn.status === "error") return null;
+  if (running) {
+    return (
+      <div className="flex items-center gap-2 text-caption text-[var(--text-faint)]">
+        <ProgressRing />
+        <span className="tabular-nums">{formatDuration(live, false)}</span>
+      </div>
+    );
+  }
+
+  const result = turn.result;
+  // 本轮跑完时有 result（精确到 0.1s）；从转录回放的历史轮次只能按消息
+  // 时间戳估算（秒级），两者都没有就不占这一行
+  const duration = result
+    ? formatDuration(result.elapsed_ms, true)
+    : turn.endedAt
+      ? formatDuration(turn.endedAt - turn.startedAt, false)
+      : null;
+  const answer = turn.segments
+    .filter((segment) => segment.kind === "text")
+    .map((segment) => segment.text)
+    .join("\n\n")
+    .trim();
+  if (!duration && !turn.stopped && !answer) return null;
+
+  return (
+    <div className="flex items-center gap-2 text-caption text-[var(--text-faint)]">
+      {turn.stopped && <span>已停止</span>}
+      {duration && (
+        <span
+          className="tabular-nums"
+          title={
+            result
+              ? `${turn.provider ?? result.provider} · ${turn.model ?? result.model} · ${result.steps} 步 · ${result.usage.prompt_tokens}/${result.usage.completion_tokens} tokens`
+              : undefined
+          }
+        >
+          {duration}
+        </span>
+      )}
+      {answer && <CopyAnswerButton text={answer} />}
+    </div>
+  );
+}
+
+/** 进度环：细环上的一段旋转弧。比闪烁的圆点更像「仍在推进」，
+ *  也不需要一句会过期的文案来解释自己。 */
+function ProgressRing() {
+  return (
+    <svg
+      viewBox="0 0 16 16"
+      aria-hidden
+      className="size-3.5 animate-spin text-[var(--text-muted)] [animation-duration:0.9s]"
+    >
+      <circle cx="8" cy="8" r="6" fill="none" stroke="currentColor" strokeWidth="2" opacity="0.25" />
+      <path
+        d="M8 2a6 6 0 0 1 6 6"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+      />
+    </svg>
+  );
+}
+
+/** 复制回答：悬停浮现（触屏没有 hover，移动端常驻）。 */
+function CopyAnswerButton({ text }: { text: string }) {
+  const [copied, setCopied] = useState(false);
+  useEffect(() => {
+    if (!copied) return;
+    const timer = window.setTimeout(() => setCopied(false), 1600);
+    return () => window.clearTimeout(timer);
+  }, [copied]);
+
+  return (
+    <button
+      type="button"
+      aria-label="复制回答"
+      onClick={() => {
+        void navigator.clipboard?.writeText(text).then(() => setCopied(true));
+      }}
+      className="flex items-center gap-1 rounded-md px-1 py-0.5 opacity-0 transition-opacity hover:text-[var(--text-muted)] focus-visible:opacity-100 group-hover/turn:opacity-100 max-md:opacity-100"
+    >
+      {copied ? <CheckIcon className="size-3.5" /> : <CopyIcon className="size-3.5" />}
+      {copied ? "已复制" : "复制"}
+    </button>
+  );
+}
 
 /** 进行中的处理块此刻在做什么：取末尾条目推导实时状态。 */
 function processStatus(items: AgentProcessItem[]): string {

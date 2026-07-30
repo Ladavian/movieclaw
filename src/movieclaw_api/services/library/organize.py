@@ -356,6 +356,7 @@ async def organize_library(library_id: int) -> OrganizeSummary:
     执行时重新计算计划（不信任预览快照），逐文件"改名 → 台账随迁"收口。
     """
     from movieclaw_api.services.library.scan import is_scanning
+    from movieclaw_api.services.library.transfer import is_transferring
 
     summary = OrganizeSummary(library_id=library_id)
     if is_organizing(library_id):
@@ -363,6 +364,9 @@ async def organize_library(library_id: int) -> OrganizeSummary:
         return summary
     if is_scanning(library_id):
         summary.errors.append("该库正在扫描中，请等待扫描完成后再整理")
+        return summary
+    if is_transferring(library_id):
+        summary.errors.append("该库正在转移条目，请等待转移完成后再整理")
         return summary
     _organize_tasks.try_start(library_id, (0, 0))
     try:

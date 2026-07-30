@@ -1,7 +1,7 @@
 import { request } from "@/lib/http";
 import { cachedImageUrl } from "@/lib/image-proxy";
 import type {
-  DiscoverPageData,
+  DiscoverLayoutData,
   MediaItem,
   MediaRowData,
   MediaType,
@@ -47,9 +47,9 @@ interface MediaRowDto {
   items: MediaCardDto[];
 }
 
-interface DiscoverPageDto {
-  hero: MediaCardDto[];
-  rows: MediaRowDto[];
+interface DiscoverLayoutDto {
+  has_hero: boolean;
+  rows: { id: string; title: string; ranked: boolean }[];
 }
 
 interface MediaSearchItemDto {
@@ -132,16 +132,47 @@ function toRow(dto: MediaRowDto): MediaRowData {
 // 发现页 / 条目详情
 // ---------------------------------------------------------------------------
 
-/** 拉取一个完整发现页（Hero 精选 + 分类横滚行），服务端聚合 TMDB 并缓存。 */
-export async function fetchDiscoverPage(
+/**
+ * 拉取发现页布局（行清单 + Hero 有无）。纯配置毫秒级返回；
+ * 前端据此撑起整页骨架，再用 fetchDiscoverHero / fetchDiscoverRow 逐行填充。
+ */
+export async function fetchDiscoverLayout(
   type: MediaType,
   source: MediaSource = "tmdb",
   init?: RequestInit,
-): Promise<DiscoverPageData> {
+): Promise<DiscoverLayoutData> {
   const dto = await unwrap(
-    request<ApiEnvelope<DiscoverPageDto>>(`/discover/${type}?source=${source}`, init),
+    request<ApiEnvelope<DiscoverLayoutDto>>(`/discover/${type}/layout?source=${source}`, init),
   );
-  return { hero: dto.hero.map(toItem), rows: dto.rows.map(toRow) };
+  return { hasHero: dto.has_hero, rows: dto.rows };
+}
+
+/** 拉取 Hero 大横幅精选；无 Hero 的数据源（豆瓣）返回空数组。 */
+export async function fetchDiscoverHero(
+  type: MediaType,
+  source: MediaSource = "tmdb",
+  init?: RequestInit,
+): Promise<MediaItem[]> {
+  const dto = await unwrap(
+    request<ApiEnvelope<MediaCardDto[]>>(`/discover/${type}/hero?source=${source}`, init),
+  );
+  return dto.map(toItem);
+}
+
+/** 拉取发现页的一行数据；条目太少的行后端返回空 items，由调用方收起。 */
+export async function fetchDiscoverRow(
+  type: MediaType,
+  rowId: string,
+  source: MediaSource = "tmdb",
+  init?: RequestInit,
+): Promise<MediaRowData> {
+  const dto = await unwrap(
+    request<ApiEnvelope<MediaRowDto>>(
+      `/discover/${type}/rows/${encodeURIComponent(rowId)}?source=${source}`,
+      init,
+    ),
+  );
+  return toRow(dto);
 }
 
 /**

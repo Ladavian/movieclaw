@@ -361,9 +361,44 @@ export function deleteLibrary(id: number): Promise<Record<string, never>> {
   return unwrap(request<ApiEnvelope<Record<string, never>>>(`/libraries/${id}`, { method: "DELETE" }));
 }
 
-/** 库内媒体条目的库存聚合（单库海报墙数据源）。 */
-export function listLibraryItems(id: number, init?: RequestInit): Promise<LibraryItem[]> {
-  return unwrap(request<ApiEnvelope<LibraryItem[]>>(`/libraries/${id}/items`, init));
+/** 海报墙排序：按标题 / 最近入账 / 待补探优先（扫描补探阶段）。 */
+export type LibraryItemSort = "title" | "added_at" | "probing";
+
+/**
+ * 库内媒体条目的库存聚合（单库海报墙数据源）。
+ *
+ * 排序与分页都在服务端做：调用方要几格就取几格——首页「最近添加」只要 20 格，
+ * 海报墙滚动加载一次要一屏，不给 limit 才是整库（几千条目要几百 KB，别默认走这条）。
+ */
+export function listLibraryItems(
+  id: number,
+  params?: { sort?: LibraryItemSort; limit?: number; offset?: number },
+): Promise<LibraryItem[]> {
+  const query = new URLSearchParams();
+  if (params?.sort) query.set("sort", params.sort);
+  if (params?.limit !== undefined) query.set("limit", String(params.limit));
+  if (params?.offset) query.set("offset", String(params.offset));
+  const suffix = query.size > 0 ? `?${query}` : "";
+  return unwrap(request<ApiEnvelope<LibraryItem[]>>(`/libraries/${id}/items${suffix}`));
+}
+
+/** 库内条目 id 集合：海报墙分页后仍要整份「已入库」名单（判定订阅是否还在追踪中）。 */
+export function listLibraryItemIds(id: number): Promise<number[]> {
+  return unwrap(request<ApiEnvelope<number[]>>(`/libraries/${id}/item-ids`));
+}
+
+/** 海报墙 A-Z 索引条的一档（按标题排序下的首字母分组）。 */
+export interface LibraryIndexEntry {
+  /** 首字母档：A-Z；数字/符号/假名等落不进的归 # */
+  initial: string;
+  count: number;
+  /** 该档第一格的位置——即 listLibraryItems 的 offset 取值 */
+  offset: number;
+}
+
+/** 海报墙的首字母索引（只回非空档）。中文按拼音首字母分档，与按标题排序同源。 */
+export function listLibraryItemIndex(id: number): Promise<LibraryIndexEntry[]> {
+  return unwrap(request<ApiEnvelope<LibraryIndexEntry[]>>(`/libraries/${id}/item-index`));
 }
 
 /** 触发一次库扫描（后台执行；已在扫描中时后端返回 409）。 */
@@ -886,6 +921,93 @@ export function reidentifyLibraryItem(
       `/libraries/${libraryId}/items/${mediaItemId}/reidentify`,
       { method: "POST" },
     ),
+  );
+}
+
+/* ---------------------------------------------------------------------- */
+/* 条目转移：分错库的作品换个库（磁盘目录 + 台账一起搬）                      */
+/* ---------------------------------------------------------------------- */
+
+/** 转移预览里的一个搬运单元。 */
+export interface TransferMove {
+  source_path: string;
+  target_path: string;
+  /** true=整个条目目录搬走；false=只搬这一个文件（目录里混着别的条目时） */
+  is_dir: boolean;
+  size_bytes: number;
+  file_count: number;
+}
+
+/** 转移预览：完整的「将要发生什么」，用户确认后才执行。 */
+export interface TransferPreview {
+  target_library_id: number;
+  target_library_name: string;
+  /** 目标库主根——条目目录会搬到这里 */
+  target_root: string;
+  moves: TransferMove[];
+  skips: { file_path: string; reason: string }[];
+  total_bytes: number;
+  /** 缺失文件数（磁盘无实体，只随迁台账归属） */
+  missing_count: number;
+  /** 目标与源不在同一块盘：退化为完整复制（耗时，且断开与做种目录的硬链接） */
+  cross_device: boolean;
+  /** 阻断性问题（如目标已有同名目录）；非空则不给执行 */
+  blocked: string[];
+}
+
+/** 转移进度 / 最近一次结论（弹窗轮询同一个接口从进行中走到结论页）。 */
+export interface TransferStatus {
+  running: boolean;
+  media_item_id: number | null;
+  title: string | null;
+  target_library_id: number | null;
+  processed: number;
+  total: number;
+  finished_at: string | null;
+  target_library_name: string | null;
+  moved_paths: string[];
+  files_relocated: number;
+  bytes_moved: number;
+  removed_dirs: number;
+  /** 该片的订阅是否一并改挂到目标库（后续剧集直接投新库） */
+  subscription_moved: boolean;
+  errors: string[];
+}
+
+/** 预览把条目转移到目标库会发生什么（只读，不动磁盘）。 */
+export function previewItemTransfer(
+  libraryId: number,
+  mediaItemId: number,
+  targetLibraryId: number,
+): Promise<TransferPreview> {
+  return unwrap(
+    request<ApiEnvelope<TransferPreview>>(
+      `/libraries/${libraryId}/items/${mediaItemId}/transfer/preview?target_library_id=${targetLibraryId}`,
+    ),
+  );
+}
+
+/**
+ * 转移条目到另一个媒体库：整个条目目录搬到目标库主根，台账随迁。
+ * 后台执行，进度与结论走 {@link getTransferStatus}。
+ */
+export function transferLibraryItem(
+  libraryId: number,
+  mediaItemId: number,
+  targetLibraryId: number,
+): Promise<{ started: boolean; message: string }> {
+  return unwrap(
+    request<ApiEnvelope<{ started: boolean; message: string }>>(
+      `/libraries/${libraryId}/items/${mediaItemId}/transfer`,
+      { method: "POST", body: JSON.stringify({ target_library_id: targetLibraryId }) },
+    ),
+  );
+}
+
+/** 条目转移的实时进度与最近一次结论（源库/目标库任一侧查到的都是同一份）。 */
+export function getTransferStatus(libraryId: number): Promise<TransferStatus> {
+  return unwrap(
+    request<ApiEnvelope<TransferStatus>>(`/libraries/${libraryId}/transfer/status`),
   );
 }
 

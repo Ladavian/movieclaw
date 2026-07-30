@@ -1,4 +1,4 @@
-"""发现页接口：发现电影 / 发现剧集的聚合数据与条目详情（数据源 TMDB）。
+"""发现页接口：发现电影 / 发现剧集的布局、逐行数据与条目详情（TMDB / 豆瓣）。
 
 路由保持薄：编排逻辑全部在 movieclaw_media.service，这里只做两件事——
 调服务、把 TMDB 领域错误翻译成 API 层的统一异常（中文提示直达前端）。
@@ -24,11 +24,15 @@ from movieclaw_api.services.media_discover import get_douban_media_service, get_
 from movieclaw_db.engine import get_session
 from movieclaw_db.repositories.search_history_repo import SearchHistoryRepository
 from movieclaw_media import (
-    DiscoverPage,
+    DiscoverLayout,
+    DoubanDiscoverService,
     DoubanError,
     DoubanNetworkError,
+    MediaCard,
     MediaDetail,
+    MediaDiscoverService,
     MediaKind,
+    MediaRow,
     MediaSearchItem,
     TmdbError,
     TmdbNetworkError,
@@ -148,31 +152,78 @@ async def _record_media_history(
         logger.warning("媒体搜索历史写入失败（不影响本次搜索结果）", exc_info=True)
 
 
+def _discover_service(source: DiscoverSource) -> DoubanDiscoverService | MediaDiscoverService:
+    """按数据源取发现页服务；TMDB 未配置 Key 时抛 TmdbNotConfiguredError。"""
+    return get_douban_media_service() if source is DiscoverSource.DOUBAN else get_media_service()
+
+
+# 发现页按「布局 + Hero + 单行」三个端点渐进提供（替代旧的整页聚合端点）：
+# 布局是纯配置毫秒级返回，前端据此撑起骨架后逐行拉数据，先就绪的行先渲染。
+# 豆瓣榜单受限速（每秒 1 个请求）约束，冷缓存整页聚合要十几秒，这是拆分的动因。
+# 注意路由顺序：/{kind}/layout 与 /{kind}/hero 必须注册在 /{kind}/{tmdb_id} 之前，
+# 否则会被后者按路径参数吞掉。
+
+
 @router.get(
-    "/{kind}",
-    response_model=ApiResponse[DiscoverPage],
-    summary="发现页聚合数据（Hero 精选 + 分类横滚行）",
-    operation_id="discover.page",
+    "/{kind}/layout",
+    response_model=ApiResponse[DiscoverLayout],
+    summary="发现页布局（行清单，纯配置）",
+    operation_id="discover.layout",
 )
-async def get_discover_page(
+async def get_discover_layout(
     kind: MediaKind,
     source: DiscoverSource = Query(
         default=DiscoverSource.TMDB, description="数据来源：tmdb（热门榜单）/ douban（豆瓣榜单）"
     ),
-) -> ApiResponse[DiscoverPage]:
-    """返回一个完整发现页：kind=movie 发现电影，kind=tv 发现剧集。
-
-    数据来自 TMDB 多个榜单的并发聚合，服务端缓存 30 分钟；单个榜单失败
-    只会缺一行，全部失败才报错（如 Key 未配置/无效、网络不通）。
-    """
+) -> ApiResponse[DiscoverLayout]:
+    """返回发现页的行清单与 Hero 有无；不触发任何上游请求。"""
     try:
-        service = (
-            get_douban_media_service() if source is DiscoverSource.DOUBAN else get_media_service()
-        )
-        page = await service.discover_page(kind)
+        return ok(_discover_service(source).layout(kind))
     except (TmdbError, DoubanError) as exc:
         raise _translate(exc) from exc
-    return ok(page)
+
+
+@router.get(
+    "/{kind}/hero",
+    response_model=ApiResponse[list[MediaCard]],
+    summary="发现页 Hero 大横幅精选",
+    operation_id="discover.hero",
+)
+async def get_discover_hero(
+    kind: MediaKind,
+    source: DiscoverSource = Query(
+        default=DiscoverSource.TMDB, description="数据来源：tmdb（热门榜单）/ douban（豆瓣榜单）"
+    ),
+) -> ApiResponse[list[MediaCard]]:
+    """返回 Hero 轮播精选；布局声明无 Hero 的数据源（豆瓣）返回空列表。"""
+    try:
+        hero = await _discover_service(source).discover_hero(kind)
+    except (TmdbError, DoubanError) as exc:
+        raise _translate(exc) from exc
+    return ok(hero)
+
+
+@router.get(
+    "/{kind}/rows/{row_id}",
+    response_model=ApiResponse[MediaRow],
+    summary="发现页单行数据",
+    operation_id="discover.row",
+)
+async def get_discover_row(
+    kind: MediaKind,
+    row_id: str,
+    source: DiscoverSource = Query(
+        default=DiscoverSource.TMDB, description="数据来源：tmdb（热门榜单）/ douban（豆瓣榜单）"
+    ),
+) -> ApiResponse[MediaRow]:
+    """返回布局中一行的条目数据；条目太少的行返回空 items，由前端收起。"""
+    try:
+        row = await _discover_service(source).discover_row(kind, row_id)
+    except (TmdbError, DoubanError) as exc:
+        raise _translate(exc) from exc
+    if row is None:
+        raise NotFoundException(f"发现页布局中没有 id 为 {row_id} 的行")
+    return ok(row)
 
 
 @router.get(

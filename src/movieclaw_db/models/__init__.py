@@ -45,6 +45,7 @@ from movieclaw_db.models.subscription import (
     WantedStatus,
 )
 from movieclaw_db.models.subscription_activity import ActivityType, SubscriptionActivity
+from movieclaw_db.models.system_notice import NoticeSeverity, NoticeStatus, SystemNotice
 
 __all__ = [
     "TimestampMixin",
@@ -88,4 +89,7 @@ __all__ = [
     "SiteSyncCursor",
     "TorrentSource",
     "SiteUserProfile",
+    "SystemNotice",
+    "NoticeSeverity",
+    "NoticeStatus",
 ]

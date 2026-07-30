@@ -5,7 +5,7 @@ import { useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 import { PageNav } from "@/components/page-nav";
 import { SearchIcon } from "@/components/icons";
 import { PosterCard } from "@/components/poster-card";
-import { fetchDiscoverPage } from "@/lib/api/discover";
+import { fetchDiscoverRow } from "@/lib/api/discover";
 import type { MediaItem } from "@/lib/media-types";
 
 const PAGE_SIZE = 50;
@@ -13,7 +13,8 @@ const TOP250_ROW_ID = "douban-movie_top250";
 
 /**
  * 豆瓣 Top 250 完整榜单：用纵向网格承载大量条目，避免 250 张海报挤在一条横滚行。
- * 数据仍复用发现接口和后端缓存；前端只分批挂载图片节点，控制首屏开销。
+ * 数据直接走发现页的单行接口（与发现页共享后端行缓存，只拉这一个榜单）；
+ * 前端只分批挂载图片节点，控制首屏开销。
  */
 export function Top250View() {
   const [items, setItems] = useState<MediaItem[] | null>(null);
@@ -25,10 +26,9 @@ export function Top250View() {
 
   useEffect(() => {
     let cancelled = false;
-    fetchDiscoverPage("movie", "douban")
-      .then((page) => {
-        const row = page.rows.find((candidate) => candidate.id === TOP250_ROW_ID);
-        if (!row) throw new Error("豆瓣 Top 250 榜单暂不可用");
+    fetchDiscoverRow("movie", TOP250_ROW_ID, "douban")
+      .then((row) => {
+        if (row.items.length === 0) throw new Error("豆瓣 Top 250 榜单暂不可用");
         if (!cancelled) setItems(row.items);
       })
       .catch((reason: Error) => {

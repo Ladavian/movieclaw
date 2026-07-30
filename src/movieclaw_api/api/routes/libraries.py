@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path, PurePath
-from typing import Literal
+from typing import Annotated, Literal
 
 from fastapi import APIRouter, BackgroundTasks, Depends, Query
 from fastapi.responses import FileResponse
@@ -23,6 +23,7 @@ from movieclaw_api.schemas.library import (
     LastOrganizeView,
     LastScanView,
     LibraryFileView,
+    LibraryIndexEntryView,
     LibraryItemDetailView,
     LibraryItemView,
     LibraryPayload,
@@ -49,6 +50,12 @@ from movieclaw_api.schemas.library import (
     ScanResultView,
     SeasonEpisodesView,
     SubtitleStreamView,
+    TransferMoveView,
+    TransferPayload,
+    TransferPreviewView,
+    TransferSkipView,
+    TransferStartView,
+    TransferStatusView,
     UnidentifiedCandidateView,
     UnidentifiedClearPayload,
     UnidentifiedFileView,
@@ -61,6 +68,7 @@ from movieclaw_api.services.library.config import LibraryConfigService
 from movieclaw_api.services.library.items import (
     backfill_streams_for_files,
     build_item_detail,
+    build_library_index,
     build_library_wall,
     build_season_episodes,
     delete_item_files,
@@ -85,6 +93,14 @@ from movieclaw_api.services.library.scan import (
     request_stop_scan,
     scan_library,
     scan_progress,
+)
+from movieclaw_api.services.library.transfer import (
+    assert_transferable,
+    build_transfer_plan,
+    is_transferring,
+    last_transfer,
+    start_transfer,
+    transfer_state,
 )
 from movieclaw_api.services.media_discover import get_tmdb_client
 from movieclaw_api.services.media_library import MediaLibraryService
@@ -541,8 +557,8 @@ async def create_library(
 
 
 def _assert_not_busy(library_name: str, library_id: int) -> None:
-    """扫描/整理期间锁定库的编辑与删除——两个任务都在按当前根路径批量
-    读写台账，此刻改根路径或删库会让进行中的任务写入过期配置。"""
+    """扫描/整理/转移期间锁定库的编辑与删除——这些任务都在按当前根路径
+    批量读写台账，此刻改根路径或删库会让进行中的任务写入过期配置。"""
     phase = busy_phase(library_id)
     if phase is not None:
         raise ConflictException(
@@ -551,6 +567,10 @@ def _assert_not_busy(library_name: str, library_id: int) -> None:
     if is_organizing(library_id):
         raise ConflictException(
             f"「{library_name}」正在整理文件名，暂不能编辑或删除；请等待整理完成"
+        )
+    if is_transferring(library_id):
+        raise ConflictException(
+            f"「{library_name}」正在转移条目，暂不能编辑或删除；请等待转移完成"
         )
 
 
@@ -806,9 +826,12 @@ async def list_artwork_candidates_route(
 
     await LibraryConfigService(session).get(library_id)  # 404 检查
     await _item_rows(session, library_id, media_item_id)  # 404 检查
-    posters, backdrops, current_poster, current_backdrop = (
-        await media_scrape.list_artwork_candidates(media_item_id)
-    )
+    (
+        posters,
+        backdrops,
+        current_poster,
+        current_backdrop,
+    ) = await media_scrape.list_artwork_candidates(media_item_id)
     meta = await MediaItemRepository(session).get_metadata(media_item_id)
     return ok(
         ArtworkCandidatesView(
@@ -934,11 +957,72 @@ async def start_organize(
 )
 async def list_library_items(
     library_id: int,
+    # 这三个参数用 Annotated 写法（而非 `= Query(...)`）：函数被直接调用时
+    # 拿到的是真实默认值而不是 Query 对象——测试与内部调用都走这条路
+    sort: Annotated[
+        Literal["title", "added_at", "probing"],
+        Query(description="排序：title=按标题 / added_at=最近入账优先 / probing=待补探优先"),
+    ] = "title",
+    limit: Annotated[
+        int | None, Query(ge=1, le=200, description="本页条目数；不给则返回整库")
+    ] = None,
+    offset: Annotated[int, Query(ge=0, description="跳过的条目数（滚动加载翻页用）")] = 0,
     session: AsyncSession = Depends(get_session),
 ) -> ApiResponse[list[LibraryItemView]]:
 
     await LibraryConfigService(session).get(library_id)  # 404 检查
-    return ok(await build_library_wall(session, library_id))
+    return ok(await build_library_wall(session, library_id, sort=sort, limit=limit, offset=offset))
+
+
+@router.get(
+    "/{library_id}/item-ids",
+    response_model=ApiResponse[list[int]],
+    summary="库内条目 id 集合（前端判定「已入库」用）",
+    operation_id="lib.items.ids",
+)
+async def list_library_item_ids(
+    library_id: int,
+    session: AsyncSession = Depends(get_session),
+) -> ApiResponse[list[int]]:
+    """只回 id 的轻量清单：海报墙分页后，前端仍需知道「哪些条目已在库」——
+    单库页据此把已入库的订阅从「追踪中」里剔掉。一列整型，几千条也就几十 KB。"""
+
+    await LibraryConfigService(session).get(library_id)  # 404 检查
+    rows = await session.execute(
+        select(LibraryFile.media_item_id)
+        .where(
+            LibraryFile.library_id == library_id,
+            LibraryFile.media_item_id.is_not(None),  # type: ignore[union-attr]
+        )
+        .distinct()
+    )
+    return ok([i for i in rows.scalars().all() if i is not None])
+
+
+@router.get(
+    "/{library_id}/item-index",
+    response_model=ApiResponse[list[LibraryIndexEntryView]],
+    summary="海报墙的 A-Z 首字母索引（按标题排序下的分档与起始位置）",
+    operation_id="lib.items.index",
+)
+async def list_library_item_index(
+    library_id: int,
+    session: AsyncSession = Depends(get_session),
+) -> ApiResponse[list[LibraryIndexEntryView]]:
+    """索引条数据：每档的条目数与起始 offset，只回非空档。
+
+    与 ``/items?sort=title`` 共用同一份拼音排序，因此 offset 直接可用——
+    前端点「S」就是拉 ``?sort=title&offset=<该档 offset>``。
+    """
+
+    await LibraryConfigService(session).get(library_id)  # 404 检查
+    buckets = await build_library_index(session, library_id)
+    return ok(
+        [
+            LibraryIndexEntryView(initial=initial, count=count, offset=offset)
+            for initial, count, offset in buckets
+        ]
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -1059,7 +1143,6 @@ async def get_library_item(
     if bundle.pending_probe_ids:
         background_tasks.add_task(backfill_streams_for_files, bundle.pending_probe_ids)
 
-
     base = get_settings().tmdb_image_base_url.rstrip("/")
     art_base = f"/libraries/{library_id}/items/{media_item_id}/artwork"
     # 图片优先级与元数据同构：条目目录美术图 > 本地刮削资产 > TMDB 图床。
@@ -1069,17 +1152,13 @@ async def get_library_item(
     if bundle.has_local_poster:
         poster_url = f"{art_base}?kind=poster&v={bundle.local_poster_version}"
     elif meta_row is not None and meta_row.poster_file:
-        poster_url = (
-            f"/images/assets/{meta_row.poster_file}?v={media_scrape.asset_version(meta_row.poster_file)}"
-        )
+        poster_url = f"/images/assets/{meta_row.poster_file}?v={media_scrape.asset_version(meta_row.poster_file)}"
     else:
         poster_url = f"{base}/w500{item.poster_path}" if item.poster_path else None
     if bundle.has_local_fanart:
         backdrop_url = f"{art_base}?kind=fanart&v={bundle.local_fanart_version}"
     elif meta_row is not None and meta_row.backdrop_file:
-        backdrop_url = (
-            f"/images/assets/{meta_row.backdrop_file}?v={media_scrape.asset_version(meta_row.backdrop_file)}"
-        )
+        backdrop_url = f"/images/assets/{meta_row.backdrop_file}?v={media_scrape.asset_version(meta_row.backdrop_file)}"
     else:
         # w1280 而非 original：作为全站沉浸背景铺视口足够清晰，体积小一个
         # 数量级——首次访问的背景切换等待从"原图下载"变成秒级
@@ -1331,6 +1410,148 @@ async def reidentify_library_item(
             message=message,
         ),
         message=message,
+    )
+
+
+# ---------------------------------------------------------------------------
+# 条目转移：分错库的作品换个库（磁盘目录 + 台账一起搬）
+# ---------------------------------------------------------------------------
+
+
+async def _transfer_context(
+    session: AsyncSession, library_id: int, media_item_id: int, target_library_id: int
+):
+    """转移三接口共用的前置：取源库/目标库/条目/台账行 + 合法性校验。"""
+    service = LibraryConfigService(session)
+    source = await service.get(library_id)
+    target = await service.get(target_library_id)
+    assert_transferable(source, target)
+    item, rows = await _item_rows(session, library_id, media_item_id)
+    return source, target, item, rows
+
+
+@router.get(
+    "/{library_id}/items/{media_item_id}/transfer/preview",
+    response_model=ApiResponse[TransferPreviewView],
+    summary="预览条目转移：哪些目录/文件搬到目标库的什么位置（只读，不动磁盘）",
+    operation_id="lib.items.transfer.preview",
+)
+async def preview_transfer(
+    library_id: int,
+    media_item_id: int,
+    target_library_id: Annotated[int, Query(description="转移目标库 id（须与当前库同类型）")],
+    session: AsyncSession = Depends(get_session),
+) -> ApiResponse[TransferPreviewView]:
+    """纯只读：算出条目目录会搬到哪、总体积多大、是否跨盘（跨盘要复制、
+    耗时且断硬链）。``blocked`` 非空说明有阻断问题，执行接口会直接拒绝。"""
+    source, target, item, rows = await _transfer_context(
+        session, library_id, media_item_id, target_library_id
+    )
+    plan = await build_transfer_plan(session, source, target, item, rows)
+    return ok(
+        TransferPreviewView(
+            target_library_id=target_library_id,
+            target_library_name=target.name,
+            target_root=target.primary_root or "",
+            moves=[
+                TransferMoveView(
+                    source_path=m.source_path,
+                    target_path=m.target_path,
+                    is_dir=m.is_dir,
+                    size_bytes=m.size_bytes,
+                    file_count=len(m.file_ids),
+                )
+                for m in plan.moves
+            ],
+            skips=[TransferSkipView(file_path=s.file_path, reason=s.reason) for s in plan.skips],
+            total_bytes=plan.total_bytes,
+            missing_count=len(plan.missing_file_ids),
+            cross_device=plan.cross_device,
+            blocked=plan.blocked,
+        )
+    )
+
+
+@router.post(
+    "/{library_id}/items/{media_item_id}/transfer",
+    response_model=ApiResponse[TransferStartView],
+    summary="转移条目到另一个媒体库：整个条目目录搬到目标库主根，台账随迁",
+    operation_id="lib.items.transfer",
+    openapi_extra={"x-cli-dangerous": "destructive"},
+)
+async def transfer_library_item(
+    library_id: int,
+    media_item_id: int,
+    payload: TransferPayload,
+    session: AsyncSession = Depends(get_session),
+) -> ApiResponse[TransferStartView]:
+    """分错库的补救通道（如韩剧被路由进了「大陆华语剧」）。执行时**重新
+    计算**计划——预览到确认之间磁盘可能已变化，永远以最新状态为准。
+
+    搬运直接发生在磁盘上、无法一键撤销，调用方必须先用预览接口把影响面
+    摆给用户确认。后台执行，进度与结论走 transfer/status。"""
+    source, target, item, rows = await _transfer_context(
+        session, library_id, media_item_id, payload.target_library_id
+    )
+    plan = await build_transfer_plan(session, source, target, item, rows)
+    if plan.blocked:
+        raise ConflictException("；".join(plan.blocked))
+    if not plan.moves and not plan.missing_file_ids:
+        detail = "；".join(s.reason for s in plan.skips) or "台账为空"
+        raise BadRequestException(f"「{item.title}」没有可转移的内容：{detail}")
+    start_transfer(plan)
+    message = f"已开始把「{item.title}」转移到「{target.name}」"
+    if plan.cross_device:
+        message += "（跨盘转移需要完整复制文件，耗时取决于体积）"
+    return ok(TransferStartView(started=True, message=message), message=message)
+
+
+@router.get(
+    "/{library_id}/transfer/status",
+    response_model=ApiResponse[TransferStatusView],
+    summary="条目转移的实时进度与最近一次结论",
+    operation_id="lib.transfer.status",
+)
+async def get_transfer_status(
+    library_id: int,
+    session: AsyncSession = Depends(get_session),
+) -> ApiResponse[TransferStatusView]:
+    """源库与目标库两侧查到的是同一份状态（转移期间两侧都占着任务位），
+    前端弹窗轮询这一个接口即可从"进行中"一路走到结论页。"""
+    await LibraryConfigService(session).get(library_id)  # 404 检查
+    state = transfer_state(library_id)
+    if state is not None:
+        return ok(
+            TransferStatusView(
+                running=True,
+                media_item_id=state.media_item_id,
+                title=state.title,
+                target_library_id=state.target_library_id,
+                processed=state.processed,
+                total=state.total,
+            )
+        )
+    last = last_transfer(library_id)
+    if last is None:
+        return ok(TransferStatusView(running=False))
+    finished_at, summary = last
+    return ok(
+        TransferStatusView(
+            running=False,
+            media_item_id=summary.media_item_id,
+            title=summary.title,
+            target_library_id=summary.target_library_id,
+            processed=len(summary.moved_paths),
+            total=len(summary.moved_paths),
+            finished_at=finished_at,
+            target_library_name=summary.target_library_name,
+            moved_paths=summary.moved_paths,
+            files_relocated=summary.files_relocated,
+            bytes_moved=summary.bytes_moved,
+            removed_dirs=summary.removed_dirs,
+            subscription_moved=summary.subscription_moved,
+            errors=summary.errors,
+        )
     )
 
 
