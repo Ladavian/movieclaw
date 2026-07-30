@@ -64,7 +64,7 @@ export function PersonDetailView({ tmdbPersonId }: { tmdbPersonId: number | stri
     return (
       <div className="flex h-full flex-col">
         <PageNav items={[{ label: "" }]} />
-        <div className="flex flex-1 items-center justify-center gap-2.5 text-[13px] text-[var(--text-muted)]">
+        <div className="flex flex-1 items-center justify-center gap-2.5 text-ui text-[var(--text-muted)]">
           <span className="size-4 animate-spin rounded-full border-2 border-white/20 border-t-white/70" />
           正在读取影人档案…
         </div>
@@ -101,18 +101,18 @@ export function PersonDetailView({ tmdbPersonId }: { tmdbPersonId: number | stri
           />
         </div>
         <div className="min-w-0 flex-1 pb-1">
-          <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-[var(--accent-2)]">
+          <p className="text-caption font-semibold uppercase tracking-[0.22em] text-[var(--accent-2)]">
             影人
           </p>
           <h1 className="text-on-image mt-2 text-[32px] font-bold leading-[1.12] tracking-[-0.02em] text-white max-md:mt-1 max-md:text-[20px]">
             {person.name}
           </h1>
           {person.originalName && person.originalName !== person.name && (
-            <p className="text-on-image mt-1 truncate text-[13.5px] text-white/55 max-md:text-[12px]">
+            <p className="text-on-image mt-1 truncate text-ui text-white/55 max-md:text-sub">
               {person.originalName}
             </p>
           )}
-          <p className="tnum mt-3 text-[13px] text-white/70 max-md:mt-2 max-md:text-[12px]">
+          <p className="tnum mt-3 text-ui text-white/70 max-md:mt-2 max-md:text-sub">
             库内 {person.credits.length} 部
             {cast.length > 0 && directed.length > 0
               ? `（参演 ${cast.length} · 执导 ${directed.length}）`
@@ -147,9 +147,9 @@ function CreditGrid({
   if (credits.length === 0) return null;
   return (
     <section>
-      <h2 className="text-on-image mb-3 text-[15px] font-semibold tracking-[-0.01em] text-[var(--text)]">
+      <h2 className="text-on-image mb-3 text-body-lg font-semibold tracking-[-0.01em] text-[var(--text)]">
         {title}
-        <span className="tnum ml-2 text-[12px] font-normal text-[var(--text-faint)]">
+        <span className="tnum ml-2 text-sub font-normal text-[var(--text-faint)]">
           {credits.length}
         </span>
       </h2>
@@ -172,10 +172,10 @@ function CreditCard({ credit, showCharacter }: { credit: PersonCredit; showChara
           className="size-full object-cover"
         />
       </div>
-      <p className="text-on-image mt-1.5 truncate text-[12.5px] font-medium text-[var(--text)]">
+      <p className="text-on-image mt-1.5 truncate text-sub font-medium text-[var(--text)]">
         {credit.title}
       </p>
-      <p className="text-on-image tnum truncate text-[11px] text-[var(--text-faint)]">
+      <p className="text-on-image tnum truncate text-caption text-[var(--text-faint)]">
         {showCharacter && credit.character ? `饰 ${credit.character}` : credit.year || ""}
       </p>
     </>
@@ -209,20 +209,20 @@ function PersonFallback({ failure }: { failure: "missing" | "error" }) {
     <div className="flex flex-1 flex-col items-center justify-center gap-4 px-6 text-center">
       {failure === "missing" ? (
         <>
-          <p className="text-[15px] font-semibold text-[var(--text)]">库内没有这位影人的作品</p>
-          <p className="max-w-md text-[13px] leading-6 text-[var(--text-muted)]">
+          <p className="text-body-lg font-semibold text-[var(--text)]">库内没有这位影人的作品</p>
+          <p className="max-w-md text-ui leading-6 text-[var(--text-muted)]">
             可能是他参演的片都已从库里移除；也可能这个库是早前扫描的——影人档案随入库刮削
             一并建立，对它执行一次「刷新元数据」即可补齐，之后这里就会列出他在库内的全部作品。
           </p>
-          <Link href={"/library" as Route} className="btn-glass px-4 py-2 text-[13px] font-medium">
+          <Link href={"/library" as Route} className="btn-glass px-4 py-2 text-ui font-medium">
             <ArrowLeftIcon className="size-4" />
             去媒体库
           </Link>
         </>
       ) : (
         <>
-          <p className="text-[15px] font-semibold text-[var(--text)]">未能加载影人档案</p>
-          <p className="max-w-sm text-[13px] leading-6 text-[var(--text-muted)]">
+          <p className="text-body-lg font-semibold text-[var(--text)]">未能加载影人档案</p>
+          <p className="max-w-sm text-ui leading-6 text-[var(--text-muted)]">
             请稍后重试；若持续失败，请查看系统日志。
           </p>
         </>

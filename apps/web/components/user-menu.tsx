@@ -90,18 +90,22 @@ export function UserMenu({ onOpenSettings, collapsed = false }: UserMenuProps) {
         <AvatarBadge
           nickname={session.nickname}
           avatarUrl={session.avatar_url}
-          className="size-9 text-[13px]"
+          className="size-9 text-ui"
         />
         <div className="min-w-0">
-          <p className="truncate text-[13px] font-semibold text-[var(--text)]">{session.nickname}</p>
-          <p className="truncate text-[11px] text-[var(--text-muted)]">@{session.username}</p>
+          <p className="truncate text-ui font-semibold text-[var(--text)]">{session.nickname}</p>
+          <p className="truncate text-caption text-[var(--text-muted)]">@{session.username}</p>
         </div>
       </div>
       <div className="my-1" />
-      <MenuItem icon={<GearIcon className="size-[18px]" />} label="设置" onClick={() => go()} />
+      <MenuItem
+        icon={<GearIcon className="size-[18px] max-md:size-[22px]" />}
+        label="设置"
+        onClick={() => go()}
+      />
       <div className="my-1" />
       <MenuItem
-        icon={<LogoutIcon className="size-[18px]" />}
+        icon={<LogoutIcon className="size-[18px] max-md:size-[22px]" />}
         label="退出登录"
         danger
         onClick={handleLogout}
@@ -125,15 +129,15 @@ export function UserMenu({ onOpenSettings, collapsed = false }: UserMenuProps) {
         <AvatarBadge
           nickname={session.nickname}
           avatarUrl={session.avatar_url}
-          className="size-9 text-[13px]"
+          className="size-9 text-ui"
         />
         {!collapsed && (
           <>
             <span className="min-w-0 flex-1">
-              <span className="block truncate text-[13px] font-semibold text-[var(--text)]">
+              <span className="block truncate text-ui font-semibold text-[var(--text)]">
                 {session.nickname}
               </span>
-              <span className="block truncate text-[11px] text-[var(--text-muted)]">超级管理员</span>
+              <span className="block truncate text-caption text-[var(--text-muted)]">超级管理员</span>
             </span>
             <svg
               viewBox="0 0 20 20"
@@ -169,7 +173,7 @@ function MenuItem({
     <button
       type="button"
       onClick={onClick}
-      className={`glass-row px-2.5 py-2 text-[13px] font-medium ${
+      className={`glass-row px-2.5 py-2 text-ui font-medium max-md:py-2.5 ${
         danger ? "!text-[var(--danger)] hover:!bg-[rgba(255,107,107,0.12)]" : ""
       }`}
     >

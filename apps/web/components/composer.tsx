@@ -70,7 +70,7 @@ export function Composer({
         }}
         placeholder={placeholder ?? (busy ? "生成中，可先输入下一条…" : "随心输入，描述一个新任务…")}
         // 锁定态的占位符是提示语（说明为何不可用）而非装饰，按 muted 档渲染保证可读
-        className={`scroll-thin block w-full resize-none bg-transparent px-4 pb-1 pt-3.5 text-[14px] leading-6 text-[var(--text)] focus:outline-none ${
+        className={`scroll-thin block w-full resize-none bg-transparent px-4 pb-1 pt-3.5 text-body leading-6 text-[var(--text)] focus:outline-none ${
           disabled ? "placeholder:text-[var(--text-muted)]" : "placeholder:text-[var(--text-faint)]"
         }`}
       />
@@ -78,12 +78,13 @@ export function Composer({
         <button
           type="button"
           aria-label="添加附件"
-          className="flex size-8 items-center justify-center rounded-xl text-[var(--text-muted)] transition-colors hover:bg-[var(--glass-fill-hover)] hover:text-[var(--text)]"
+          // 移动端 44px：iOS HIG 最小可点目标（桌面保持 32px 紧凑图标键）
+          className="flex size-8 items-center justify-center rounded-xl text-[var(--text-muted)] transition-colors hover:bg-[var(--glass-fill-hover)] hover:text-[var(--text)] max-md:size-11"
         >
-          <PlusIcon className="size-[18px]" />
+          <PlusIcon className="size-[18px] max-md:size-[22px]" />
         </button>
         <div className="flex items-center gap-2">
-          <span className="hidden text-[11px] text-[var(--text-faint)] sm:block">
+          <span className="hidden text-caption text-[var(--text-faint)] sm:block">
             {showStop ? (
               "生成中"
             ) : (
@@ -99,12 +100,13 @@ export function Composer({
               disabled={!showStop && !canSubmit}
               onClick={() => (showStop ? onStop?.() : submit())}
               aria-label={showStop ? "停止生成" : "发送"}
-              className="flex size-9 items-center justify-center rounded-[12px] bg-white/[0.1] text-[var(--text)] transition-colors hover:bg-white/[0.16] disabled:opacity-40 disabled:hover:bg-white/[0.1]"
+              // 移动端 44px：iOS HIG 最小可点目标
+              className="flex size-9 items-center justify-center rounded-[12px] bg-white/[0.1] text-[var(--text)] transition-colors hover:bg-white/[0.16] disabled:opacity-40 disabled:hover:bg-white/[0.1] max-md:size-11"
             >
               {showStop ? (
                 <span className="block size-[11px] rounded-[3px] bg-current" />
               ) : (
-                <SendIcon className="size-[18px]" />
+                <SendIcon className="size-[18px] max-md:size-[22px]" />
               )}
             </button>
           ) : (
@@ -119,7 +121,9 @@ export function Composer({
               disabled={!showStop && !canSubmit}
               onActiveChange={() => (showStop ? onStop?.() : submit())}
               aria-label={showStop ? "停止生成" : "发送"}
-              className="lg-send !size-9"
+              // WebGL 画布几何跟 width/height 入参走死 36px，视觉不便放大，
+              // 用 .touch-target 在移动端把命中区扩到 44px（iOS HIG）
+              className="lg-send touch-target !size-9"
             >
               {showStop ? (
                 // 停止：ChatGPT 同款实心方块

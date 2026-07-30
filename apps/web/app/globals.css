@@ -1,6 +1,64 @@
 @import "tailwindcss";
 
 /*
+ * —— 语义字号 token（全站唯一的字号来源） ——
+ *
+ * 全站文字一律使用下面这套语义档位（text-micro / text-caption / … / text-title-lg），
+ * 不要再写 text-[13px] 这类任意 px 值：任意值是孤立的魔法数字，无法统一适配终端。
+ *
+ * 工作原理：@theme 里的 --text-* 会生成同名工具类（如 text-ui），且编译产物是
+ * font-size: var(--text-ui) 的变量引用（Tailwind v4 行为，已实测验证）——因此
+ * 只需在下方移动端媒体查询里覆盖 :root 变量，即可让全站字号整体换档，
+ * 组件无需逐处写 max-md: 断点。
+ *
+ * 两档取值：
+ * - 桌面档：延续原先的紧凑排版（信息密度优先，鼠标 + 大屏近距离阅读）；
+ * - 移动档：对齐 iOS 人机界面规范（HIG）的动态字体默认档——正文 Body 17pt、
+ *   Callout 16pt、Footnote 13pt、最小可读 Caption2 11pt（Web 上 1pt ≈ 1 CSS px）。
+ *
+ * 档位语义（桌面 → 移动）：
+ * - text-micro    10 → 11   徽标、角标、分组小标题等最小信息（移动端不允许再小）
+ * - text-caption  11 → 13   次要说明、时间戳、元数据
+ * - text-sub      12 → 14   辅助正文、表单说明、次级标签
+ * - text-ui       13 → 16   导航项、菜单项、按钮、列表行标题（UI 控件主文字）
+ * - text-body     14 → 16   正文基准（body 默认字号、气泡、输入框）
+ * - text-body-lg  15 → 17   阅读正文（Markdown、详情简介），移动端对齐 iOS Body
+ * - text-title-sm 16 → 17   小标题
+ * - text-title    17 → 20   区块 / 弹窗标题
+ * - text-title-lg 19 → 22   页面大标题
+ *
+ * 注意：这里刻意不定义 --text-*--line-height 配套变量——定义了工具类就会
+ * 同时输出 line-height，与现状「行高继承 body 1.5 或由 leading-* 显式指定」
+ * 的排版行为不一致，会引起全站布局抖动。
+ */
+@theme {
+  --text-micro: 10px;
+  --text-caption: 11px;
+  --text-sub: 12px;
+  --text-ui: 13px;
+  --text-body: 14px;
+  --text-body-lg: 15px;
+  --text-title-sm: 16px;
+  --text-title: 17px;
+  --text-title-lg: 19px;
+}
+
+/* 移动端换档：整体抬到 iOS HIG 的可读标准（断点与全站移动端约定一致，767px） */
+@media (max-width: 767px) {
+  :root {
+    --text-micro: 11px;
+    --text-caption: 13px;
+    --text-sub: 14px;
+    --text-ui: 16px;
+    --text-body: 16px;
+    --text-body-lg: 17px;
+    --text-title-sm: 17px;
+    --text-title: 20px;
+    --text-title-lg: 22px;
+  }
+}
+
+/*
  * Movieclaw 控制台 —— 冷调「银玻璃」主题（液态玻璃 · Bing 式氛围底）
  * ------------------------------------------------------------------
  * 设计语言：沉浸式左右分区（参考 Codex 桌面端）+ 半透明「液态玻璃」表面。
@@ -99,7 +157,7 @@ body {
   margin: 0;
   color: var(--text);
   font-family: var(--font-sans);
-  font-size: 14px;
+  font-size: var(--text-body);
   line-height: 1.5;
   letter-spacing: -0.005em;
   background: var(--bg);
@@ -123,10 +181,26 @@ body {
  *    生效，于是所有「悬停才浮现」的操作（列表行的下载/详情按钮、卡片上的
  *    订阅入口、会话行的更多菜单）在手机上永远点不到。给这些元素补一个
  *    .touch-reveal，在无悬停设备上恒定可见——这是移动端可用性的硬要求。
+ * 3) 触控目标 44pt：iOS HIG 的最小可点面积。视觉上不便放大到 44px 的小按钮
+ *    （会话行的 ⋯、composer 的发送键等）挂 .touch-target，用伪元素在移动端
+ *    把命中区悄悄撑到 44×44——伪元素参与父按钮的点击判定，外观不变。
  */
 @media (max-width: 767px) {
   :where(input, textarea, select) {
     font-size: 16px;
+  }
+
+  .touch-target {
+    position: relative;
+  }
+  .touch-target::after {
+    content: "";
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    width: 44px;
+    height: 44px;
+    transform: translate(-50%, -50%);
   }
 }
 
@@ -375,10 +449,11 @@ a {
 /*
  * —— AI 回复正文的 Markdown 排版（components/markdown.tsx） ——
  * 颜色全部走 CSS 变量，在 .immersive-theme 内自动切到中性灰阶。
- * 字号/行高与原纯文本正文一致（15px/28px），保证切换渲染器不跳版式。
+ * 字号走语义 token 的阅读正文档（桌面 15px / 移动 17px），行高 28px 两档通用
+ * （15px 下约 1.85、17px 下约 1.65，均在舒适阅读区间），保证切换渲染器不跳版式。
  */
 .markdown {
-  font-size: 15px;
+  font-size: var(--text-body-lg);
   line-height: 28px;
   color: var(--text);
   word-break: break-word;
@@ -463,7 +538,7 @@ a {
   background: none;
   border-radius: 0;
   padding: 0;
-  font-size: 12.5px;
+  font-size: var(--text-sub);
 }
 .markdown blockquote {
   border-left: 3px solid rgba(255, 255, 255, 0.14);
@@ -503,7 +578,7 @@ a {
   padding: 4px 0;
   background: transparent !important;
   font-family: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace;
-  font-size: 11px;
+  font-size: var(--text-caption);
   line-height: 1.55;
   white-space: pre-wrap;
   word-break: break-word;
@@ -726,7 +801,7 @@ a {
 
 /* 分组小标题 */
 .group-label {
-  font-size: 10.5px;
+  font-size: var(--text-micro);
   font-weight: 650;
   letter-spacing: 0.13em;
   text-transform: uppercase;

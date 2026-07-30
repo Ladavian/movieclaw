@@ -95,12 +95,12 @@ export function LlmConfigSection() {
   return (
     <div className="space-y-5">
       {error && (
-        <div className="rounded-xl border border-[#ff6b6b]/30 bg-[#ff6b6b]/10 px-4 py-3 text-sm text-[#ff6b6b]">
+        <div className="rounded-xl border border-[#ff6b6b]/30 bg-[#ff6b6b]/10 px-4 py-3 text-body text-[#ff6b6b]">
           {error}
         </div>
       )}
 
-      <p className="text-xs text-[var(--text-muted)]">
+      <p className="text-sub text-[var(--text-muted)]">
         {loading
           ? "加载中…"
           : config == null
@@ -117,15 +117,15 @@ export function LlmConfigSection() {
             <SparkIcon className="size-6" />
           </span>
           <div>
-            <p className="text-sm font-medium text-[var(--text)]">还没有接入模型供应商</p>
-            <p className="mt-1 text-xs text-[var(--text-muted)]">
+            <p className="text-body font-medium text-[var(--text)]">还没有接入模型供应商</p>
+            <p className="mt-1 text-sub text-[var(--text-muted)]">
               支持 OpenAI、阿里云百炼，以及任何 OpenAI 兼容端点（如自建 vLLM / Ollama）。
             </p>
           </div>
           <button
             type="button"
             onClick={() => setEditing(true)}
-            className="btn-accent mt-1 rounded-full px-4 py-1.5 text-xs font-semibold"
+            className="btn-accent mt-1 rounded-full px-4 py-1.5 text-sub font-semibold"
           >
             接入模型供应商
           </button>
@@ -140,12 +140,12 @@ export function LlmConfigSection() {
               </span>
               <div className="min-w-0 flex-1">
                 <div className="flex items-center gap-2">
-                  <p className="truncate text-sm font-semibold text-[var(--text)]">
+                  <p className="truncate text-body font-semibold text-[var(--text)]">
                     {preset?.display_name ?? config.provider_type}
                   </p>
                   <StatusPill status={config.status} />
                 </div>
-                <p className="mt-0.5 truncate text-[11px] text-[var(--text-faint)]">
+                <p className="mt-0.5 truncate text-caption text-[var(--text-faint)]">
                   {config.status === "failed" && config.last_error
                     ? config.last_error
                     : [
@@ -160,7 +160,7 @@ export function LlmConfigSection() {
                 <button
                   type="button"
                   onClick={() => setEditing((v) => !v)}
-                  className="btn-glass px-3 py-1.5 text-xs font-medium"
+                  className="btn-glass px-3 py-1.5 text-sub font-medium"
                 >
                   {editing ? "收起" : "编辑"}
                 </button>
@@ -170,7 +170,7 @@ export function LlmConfigSection() {
                   onClick={() =>
                     void guard(async () => setConfig(await reverifyLlmProvider()))
                   }
-                  className="btn-glass px-3 py-1.5 text-xs font-medium disabled:opacity-40"
+                  className="btn-glass px-3 py-1.5 text-sub font-medium disabled:opacity-40"
                 >
                   重新测试
                 </button>
@@ -185,7 +185,7 @@ export function LlmConfigSection() {
                       setEditing(false);
                     })
                   }
-                  className="btn-glass px-3 py-1.5 text-xs font-medium !text-[#ff6b6b] disabled:opacity-40"
+                  className="btn-glass px-3 py-1.5 text-sub font-medium !text-[#ff6b6b] disabled:opacity-40"
                 >
                   删除
                 </button>
@@ -227,7 +227,7 @@ function StatusPill({ status }: { status: LlmProviderStatus }) {
   const meta = STATUS_META[status];
   return (
     <span
-      className="flex shrink-0 items-center gap-1.5 rounded-full px-2 py-0.5 text-[11px] font-medium"
+      className="flex shrink-0 items-center gap-1.5 rounded-full px-2 py-0.5 text-caption font-medium"
       style={{ background: `${meta.color}1f`, color: meta.color }}
     >
       <span className="size-1.5 rounded-full" style={{ background: meta.color }} />
@@ -239,8 +239,8 @@ function StatusPill({ status }: { status: LlmProviderStatus }) {
 function InfoStat({ label, value }: { label: string; value: string }) {
   return (
     <div className="min-w-0">
-      <p className="text-[10px] text-[var(--text-faint)]">{label}</p>
-      <p className="mt-0.5 truncate text-[13px] font-semibold text-[var(--text)]">{value}</p>
+      <p className="text-micro text-[var(--text-faint)]">{label}</p>
+      <p className="mt-0.5 truncate text-ui font-semibold text-[var(--text)]">{value}</p>
     </div>
   );
 }
@@ -388,9 +388,9 @@ function LlmProviderForm({ config, presets, onSubmit, onCancel, onError }: LlmPr
   }
 
   const inputClass =
-    "w-full rounded-xl border border-white/[0.08] bg-white/[0.04] px-3 py-2 text-[13px] " +
+    "w-full rounded-xl border border-white/[0.08] bg-white/[0.04] px-3 py-2 text-ui " +
     "text-[var(--text)] outline-none focus:border-[var(--accent)]/60";
-  const labelClass = "mb-1.5 block text-xs font-medium text-[var(--text-muted)]";
+  const labelClass = "mb-1.5 block text-sub font-medium text-[var(--text-muted)]";
 
   return (
     <div className="space-y-4">
@@ -410,10 +410,10 @@ function LlmProviderForm({ config, presets, onSubmit, onCancel, onError }: LlmPr
               data-active={providerType === p.id}
               className="glass-row nav-item !flex-col !items-start !gap-0.5 px-3.5 py-2.5 text-left"
             >
-              <span className="text-[13px] font-semibold text-[var(--text)]">
+              <span className="text-ui font-semibold text-[var(--text)]">
                 {p.display_name}
               </span>
-              <span className="truncate text-[11px] text-[var(--text-faint)]">
+              <span className="truncate text-caption text-[var(--text-faint)]">
                 {providerHint(p)}
               </span>
             </button>
@@ -437,7 +437,7 @@ function LlmProviderForm({ config, presets, onSubmit, onCancel, onError }: LlmPr
             {...NO_AUTOFILL}
           />
           {!needBaseUrl && (
-            <p className="mt-1.5 text-[11px] leading-relaxed text-[var(--text-faint)]">
+            <p className="mt-1.5 text-caption leading-relaxed text-[var(--text-faint)]">
               留空使用官方端点；使用代理或镜像时填写完整地址。
             </p>
           )}
@@ -496,7 +496,7 @@ function LlmProviderForm({ config, presets, onSubmit, onCancel, onError }: LlmPr
           {isCustomEndpoint && <option value={NEW_MODEL}>＋ 新增模型（需填写参数）…</option>}
         </select>
         {selected && !isNew && (
-          <p className="mt-1.5 text-[11px] leading-relaxed text-[var(--text-faint)]">
+          <p className="mt-1.5 text-caption leading-relaxed text-[var(--text-faint)]">
             {modelSpecs(selected) || "该模型的详细规格以官方文档为准。"}
           </p>
         )}
@@ -505,7 +505,7 @@ function LlmProviderForm({ config, presets, onSubmit, onCancel, onError }: LlmPr
       {/* 新增模型的参数子表单：这些参数是 agent 做上下文/思考预算决策的依据，必填 */}
       {isNew && (
         <div className="space-y-3.5 rounded-xl border border-white/[0.08] bg-white/[0.03] p-3.5">
-          <p className="text-xs font-medium text-[var(--text-muted)]">
+          <p className="text-sub font-medium text-[var(--text-muted)]">
             新模型参数
             <span className="ml-2 font-normal text-[var(--text-faint)]">
               按端点实际部署的模型规格填写，保存后计入本地模型目录
@@ -595,7 +595,7 @@ function LlmProviderForm({ config, presets, onSubmit, onCancel, onError }: LlmPr
                 className={inputClass}
                 {...NO_AUTOFILL}
               />
-              <p className="mt-1.5 text-[11px] leading-relaxed text-[var(--text-faint)]">
+              <p className="mt-1.5 text-caption leading-relaxed text-[var(--text-faint)]">
                 思维链可用的最大 token 数（thinking_budget 上限），超配供应商会直接报错。
               </p>
             </div>
@@ -604,14 +604,14 @@ function LlmProviderForm({ config, presets, onSubmit, onCancel, onError }: LlmPr
       )}
 
       <div className="flex items-center justify-end gap-3 pt-1">
-        <button type="button" onClick={onCancel} className="btn-glass px-3.5 py-2 text-[13px] font-medium">
+        <button type="button" onClick={onCancel} className="btn-glass px-3.5 py-2 text-ui font-medium">
           取消
         </button>
         <button
           type="button"
           onClick={submit}
           disabled={busy || !canSubmit}
-          className="btn-accent rounded-full px-4.5 py-2 text-[13px] font-semibold disabled:opacity-40"
+          className="btn-accent rounded-full px-4.5 py-2 text-ui font-semibold disabled:opacity-40"
         >
           {busy ? "保存中…" : "保存并测试连接"}
         </button>
@@ -649,7 +649,7 @@ function CheckField({
 }) {
   return (
     <label
-      className={`flex cursor-pointer items-center gap-1.5 text-xs text-[var(--text-muted)] ${
+      className={`flex cursor-pointer items-center gap-1.5 text-sub text-[var(--text-muted)] ${
         disabled ? "cursor-not-allowed opacity-40" : ""
       }`}
     >

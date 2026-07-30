@@ -141,7 +141,7 @@ function SearchVerticals({
                   role="tab"
                   aria-selected={active}
                   onClick={() => !active && onSwitch(tab.id)}
-                  className={`rounded-full px-3.5 py-1 text-[12px] font-medium transition-colors ${
+                  className={`rounded-full px-3.5 py-1 text-sub font-medium transition-colors ${
                     active
                       ? "bg-white/[0.16] text-white"
                       : "text-[rgba(243,245,249,0.72)] hover:bg-white/[0.08] hover:text-white"
@@ -239,7 +239,7 @@ function ScopeChip({
       role="radio"
       aria-checked={active}
       onClick={() => !active && onClick()}
-      className={`rounded-full px-2.5 py-1 text-[12px] transition-colors ${
+      className={`rounded-full px-2.5 py-1 text-sub transition-colors ${
         active
           ? "bg-white/[0.16] font-medium text-white"
           : "text-[rgba(243,245,249,0.68)] hover:bg-white/[0.08] hover:text-white"

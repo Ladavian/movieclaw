@@ -141,16 +141,16 @@ export function ImageLightbox({
     >
       {/* 顶栏：计数 + 标题 + 关闭 */}
       <div className="flex shrink-0 flex-wrap items-center gap-3 px-4 py-3 text-white/85 [padding-top:calc(0.75rem+var(--safe-top))] max-md:gap-2 max-md:px-3">
-        <span className="tnum shrink-0 rounded-full bg-white/[0.1] px-2.5 py-0.5 text-[12px]">
+        <span className="tnum shrink-0 rounded-full bg-white/[0.1] px-2.5 py-0.5 text-sub">
           {index + 1} / {images.length}
         </span>
-        {title && <p className="min-w-0 flex-1 truncate text-[13px] text-white/70">{title}</p>}
+        {title && <p className="min-w-0 flex-1 truncate text-ui text-white/70">{title}</p>}
 
         {/* 可选操作按钮（如「设为背景」）：busy 转菊花禁用，done 变对勾，错误就地提示 */}
         {action && (
           <div className="flex min-w-0 shrink-0 items-center gap-2">
             {actionError && (
-              <span className="max-w-[260px] truncate text-[12px] text-[#f2a4a4]" title={actionError}>
+              <span className="max-w-[260px] truncate text-sub text-[#f2a4a4]" title={actionError}>
                 {actionError}
               </span>
             )}
@@ -161,7 +161,7 @@ export function ImageLightbox({
                 e.stopPropagation();
                 void runAction();
               }}
-              className={`flex h-8 items-center gap-1.5 rounded-full px-3.5 text-[12.5px] font-medium transition-colors ${
+              className={`flex h-8 items-center gap-1.5 rounded-full px-3.5 text-sub font-medium transition-colors ${
                 actionStatus === "done"
                   ? "bg-white/[0.1] text-white/85"
                   : "bg-white/[0.12] text-white hover:bg-white/[0.2] disabled:cursor-default disabled:hover:bg-white/[0.12]"
@@ -211,10 +211,10 @@ export function ImageLightbox({
         {broken.has(index) ? (
           <div
             onClick={(e) => e.stopPropagation()}
-            className="rounded-2xl border border-white/[0.12] bg-white/[0.04] px-8 py-10 text-center text-[13px] text-white/60"
+            className="rounded-2xl border border-white/[0.12] bg-white/[0.04] px-8 py-10 text-center text-ui text-white/60"
           >
             这张图片加载失败
-            <span className="mt-1 block text-[11px] text-white/40">
+            <span className="mt-1 block text-caption text-white/40">
               图床可能已失效或拒绝外链访问
             </span>
           </div>

@@ -155,14 +155,15 @@ export function Sidebar({
                 data-active={activeNav === item.id}
                 onClick={() => onSelect(item.id)}
                 title={collapsed ? item.label : undefined}
-                className={`glass-row nav-item py-2 ${collapsed ? "justify-center px-0" : "px-3"}`}
+                className={`glass-row nav-item py-2 max-md:py-2.5 ${collapsed ? "justify-center px-0" : "px-3"}`}
               >
-                <Icon className="size-[18px] shrink-0" />
+                {/* 图标移动端提到 22px：与顶栏图标键同标准（iOS 列表行图标的惯用比例） */}
+                <Icon className="size-[18px] shrink-0 max-md:size-[22px]" />
                 {/* 字号写在 span 上而非 button 上：globals.css 的 `button { font: inherit }`
                     是无 @layer 的普通规则，会压过 Tailwind 的 @layer utilities——写在
-                    button 上的 text-[13px] 不生效，会退回 body 的 14px。 */}
+                    button 上的 text-ui 不生效，会退回 body 的 14px。 */}
                 {!collapsed && (
-                  <span className="flex-1 text-[13px] font-medium">{item.label}</span>
+                  <span className="flex-1 text-ui font-medium">{item.label}</span>
                 )}
               </button>
             );
@@ -175,7 +176,7 @@ export function Sidebar({
             <Section label="最近会话" icon={<ClockIcon className="size-3.5" />}>
               <div className="space-y-0.5">
                 {conversations.length === 0 ? (
-                  <p className="px-2.5 py-1 text-[11px] leading-5 text-[var(--text-faint)]">
+                  <p className="px-2.5 py-1 text-caption leading-5 text-[var(--text-faint)]">
                     还没有会话，从「新任务」开始。
                   </p>
                 ) : (
@@ -350,7 +351,7 @@ function RunRow({
         data-active={active}
         onClick={onClick}
         title={`更新于 ${time}`}
-        className="glass-row nav-item items-center gap-2.5 px-2.5 py-1"
+        className="glass-row nav-item items-center gap-2.5 px-2.5 py-1 max-md:py-2"
       >
         {/* 状态点：仿 ChatGPT 的极简指示。容器始终占位（size-[7px]）以保证所有标题左对齐，
             但只有「运行中」才在其中画出小圆点 + 向外扩散的 ping 光晕；历史会话留空占位。 */}
@@ -366,7 +367,7 @@ function RunRow({
             加宽，行尾按钮直接浮在淡出区上——文字看起来「渐隐进」按钮下方。
             用 mask 而非渐变色遮罩：侧栏底是 WebGL 玻璃，没有可匹配的实色。 */}
         <span
-          className={`flex-1 overflow-hidden whitespace-nowrap text-[13px] font-medium text-[var(--text)] ${
+          className={`flex-1 overflow-hidden whitespace-nowrap text-ui font-medium text-[var(--text)] ${
             open
               ? "[mask-image:linear-gradient(to_right,#000_calc(100%_-_44px),transparent_calc(100%_-_12px))]"
               : "[mask-image:linear-gradient(to_right,#000_calc(100%_-_16px),transparent)] group-hover/run:[mask-image:linear-gradient(to_right,#000_calc(100%_-_44px),transparent_calc(100%_-_12px))]"
@@ -389,11 +390,12 @@ function RunRow({
           const rect = e.currentTarget.getBoundingClientRect();
           setMenuPos({ left: rect.right - 144, top: rect.bottom + 6 });
         }}
-        className={`glass-row !absolute right-1.5 top-1/2 !size-6 -translate-y-1/2 justify-center !rounded-md !p-0 transition-opacity duration-200 ${
+        // 移动端：视觉放大一档（32px）+ .touch-target 把命中区撑到 44px（iOS HIG）
+        className={`glass-row touch-target !absolute right-1.5 top-1/2 !size-6 -translate-y-1/2 justify-center !rounded-md !p-0 transition-opacity duration-200 max-md:!size-8 ${
           open ? "opacity-100" : "touch-reveal opacity-0 group-hover/run:opacity-100"
         }`}
       >
-        <MoreIcon className="size-4" />
+        <MoreIcon className="size-4 max-md:size-5" />
       </button>
 
       {open &&
@@ -406,17 +408,17 @@ function RunRow({
             <button
               type="button"
               onClick={() => pick(onRename)}
-              className="glass-row px-2.5 py-2 text-[13px] font-medium"
+              className="glass-row px-2.5 py-2 text-ui font-medium max-md:py-2.5"
             >
-              <PencilIcon className="size-4 shrink-0 opacity-80" />
+              <PencilIcon className="size-4 shrink-0 opacity-80 max-md:size-5" />
               <span className="flex-1">重命名</span>
             </button>
             <button
               type="button"
               onClick={() => pick(onDelete)}
-              className="glass-row px-2.5 py-2 text-[13px] font-medium !text-[var(--danger)] hover:!bg-[rgba(255,107,107,0.12)]"
+              className="glass-row px-2.5 py-2 text-ui font-medium !text-[var(--danger)] hover:!bg-[rgba(255,107,107,0.12)] max-md:py-2.5"
             >
-              <TrashIcon className="size-4 shrink-0 opacity-80" />
+              <TrashIcon className="size-4 shrink-0 opacity-80 max-md:size-5" />
               <span className="flex-1">删除会话</span>
             </button>
           </div>,

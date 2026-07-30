@@ -174,7 +174,7 @@ export function SiteConfigSection() {
             type="button"
             aria-pressed={t.id === tab}
             onClick={() => setTab(t.id)}
-            className={`rounded-full px-3.5 py-1.5 text-[12.5px] font-medium transition-colors ${
+            className={`rounded-full px-3.5 py-1.5 text-sub font-medium transition-colors ${
               t.id === tab
                 ? "bg-white/[0.14] text-white"
                 : "text-[var(--text-muted)] hover:bg-white/[0.07] hover:text-[var(--text)]"
@@ -190,13 +190,13 @@ export function SiteConfigSection() {
       ) : (
         <>
           {error && (
-            <div className="rounded-xl border border-[#ff6b6b]/30 bg-[#ff6b6b]/10 px-4 py-3 text-sm text-[#ff6b6b]">
+            <div className="rounded-xl border border-[#ff6b6b]/30 bg-[#ff6b6b]/10 px-4 py-3 text-body text-[#ff6b6b]">
               {error}
             </div>
           )}
 
           <div className="flex items-center justify-between gap-4">
-            <p className="text-xs text-[var(--text-muted)]">
+            <p className="text-sub text-[var(--text-muted)]">
               {loading
                 ? "加载中…"
                 : `已接入 ${configured.length} 个站点 · 本地累计缓存 ${totalCached.toLocaleString("zh-CN")} 条种子，保存后系统会自动验证有效性。`}
@@ -206,7 +206,7 @@ export function SiteConfigSection() {
                 type="button"
                 onClick={() => void load()}
                 disabled={loading}
-                className="btn-glass px-3.5 py-1.5 text-xs font-medium"
+                className="btn-glass px-3.5 py-1.5 text-sub font-medium"
               >
                 刷新
               </button>
@@ -215,7 +215,7 @@ export function SiteConfigSection() {
                 type="button"
                 onClick={() => setAdding((v) => !v)}
                 disabled={loading}
-                className="btn-accent flex items-center gap-1 rounded-full py-1.5 pl-2.5 pr-3.5 text-xs font-semibold disabled:opacity-60"
+                className="btn-accent flex items-center gap-1 rounded-full py-1.5 pl-2.5 pr-3.5 text-sub font-semibold disabled:opacity-60"
               >
                 <PlusIcon className="size-4" />
                 添加站点
@@ -249,8 +249,8 @@ export function SiteConfigSection() {
                   <ServerIcon className="size-6" />
                 </span>
                 <div>
-                  <p className="text-sm font-medium text-[var(--text)]">还没有配置任何站点</p>
-                  <p className="mt-1 text-xs text-[var(--text-muted)]">
+                  <p className="text-body font-medium text-[var(--text)]">还没有配置任何站点</p>
+                  <p className="mt-1 text-sub text-[var(--text-muted)]">
                     点击右上角「添加站点」开始接入。
                   </p>
                 </div>
@@ -315,16 +315,16 @@ function AddSitePanel({ available, onCreated, onCancel, onError }: AddSitePanelP
       <div className="css-glass !rounded-xl p-4">
         <div className="mb-3 flex items-center justify-between gap-3">
           <div className="min-w-0">
-            <p className="truncate text-sm font-semibold text-[var(--text)]">
+            <p className="truncate text-body font-semibold text-[var(--text)]">
               {selected.display_name}
             </p>
-            <p className="truncate text-[11px] text-[var(--text-faint)]">{selected.base_url}</p>
+            <p className="truncate text-caption text-[var(--text-faint)]">{selected.base_url}</p>
           </div>
           <button
             type="button"
             onClick={() => setSelected(null)}
             disabled={busy}
-            className="btn-glass shrink-0 px-3 py-1.5 text-xs font-medium"
+            className="btn-glass shrink-0 px-3 py-1.5 text-sub font-medium"
           >
             重新选择
           </button>
@@ -364,7 +364,7 @@ function AddSitePanel({ available, onCreated, onCancel, onError }: AddSitePanelP
         <button
           type="button"
           onClick={onCancel}
-          className="btn-glass shrink-0 px-3 py-1.5 text-xs font-medium"
+          className="btn-glass shrink-0 px-3 py-1.5 text-sub font-medium"
         >
           取消
         </button>
@@ -372,11 +372,11 @@ function AddSitePanel({ available, onCreated, onCancel, onError }: AddSitePanelP
 
       <div className="scroll-thin max-h-64 space-y-1 overflow-y-auto">
         {available.length === 0 ? (
-          <p className="px-2 py-6 text-center text-sm text-[var(--text-muted)]">
+          <p className="px-2 py-6 text-center text-body text-[var(--text-muted)]">
             所有支持的站点都已配置。
           </p>
         ) : filtered.length === 0 ? (
-          <p className="px-2 py-6 text-center text-sm text-[var(--text-muted)]">
+          <p className="px-2 py-6 text-center text-body text-[var(--text-muted)]">
             没有匹配「{query}」的站点。
           </p>
         ) : (
@@ -388,14 +388,14 @@ function AddSitePanel({ available, onCreated, onCancel, onError }: AddSitePanelP
               className="glass-row nav-item w-full items-center justify-between gap-3 px-3 py-2.5 text-left"
             >
               <span className="min-w-0">
-                <span className="block truncate text-[13px] font-medium text-[var(--text)]">
+                <span className="block truncate text-ui font-medium text-[var(--text)]">
                   {item.display_name}
                 </span>
-                <span className="block truncate text-[11px] text-[var(--text-faint)]">
+                <span className="block truncate text-caption text-[var(--text-faint)]">
                   {item.base_url}
                 </span>
               </span>
-              <span className="shrink-0 text-[11px] text-[var(--text-muted)]">
+              <span className="shrink-0 text-caption text-[var(--text-muted)]">
                 {item.supported_auth_types.map((a) => AUTH_TYPE_LABEL[a.auth_type]).join(" / ")}
               </span>
             </button>
@@ -449,21 +449,21 @@ function SiteCard({
     <div className="css-glass !rounded-xl">
       {/* 顶部行：首字母徽标 + 站点信息 + 状态 + 操作 */}
       <div className="flex items-center gap-3.5 p-4">
-        <span className="icon-chip size-10 !rounded-xl text-sm font-semibold">
+        <span className="icon-chip size-10 !rounded-xl text-body font-semibold">
           {item.display_name.charAt(0).toUpperCase()}
         </span>
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2">
-            <p className="truncate text-sm font-semibold text-[var(--text)]">{item.display_name}</p>
+            <p className="truncate text-body font-semibold text-[var(--text)]">{item.display_name}</p>
             <span
-              className="flex shrink-0 items-center gap-1.5 rounded-full px-2 py-0.5 text-[11px] font-medium"
+              className="flex shrink-0 items-center gap-1.5 rounded-full px-2 py-0.5 text-caption font-medium"
               style={{ background: `${meta.color}1f`, color: meta.color }}
             >
               <span className="size-1.5 rounded-full" style={{ background: meta.color }} />
               {meta.label}
             </span>
           </div>
-          <p className="mt-0.5 truncate text-[11px] text-[var(--text-faint)]">
+          <p className="mt-0.5 truncate text-caption text-[var(--text-faint)]">
             {site.status === "failed" && site.last_error
               ? site.last_error
               : `${AUTH_TYPE_LABEL[site.auth_type]} · 上次检查 ${formatRelativeTime(site.last_checked_at)}`}
@@ -544,7 +544,7 @@ function SiteCard({
         </div>
       )}
       {stats?.last_error && (
-        <p className="border-t border-white/[0.06] px-4 py-2.5 text-[11px] text-[#ff6b6b]">
+        <p className="border-t border-white/[0.06] px-4 py-2.5 text-caption text-[#ff6b6b]">
           上次同步失败：{stats.last_error}
         </p>
       )}
@@ -581,8 +581,8 @@ function nextSyncLabel(iso: string | null): string {
 function ProfileStat({ label, value }: { label: string; value: string }) {
   return (
     <div className="min-w-0">
-      <p className="text-[10px] text-[var(--text-faint)]">{label}</p>
-      <p className="mt-0.5 truncate text-[13px] font-semibold text-[var(--text)]">{value}</p>
+      <p className="text-micro text-[var(--text-faint)]">{label}</p>
+      <p className="mt-0.5 truncate text-ui font-semibold text-[var(--text)]">{value}</p>
     </div>
   );
 }
@@ -611,7 +611,7 @@ function SiteActionsMenu({
   // 靠近视口边缘时自动翻转/收边，绝不会像绝对定位那样把父容器/页面撑开。
   // 开合状态、点击外部关闭、键盘导航与焦点管理都由 Radix 托管。
   const itemClass =
-    "glass-row nav-item cursor-pointer px-3 py-2 text-xs font-medium outline-none " +
+    "glass-row nav-item cursor-pointer px-3 py-2 text-sub font-medium outline-none " +
     "data-[highlighted]:!bg-[var(--glass-fill-hover)] data-[highlighted]:!text-[var(--text)] " +
     "data-[disabled]:pointer-events-none data-[disabled]:opacity-40";
 
@@ -692,7 +692,7 @@ function SiteForm({ item, site, busy, onSubmit }: SiteFormProps) {
       {/* 授权类型选择（多于一种时才展示） */}
       {options.length > 1 && (
         <div>
-          <label className="mb-1.5 block text-xs font-medium text-[var(--text-muted)]">
+          <label className="mb-1.5 block text-sub font-medium text-[var(--text-muted)]">
             授权方式
           </label>
           <div className="flex flex-wrap gap-2">
@@ -702,7 +702,7 @@ function SiteForm({ item, site, busy, onSubmit }: SiteFormProps) {
                 type="button"
                 onClick={() => setAuthType(opt.auth_type)}
                 data-active={authType === opt.auth_type}
-                className="glass-row nav-item !w-auto px-3 py-1.5 text-xs font-medium"
+                className="glass-row nav-item !w-auto px-3 py-1.5 text-sub font-medium"
               >
                 {AUTH_TYPE_LABEL[opt.auth_type]}
               </button>
@@ -716,12 +716,12 @@ function SiteForm({ item, site, busy, onSubmit }: SiteFormProps) {
         const fm = FIELD_META[field] ?? { label: field, kind: "text" as const };
         return (
           <div key={field}>
-            <label className="mb-1.5 block text-xs font-medium text-[var(--text-muted)]">
+            <label className="mb-1.5 block text-sub font-medium text-[var(--text-muted)]">
               {fm.label}
             </label>
             {/* Cookie 恰是插件的用武之地：就地提一句，不打断手动粘贴的用户 */}
             {field === "cookie" && (
-              <p className="mb-1.5 text-[11px] text-[var(--text-faint)]">
+              <p className="mb-1.5 text-caption text-[var(--text-faint)]">
                 手动粘贴的 Cookie 过期后需重填；推荐用本页下方的 MovieClaw 浏览器插件自动同步。
               </p>
             )}
@@ -732,7 +732,7 @@ function SiteForm({ item, site, busy, onSubmit }: SiteFormProps) {
                 rows={3}
                 autoComplete="off"
                 placeholder={site ? "出于安全，请重新填写" : ""}
-                className="scroll-thin w-full resize-none rounded-xl border border-white/[0.08] bg-white/[0.04] px-3 py-2 text-[13px] text-[var(--text)] outline-none focus:border-[var(--accent)]/60"
+                className="scroll-thin w-full resize-none rounded-xl border border-white/[0.08] bg-white/[0.04] px-3 py-2 text-ui text-[var(--text)] outline-none focus:border-[var(--accent)]/60"
               />
             ) : (
               <input
@@ -742,7 +742,7 @@ function SiteForm({ item, site, busy, onSubmit }: SiteFormProps) {
                 placeholder={site ? "出于安全，请重新填写" : ""}
                 // Chrome 对 password 字段会无视 "off" 仍弹出已存密码，须用 "new-password" 抑制
                 autoComplete={fm.kind === "password" ? "new-password" : "off"}
-                className="w-full rounded-xl border border-white/[0.08] bg-white/[0.04] px-3 py-2 text-[13px] text-[var(--text)] outline-none focus:border-[var(--accent)]/60"
+                className="w-full rounded-xl border border-white/[0.08] bg-white/[0.04] px-3 py-2 text-ui text-[var(--text)] outline-none focus:border-[var(--accent)]/60"
               />
             )}
           </div>
@@ -754,7 +754,7 @@ function SiteForm({ item, site, busy, onSubmit }: SiteFormProps) {
           type="button"
           onClick={submit}
           disabled={busy || !canSubmit}
-          className="btn-accent rounded-full px-4.5 py-2 text-[13px] font-semibold disabled:opacity-40"
+          className="btn-accent rounded-full px-4.5 py-2 text-ui font-semibold disabled:opacity-40"
         >
           {busy ? "保存中…" : site ? "保存并重新验证" : "保存并验证"}
         </button>

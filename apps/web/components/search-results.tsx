@@ -729,22 +729,22 @@ export function SearchResults({ query, onResearch }: SearchResultsProps) {
       {/* pt-4：上方还有 /search 页的垂直选项卡行（影视 | 站点资源），间距略收 */}
       <header className="relative z-20 shrink-0 px-6 pb-3 pt-4 max-md:px-4 max-md:pt-3">
         <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1.5">
-          <h1 className="text-on-image text-[18px] font-semibold tracking-[-0.01em] text-white">
+          <h1 className="text-on-image text-title-lg font-semibold tracking-[-0.01em] text-white">
             “{query.keyword}”
           </h1>
           {query.scope.label && (
-            <span className="rounded-full bg-black/30 px-2.5 py-0.5 text-[11px] text-[var(--accent)] backdrop-blur-sm">
+            <span className="rounded-full bg-black/30 px-2.5 py-0.5 text-caption text-[var(--accent)] backdrop-blur-sm">
               {query.scope.label}
             </span>
           )}
           {phase === "streaming" && (
-            <span className="text-on-image flex items-center gap-1.5 text-[12px] text-[rgba(243,245,249,0.75)]">
+            <span className="text-on-image flex items-center gap-1.5 text-sub text-[rgba(243,245,249,0.75)]">
               <span className="size-1.5 animate-pulse rounded-full bg-[var(--accent)]" />
               已找到 {items.length} 条
             </span>
           )}
           {phase === "done" && (
-            <span className="text-on-image text-[12px] text-[rgba(243,245,249,0.75)]">
+            <span className="text-on-image text-sub text-[rgba(243,245,249,0.75)]">
               {filtering
                 ? `筛选后 ${filtered.length} / 共 ${items.length} 条`
                 : `共 ${items.length} 条结果`}
@@ -757,7 +757,7 @@ export function SearchResults({ query, onResearch }: SearchResultsProps) {
               <>
                 <span
                   title="这是历史留存的结果快照，站点数据（做种数/促销/链接）可能已变化"
-                  className="flex items-center gap-1.5 rounded-full border border-[#6aa7ff]/30 bg-[#6aa7ff]/12 px-2.5 py-1 text-[11px] text-[#b9d4ff] backdrop-blur-sm"
+                  className="flex items-center gap-1.5 rounded-full border border-[#6aa7ff]/30 bg-[#6aa7ff]/12 px-2.5 py-1 text-caption text-[#b9d4ff] backdrop-blur-sm"
                 >
                   <svg
                     viewBox="0 0 24 24"
@@ -777,7 +777,7 @@ export function SearchResults({ query, onResearch }: SearchResultsProps) {
                   <button
                     type="button"
                     onClick={() => onResearch(query.keyword, query.scope)}
-                    className="btn-accent rounded-full px-2.5 py-1 text-[11px] font-medium"
+                    className="btn-accent rounded-full px-2.5 py-1 text-caption font-medium"
                   >
                     重新搜索
                   </button>
@@ -792,7 +792,7 @@ export function SearchResults({ query, onResearch }: SearchResultsProps) {
           </div>
         </div>
         {phase === "done" && siteProgress.length === 0 && !snapshotAt && (
-          <p className="text-on-image mt-2 text-[12px] text-[rgba(243,245,249,0.7)]">
+          <p className="text-on-image mt-2 text-sub text-[rgba(243,245,249,0.7)]">
             当前没有「已启用且验证通过」的站点，请先在设置里配置站点。
           </p>
         )}
@@ -893,7 +893,7 @@ function FacetChip({
       type="button"
       onClick={onToggle}
       aria-pressed={active}
-      className={`h-7 rounded-full border px-2.5 text-[11px] transition-all ${active ? CHIP_ACTIVE_CLS : CHIP_IDLE_CLS}`}
+      className={`h-7 rounded-full border px-2.5 text-caption transition-all ${active ? CHIP_ACTIVE_CLS : CHIP_IDLE_CLS}`}
     >
       {label}
       <span className="tnum ml-1 opacity-60">{count}</span>
@@ -981,7 +981,7 @@ function GroupedResults({
                   <button
                     type="button"
                     onClick={() => setUncapped((prev) => toggleIn(prev, key))}
-                    className="ml-4 mt-2 px-1 py-0.5 text-[12px] text-[var(--accent-2)] transition-colors hover:text-[var(--text)]"
+                    className="ml-4 mt-2 px-1 py-0.5 text-sub text-[var(--accent-2)] transition-colors hover:text-[var(--text)]"
                   >
                     展开其余 {rows.length - GROUP_ROW_CAP} 个版本 ▾
                   </button>
@@ -1030,33 +1030,33 @@ function GroupHeader({
       className="flex w-full items-center gap-3 rounded-2xl border border-white/[0.09] bg-white/[0.045] px-4 py-2.5 text-left backdrop-blur-xl transition-colors hover:border-white/[0.16] hover:bg-white/[0.07]"
     >
       <span
-        className={`shrink-0 text-[10px] text-[var(--text-faint)] transition-transform ${open ? "rotate-90" : ""}`}
+        className={`shrink-0 text-micro text-[var(--text-faint)] transition-transform ${open ? "rotate-90" : ""}`}
       >
         ▶
       </span>
       <span className="min-w-0 flex-1 truncate">
-        <span className="text-[14.5px] font-semibold text-[var(--text)]">
+        <span className="text-body font-semibold text-[var(--text)]">
           {unparsed ? "未识别" : (meta.nameZh ?? meta.nameEn)}
         </span>
         {!unparsed && meta.nameZh && meta.nameEn && (
-          <span className="ml-2 text-[12px] text-[var(--text-muted)]">{meta.nameEn}</span>
+          <span className="ml-2 text-sub text-[var(--text-muted)]">{meta.nameEn}</span>
         )}
         {info && (
-          <span className="tnum ml-2 text-[12px] text-[var(--text-faint)]">{info}</span>
+          <span className="tnum ml-2 text-sub text-[var(--text-faint)]">{info}</span>
         )}
       </span>
       <span className="flex shrink-0 items-center gap-1.5">
-        <span className="tnum rounded-md bg-white/[0.05] px-1.5 py-0.5 text-[10px] text-[var(--text-muted)]">
+        <span className="tnum rounded-md bg-white/[0.05] px-1.5 py-0.5 text-micro text-[var(--text-muted)]">
           {rows.length} 个版本
         </span>
         {topRes && (
-          <span className="rounded-md bg-white/[0.05] px-1.5 py-0.5 text-[10px] text-[var(--accent-2)]">
+          <span className="rounded-md bg-white/[0.05] px-1.5 py-0.5 text-micro text-[var(--accent-2)]">
             最高 {topRes}
           </span>
         )}
         {hasCompletePack && <span className={COMPLETE_BADGE_CLS}>全集包</span>}
         {freeCount > 0 && (
-          <span className="tnum rounded-md bg-[#4ade80]/15 px-1.5 py-0.5 text-[10px] font-semibold text-[#79d193]">
+          <span className="tnum rounded-md bg-[#4ade80]/15 px-1.5 py-0.5 text-micro font-semibold text-[#79d193]">
             {freeCount} 个免费
           </span>
         )}
@@ -1231,17 +1231,17 @@ function FilterToolbar({
             type="button"
             onClick={() => setSheetOpen((v) => !v)}
             aria-expanded={sheetOpen}
-            className={`flex h-7 items-center gap-1.5 rounded-full border px-3 text-[11px] transition-all ${
+            className={`flex h-7 items-center gap-1.5 rounded-full border px-3 text-caption transition-all ${
               badge > 0 ? CHIP_ACTIVE_CLS : CHIP_IDLE_CLS
             }`}
           >
             筛选
             {badge > 0 && (
-              <span className="tnum rounded-full bg-[var(--accent)]/25 px-1.5 text-[10px]">
+              <span className="tnum rounded-full bg-[var(--accent)]/25 px-1.5 text-micro">
                 {badge}
               </span>
             )}
-            <span className={`text-[9px] opacity-70 transition-transform ${sheetOpen ? "rotate-180" : ""}`}>▾</span>
+            <span className={`text-micro opacity-70 transition-transform ${sheetOpen ? "rotate-180" : ""}`}>▾</span>
           </button>
 
           {sheetOpen && (
@@ -1316,17 +1316,17 @@ function FacetDropdown<T extends string | number>({
         type="button"
         onClick={() => setOpen((v) => !v)}
         aria-expanded={open}
-        className={`flex h-7 items-center gap-1.5 rounded-full border px-3 text-[11px] transition-all ${
+        className={`flex h-7 items-center gap-1.5 rounded-full border px-3 text-caption transition-all ${
           active.size > 0 ? CHIP_ACTIVE_CLS : CHIP_IDLE_CLS
         }`}
       >
         {label}
         {active.size > 0 && (
-          <span className="tnum rounded-full bg-[var(--accent)]/25 px-1.5 text-[10px]">
+          <span className="tnum rounded-full bg-[var(--accent)]/25 px-1.5 text-micro">
             {active.size}
           </span>
         )}
-        <span className={`text-[9px] opacity-70 transition-transform ${open ? "rotate-180" : ""}`}>
+        <span className={`text-micro opacity-70 transition-transform ${open ? "rotate-180" : ""}`}>
           ▾
         </span>
       </button>
@@ -1383,14 +1383,14 @@ function SortDropdown({
       key={o.key}
       type="button"
       onClick={() => pick(o.key)}
-      className={`flex w-full items-center justify-between rounded-lg px-2.5 py-1.5 text-left text-[11px] transition-colors ${
+      className={`flex w-full items-center justify-between rounded-lg px-2.5 py-1.5 text-left text-caption transition-colors ${
         o.key === sort.key
           ? "bg-white/[0.09] text-[var(--text)]"
           : "text-[var(--text-muted)] hover:bg-white/[0.06] hover:text-[var(--text)]"
       }`}
     >
       {o.label}
-      {o.key === sort.key && <span className="text-[12px]">{arrow}</span>}
+      {o.key === sort.key && <span className="text-sub">{arrow}</span>}
     </button>
   );
   return (
@@ -1400,25 +1400,25 @@ function SortDropdown({
         onClick={() => setOpen((v) => !v)}
         aria-expanded={open}
         aria-label={`排序：${label}${sort.dir === "desc" ? "降序" : "升序"}`}
-        className={`flex h-7 items-center gap-1.5 rounded-full border px-3 text-[11px] transition-all ${CHIP_IDLE_CLS}`}
+        className={`flex h-7 items-center gap-1.5 rounded-full border px-3 text-caption transition-all ${CHIP_IDLE_CLS}`}
       >
         {label}
-        <span className="text-[12px]">{arrow}</span>
-        <span className={`text-[9px] opacity-70 transition-transform ${open ? "rotate-180" : ""}`}>
+        <span className="text-sub">{arrow}</span>
+        <span className={`text-micro opacity-70 transition-transform ${open ? "rotate-180" : ""}`}>
           ▾
         </span>
       </button>
       {open && (
         <div className="absolute left-0 top-full z-30 mt-2 w-44 rounded-2xl border border-white/[0.12] bg-[rgba(14,16,22,0.96)] p-1.5 shadow-2xl backdrop-blur-2xl">
-          <p className="px-2.5 pb-1 pt-1.5 text-[10px] text-[var(--text-faint)]">常规</p>
+          <p className="px-2.5 pb-1 pt-1.5 text-micro text-[var(--text-faint)]">常规</p>
           {SORT_OPTIONS.map(item)}
           {smartOptions.length > 0 && (
             <>
-              <p className="px-2.5 pb-1 pt-2 text-[10px] text-[var(--text-faint)]">智能</p>
+              <p className="px-2.5 pb-1 pt-2 text-micro text-[var(--text-faint)]">智能</p>
               {smartOptions.map(item)}
             </>
           )}
-          <p className="border-t border-white/[0.08] px-2.5 pb-1 pt-2 text-[10px] text-[var(--text-faint)]">
+          <p className="border-t border-white/[0.08] px-2.5 pb-1 pt-2 text-micro text-[var(--text-faint)]">
             点击当前项可切换升降序
           </p>
         </div>
@@ -1430,7 +1430,7 @@ function SortDropdown({
 function SheetGroup({ title, children }: { title: string; children: React.ReactNode }) {
   return (
     <div>
-      <p className="mb-1.5 text-[11px] font-medium text-[var(--text-faint)]">{title}</p>
+      <p className="mb-1.5 text-caption font-medium text-[var(--text-faint)]">{title}</p>
       <div className="flex flex-wrap gap-1.5">{children}</div>
     </div>
   );
@@ -1463,10 +1463,10 @@ function FilterSheet({
       <div className="absolute right-0 top-full z-30 mt-2 max-h-[60vh] w-[480px] max-w-[82vw] overflow-y-auto rounded-2xl border border-white/[0.12] bg-[rgba(14,16,22,0.96)] p-4 shadow-2xl backdrop-blur-2xl">
         <div className="mb-4 flex items-center justify-between">
           <div>
-            <p className="text-[13px] font-medium text-[var(--text)]">筛选结果</p>
-            <p className="mt-0.5 text-[11px] text-[var(--text-faint)]">可多选，分类之间组合生效</p>
+            <p className="text-ui font-medium text-[var(--text)]">筛选结果</p>
+            <p className="mt-0.5 text-caption text-[var(--text-faint)]">可多选，分类之间组合生效</p>
           </div>
-          <button type="button" onClick={onClose} className={`grid size-7 place-items-center rounded-full border text-sm ${CHIP_IDLE_CLS}`} aria-label="关闭筛选">
+          <button type="button" onClick={onClose} className={`grid size-7 place-items-center rounded-full border text-body ${CHIP_IDLE_CLS}`} aria-label="关闭筛选">
             ×
           </button>
         </div>
@@ -1595,14 +1595,14 @@ function FilterSheet({
           <button
             type="button"
             onClick={() => onChange(emptyFilters())}
-            className="btn-glass h-8 px-3 text-[11px] text-[var(--text-muted)]"
+            className="btn-glass h-8 px-3 text-caption text-[var(--text-muted)]"
           >
             清除全部
           </button>
           <button
             type="button"
             onClick={onClose}
-            className="btn-accent h-8 rounded-full px-4 text-[11px] font-medium"
+            className="btn-accent h-8 rounded-full px-4 text-caption font-medium"
           >
             查看 {resultCount} 条结果
           </button>
@@ -1640,7 +1640,7 @@ function AppliedChips({
 
   return (
     <div className="mt-2 flex flex-wrap items-center gap-1.5 px-1">
-      <span className="text-[11px] text-[var(--text-faint)]">生效条件</span>
+      <span className="text-caption text-[var(--text-faint)]">生效条件</span>
       {chips.map(({ key, value }) => (
         <button
           key={`${key}:${value}`}
@@ -1648,7 +1648,7 @@ function AppliedChips({
           onClick={() =>
             onChange({ ...filters, [key]: toggleIn(filters[key] as Set<string | number>, value) })
           }
-          className={`group flex h-6 items-center gap-1 rounded-full border px-2 text-[11px] transition-all hover:bg-white/[0.2] ${CHIP_ACTIVE_CLS}`}
+          className={`group flex h-6 items-center gap-1 rounded-full border px-2 text-caption transition-all hover:bg-white/[0.2] ${CHIP_ACTIVE_CLS}`}
         >
           {labelOf(key, value)}
           <span className="opacity-60 transition-opacity group-hover:opacity-100">×</span>
@@ -1657,7 +1657,7 @@ function AppliedChips({
       <button
         type="button"
         onClick={() => onChange(emptyFilters())}
-        className="ml-1 text-[11px] text-[var(--text-faint)] transition-colors hover:text-[var(--text)]"
+        className="ml-1 text-caption text-[var(--text-faint)] transition-colors hover:text-[var(--text)]"
       >
         清除全部
       </button>
@@ -1704,7 +1704,7 @@ function SiteStatusSummary({
         onClick={() => setOpen((v) => !v)}
         aria-expanded={open}
         title="查看各站点的搜索详情"
-        className="flex items-center gap-1.5 rounded-full border border-white/[0.12] bg-white/[0.05] px-2.5 py-1 text-[11px] text-[var(--text-muted)] backdrop-blur-sm transition-colors hover:border-white/[0.22] hover:text-[var(--text)]"
+        className="flex items-center gap-1.5 rounded-full border border-white/[0.12] bg-white/[0.05] px-2.5 py-1 text-caption text-[var(--text-muted)] backdrop-blur-sm transition-colors hover:border-white/[0.22] hover:text-[var(--text)]"
       >
         <span className={`size-1.5 rounded-full ${dotCls}`} />
         {streaming ? (
@@ -1717,7 +1717,7 @@ function SiteStatusSummary({
             )}
           </>
         )}
-        <span className="text-[9px] opacity-70">▾</span>
+        <span className="text-micro opacity-70">▾</span>
       </button>
 
       {open && (
@@ -1738,17 +1738,17 @@ function SiteStatusSummary({
                             : "bg-[#4ade80]"
                       }`}
                     />
-                    <span className="min-w-0 flex-1 truncate text-[12px] text-[var(--text)]">
+                    <span className="min-w-0 flex-1 truncate text-sub text-[var(--text)]">
                       {s.site_name}
                     </span>
                     {/* 右侧固定：状态 + 条数/耗时。失败也带耗时——超时一眼可辨 */}
                     {s.phase === "searching" && (
-                      <span className="shrink-0 text-[11px] text-[var(--text-faint)]">
+                      <span className="shrink-0 text-caption text-[var(--text-faint)]">
                         搜索中…
                       </span>
                     )}
                     {s.phase === "ok" && (
-                      <span className="tnum shrink-0 text-[11px] text-[var(--text-muted)]">
+                      <span className="tnum shrink-0 text-caption text-[var(--text-muted)]">
                         {s.count} 条
                         {s.elapsed_ms !== null && (
                           <span className="text-[var(--text-faint)]">
@@ -1758,7 +1758,7 @@ function SiteStatusSummary({
                       </span>
                     )}
                     {s.phase === "error" && (
-                      <span className="tnum shrink-0 text-[11px] text-[#ff9a9a]">
+                      <span className="tnum shrink-0 text-caption text-[#ff9a9a]">
                         失败
                         {s.elapsed_ms !== null && (
                           <span className="opacity-75"> · {formatElapsed(s.elapsed_ms)}</span>
@@ -1770,7 +1770,7 @@ function SiteStatusSummary({
                   {s.phase === "error" && s.error && (
                     <p
                       title={s.error}
-                      className="mt-0.5 line-clamp-2 pl-3.5 text-[11px] leading-4 text-[#ff9a9a]/80"
+                      className="mt-0.5 line-clamp-2 pl-3.5 text-caption leading-4 text-[#ff9a9a]/80"
                     >
                       {s.error}
                     </p>
@@ -1780,7 +1780,7 @@ function SiteStatusSummary({
             </ul>
             {/* 汇总行：整次搜索的总耗时（≈ 最慢站点耗时）；快照回放同样有值 */}
             {totalElapsedMs !== null && (
-              <div className="mt-1 border-t border-white/[0.08] px-2 pb-0.5 pt-1.5 text-[11px] text-[var(--text-faint)]">
+              <div className="mt-1 border-t border-white/[0.08] px-2 pb-0.5 pt-1.5 text-caption text-[var(--text-faint)]">
                 总耗时 {formatElapsed(totalElapsedMs)}
                 <span className="opacity-70">（以最慢的站点为准）</span>
               </div>
@@ -1819,7 +1819,7 @@ function PosterResults({ hits }: { hits: TorrentHit[] }) {
       {withoutPoster.length > 0 && (
         <div>
           {withPoster.length > 0 && (
-            <p className="text-on-image mb-2 text-[11px] text-[rgba(243,245,249,0.7)]">
+            <p className="text-on-image mb-2 text-caption text-[rgba(243,245,249,0.7)]">
               以下 {withoutPoster.length} 条结果没有海报，按列表展示
             </p>
           )}
@@ -1911,7 +1911,7 @@ const TorrentPosterCard = memo(function TorrentPosterCard({ hit }: { hit: Torren
           fallback={
             // 占位：海报缺失/加载失败时的深色底 + 居中站点名
             <div className="absolute inset-0 flex items-center justify-center bg-gradient-to-b from-white/[0.05] to-black/40">
-              <span className="px-3 text-center text-[11px] text-[var(--text-faint)]">
+              <span className="px-3 text-center text-caption text-[var(--text-faint)]">
                 {hit.site_name}
               </span>
             </div>
@@ -1924,7 +1924,7 @@ const TorrentPosterCard = memo(function TorrentPosterCard({ hit }: { hit: Torren
             {posterPromoBadges(hit).map((b) => (
               <span
                 key={b.text}
-                className={`rounded-md px-1.5 py-0.5 text-[10px] font-semibold ${b.cls}`}
+                className={`rounded-md px-1.5 py-0.5 text-micro font-semibold ${b.cls}`}
               >
                 {b.text}
               </span>
@@ -1933,7 +1933,7 @@ const TorrentPosterCard = memo(function TorrentPosterCard({ hit }: { hit: Torren
           {/* 张数常显（含 1 张）：点开前就知道里面有几张图，只有一张时不必特意点开 */}
           <span
             title={`共 ${gallery.length} 张图片，点击卡片浏览`}
-            className="tnum flex shrink-0 items-center gap-1 rounded-md bg-black/70 px-1.5 py-0.5 text-[10px] font-medium text-white/85"
+            className="tnum flex shrink-0 items-center gap-1 rounded-md bg-black/70 px-1.5 py-0.5 text-micro font-medium text-white/85"
           >
             <PhotoIcon className="size-3" />
             {gallery.length}
@@ -1941,20 +1941,20 @@ const TorrentPosterCard = memo(function TorrentPosterCard({ hit }: { hit: Torren
         </div>
         {/* 底部渐变 + 标题/元信息 */}
         <div className="pointer-events-none absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/85 via-black/45 to-transparent px-2.5 pb-2 pt-8">
-          <p className="line-clamp-2 text-[12px] font-medium leading-4 text-white">
+          <p className="line-clamp-2 text-sub font-medium leading-4 text-white">
             {name ? name.primary : hit.title}
             {name && hit.attrs?.year != null && (
               <span className="tnum ml-1.5 font-normal text-white/60">{hit.attrs.year}</span>
             )}
           </p>
-          <p className="tnum mt-1 text-[10px] text-white/70">
+          <p className="tnum mt-1 text-micro text-white/70">
             {size && <span className="mr-2">{size}</span>}
             <span className="text-[#a7d9b6]">↑{hit.seeders}</span>
             <span className="ml-1.5 text-[#e0c19f]">↓{hit.leechers}</span>
           </p>
           {/* 来源站点 + 发布时间：都是次要信息，同一行弱化展示。时间相对展示，
               与列表模式统一（父级 pointer-events-none 让精确时刻的 title 失效）。 */}
-          <p className="mt-0.5 flex items-center gap-1.5 text-[10px] text-white/50">
+          <p className="mt-0.5 flex items-center gap-1.5 text-micro text-white/50">
             <span className="min-w-0 truncate">{hit.site_name}</span>
             {hit.upload_time && (
               <>
@@ -1976,14 +1976,14 @@ const TorrentPosterCard = memo(function TorrentPosterCard({ hit }: { hit: Torren
                 target="_blank"
                 rel="noreferrer"
                 onClick={(e) => e.stopPropagation()}
-                className="rounded-lg border border-white/40 bg-black/40 px-2.5 py-1 text-[11px] text-white backdrop-blur-sm transition-colors hover:bg-black/60"
+                className="rounded-lg border border-white/40 bg-black/40 px-2.5 py-1 text-caption text-white backdrop-blur-sm transition-colors hover:bg-black/60"
               >
                 详情
               </a>
             )}
             <DownloadButton
               hit={hit}
-              className="btn-accent rounded-lg px-2.5 py-1 text-[11px] font-medium"
+              className="btn-accent rounded-lg px-2.5 py-1 text-caption font-medium"
             />
           </div>
         )}
@@ -2153,7 +2153,7 @@ const TorrentRow = memo(function TorrentRow({
           {asSpecRow ? (
             <p
               title={rawTitleTooltip(hit)}
-              className="truncate text-[13px] font-medium leading-5 text-[var(--text)]"
+              className="truncate text-ui font-medium leading-5 text-[var(--text)]"
             >
               {spec ?? hit.title}
             </p>
@@ -2161,39 +2161,39 @@ const TorrentRow = memo(function TorrentRow({
             // 解析出片名：标题行 = 主名 + 外文名 + 年份，原始种子名/副标题收进悬停提示
             <p
               title={rawTitleTooltip(hit)}
-              className="truncate text-[13.5px] font-medium leading-5 text-[var(--text)]"
+              className="truncate text-ui font-medium leading-5 text-[var(--text)]"
             >
               {name.primary}
               {name.secondary && (
-                <span className="ml-2 text-[12px] font-normal text-[var(--text-muted)]">
+                <span className="ml-2 text-sub font-normal text-[var(--text-muted)]">
                   {name.secondary}
                 </span>
               )}
               {hit.attrs?.year != null && (
-                <span className="tnum ml-2 text-[12px] font-normal text-[var(--text-faint)]">
+                <span className="tnum ml-2 text-sub font-normal text-[var(--text-faint)]">
                   {hit.attrs.year}
                 </span>
               )}
             </p>
           ) : (
-            <p className="truncate text-[13.5px] font-medium leading-5 text-[var(--text)]">
+            <p className="truncate text-ui font-medium leading-5 text-[var(--text)]">
               {hit.title}
             </p>
           )}
           {((!name && hit.subtitle) || hit.site_category_name) && (
-            <p className="mt-0.5 flex items-baseline gap-2 text-[12px] text-[var(--text-muted)]">
+            <p className="mt-0.5 flex items-baseline gap-2 text-sub text-[var(--text-muted)]">
               {!name && hit.subtitle && (
                 <span className="min-w-0 truncate">{hit.subtitle}</span>
               )}
               {hit.site_category_name && (
-                <span className="shrink-0 text-[11px] text-[var(--text-faint)]">
+                <span className="shrink-0 text-caption text-[var(--text-faint)]">
                   {hit.site_category_name}
                 </span>
               )}
             </p>
           )}
           <div className="mt-2 flex flex-wrap items-center gap-1.5">
-            <span className="shrink-0 rounded-md bg-white/[0.06] px-1.5 py-0.5 text-[10px] font-medium text-[var(--accent-2)]">
+            <span className="shrink-0 rounded-md bg-white/[0.06] px-1.5 py-0.5 text-micro font-medium text-[var(--accent-2)]">
               {hit.site_name}
             </span>
             {/* 全集徽标紧跟站点：属于资源身份而非促销，任何行模式都展示 */}
@@ -2205,7 +2205,7 @@ const TorrentRow = memo(function TorrentRow({
         </div>
 
         {/* 固定指标列带短标签，数值的含义无需靠图标猜测，跨行仍可垂直比较。 */}
-        <div className="tnum hidden shrink-0 grid-cols-[70px_78px_78px] gap-x-3 text-right text-[11px] lg:grid">
+        <div className="tnum hidden shrink-0 grid-cols-[70px_78px_78px] gap-x-3 text-right text-caption lg:grid">
           <Metric label="大小" value={size || "—"} />
           <Metric label="做种 / 下载" value={<><span className={seederTone(hit.seeders)}>{hit.seeders}</span><span className="text-[var(--text-faint)]"> / {hit.leechers}</span></>} />
           <Metric
@@ -2225,14 +2225,14 @@ const TorrentRow = memo(function TorrentRow({
                 href={hit.detail_url}
                 target="_blank"
                 rel="noreferrer"
-                className="btn-glass h-7 px-3 text-[11px] text-[var(--text-muted)]"
+                className="btn-glass h-7 px-3 text-caption text-[var(--text-muted)]"
               >
                 详情
               </a>
             )}
             <DownloadButton
               hit={hit}
-              className="btn-accent flex h-7 items-center rounded-full px-3 text-[11px] font-medium"
+              className="btn-accent flex h-7 items-center rounded-full px-3 text-caption font-medium"
             />
           </div>
         )}
@@ -2253,7 +2253,7 @@ function Metric({
 }) {
   return (
     <span title={title} className="flex min-w-0 flex-col gap-0.5">
-      <span className="truncate text-[9px] text-[var(--text-faint)]">{label}</span>
+      <span className="truncate text-micro text-[var(--text-faint)]">{label}</span>
       <span className="truncate text-[var(--text-muted)]">{value}</span>
     </span>
   );
@@ -2284,7 +2284,7 @@ function PromoBadges({ hit }: { hit: TorrentHit }) {
       {badges.map((b) => (
         <span
           key={b.text}
-          className={`rounded-md px-1.5 py-0.5 text-[10px] font-semibold ${b.cls}`}
+          className={`rounded-md px-1.5 py-0.5 text-micro font-semibold ${b.cls}`}
         >
           {b.text}
         </span>
@@ -2336,7 +2336,7 @@ function AttrBadges({ attrs }: { attrs: TorrentAttrs }) {
       {shown.map((c) => (
         <span
           key={c.text}
-          className={`rounded-md bg-white/[0.05] px-1.5 py-0.5 text-[10px] ${c.cls ?? "text-[var(--text-muted)]"}`}
+          className={`rounded-md bg-white/[0.05] px-1.5 py-0.5 text-micro ${c.cls ?? "text-[var(--text-muted)]"}`}
         >
           {c.text}
         </span>
@@ -2344,7 +2344,7 @@ function AttrBadges({ attrs }: { attrs: TorrentAttrs }) {
       {folded.length > 0 && (
         <span
           title={folded.map((c) => c.text).join(" · ")}
-          className="tnum cursor-default rounded-md bg-white/[0.05] px-1.5 py-0.5 text-[10px] text-[var(--text-faint)]"
+          className="tnum cursor-default rounded-md bg-white/[0.05] px-1.5 py-0.5 text-micro text-[var(--text-faint)]"
         >
           +{folded.length}
         </span>
@@ -2388,7 +2388,7 @@ function completeLabel(attrs: TorrentAttrs | null): string | null {
 
 /** 全集徽标的统一样式（列表/分组/组头）；海报卡用实底变体叠图可读。 */
 const COMPLETE_BADGE_CLS =
-  "rounded-md bg-gradient-to-r from-[#4f8cff]/25 to-[#9d6bff]/25 px-1.5 py-0.5 text-[10px] font-semibold text-[#b9d4ff] ring-1 ring-inset ring-[#6aa7ff]/35";
+  "rounded-md bg-gradient-to-r from-[#4f8cff]/25 to-[#9d6bff]/25 px-1.5 py-0.5 text-micro font-semibold text-[#b9d4ff] ring-1 ring-inset ring-[#6aa7ff]/35";
 
 /* —— 占位 / 空态 —— */
 
@@ -2423,7 +2423,7 @@ const SKELETON_TITLE_WIDTHS = ["72%", "58%", "80%", "64%", "70%", "52%"];
 function SkeletonList({ siteCount }: { siteCount: number }) {
   return (
     <div>
-      <div className="text-on-image flex items-center gap-2 px-1 pb-3 text-[12.5px] text-[rgba(243,245,249,0.8)]">
+      <div className="text-on-image flex items-center gap-2 px-1 pb-3 text-sub text-[rgba(243,245,249,0.8)]">
         <svg
           viewBox="0 0 24 24"
           className="size-3.5 animate-spin text-[var(--accent)]"
@@ -2471,8 +2471,8 @@ function SkeletonList({ siteCount }: { siteCount: number }) {
 function EmptyHint({ title, hint }: { title: string; hint: string }) {
   return (
     <div className="flex min-h-[240px] flex-col items-center justify-center text-center">
-      <p className="text-on-image text-[15px] font-medium text-white">{title}</p>
-      <p className="text-on-image mt-1.5 max-w-sm text-[13px] leading-6 text-[rgba(243,245,249,0.82)]">
+      <p className="text-on-image text-body-lg font-medium text-white">{title}</p>
+      <p className="text-on-image mt-1.5 max-w-sm text-ui leading-6 text-[rgba(243,245,249,0.82)]">
         {hint}
       </p>
     </div>

@@ -80,7 +80,7 @@ export function Tooltip({
           >
             <div
               style={transitionStyles}
-              className="select-text rounded-xl border border-white/[0.12] bg-[rgba(16,18,26,0.97)] px-3.5 py-2.5 text-[12px] leading-relaxed text-[var(--text)] shadow-2xl backdrop-blur-2xl"
+              className="select-text rounded-xl border border-white/[0.12] bg-[rgba(16,18,26,0.97)] px-3.5 py-2.5 text-sub leading-relaxed text-[var(--text)] shadow-2xl backdrop-blur-2xl"
             >
               <FloatingArrow
                 ref={arrowRef}

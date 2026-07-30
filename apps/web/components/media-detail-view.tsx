@@ -212,7 +212,7 @@ export function MediaDetailView({
         </div>
 
         <div className="min-w-0 flex-1 pb-1">
-          <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-[var(--accent-2)]">
+          <p className="text-caption font-semibold uppercase tracking-[0.22em] text-[var(--accent-2)]">
             {source === "douban" ? "豆瓣" : "TMDB"} · {isMovie ? "电影" : "剧集"}
             {item.genres.length > 0 ? ` · ${item.genres.join(" / ")}` : ""}
           </p>
@@ -222,19 +222,19 @@ export function MediaDetailView({
           {/* 原名：与中文标题相同就不渲染——国产片在 TMDB 的 original_title
               往往就是中文名本身，照原样渲染会在标题下面重复一行 */}
           {item.originalTitle && item.originalTitle !== item.title && (
-            <p className="text-on-image mt-1.5 truncate text-[14px] text-white/55 max-md:mt-0.5 max-md:text-[12px]">
+            <p className="text-on-image mt-1.5 truncate text-body text-white/55 max-md:mt-0.5 max-md:text-sub">
               {item.originalTitle}
             </p>
           )}
 
           {/* 元信息行：评分 / 年份 / 规模 / 质量徽章 */}
-          <div className="tnum mt-3.5 flex flex-wrap items-center gap-x-3.5 gap-y-2 text-[13px] text-white/80 max-md:mt-2 max-md:gap-x-2.5 max-md:gap-y-1 max-md:text-[12px]">
+          <div className="tnum mt-3.5 flex flex-wrap items-center gap-x-3.5 gap-y-2 text-ui text-white/80 max-md:mt-2 max-md:gap-x-2.5 max-md:gap-y-1 max-md:text-sub">
             {/* 评分 0 = 数据源暂无评分（新片/小众条目），不能照原样渲染成「0.0」
                 ——那读起来是「烂到 0 分」。海报卡片与条目详情页都是这个口径 */}
             {item.rating > 0 && (
               <span className="flex items-center gap-1.5">
                 <StarIcon className="size-4 text-[#f5c451]" />
-                <span className="text-[16px] font-bold text-white">{item.rating.toFixed(1)}</span>
+                <span className="text-title-sm font-bold text-white">{item.rating.toFixed(1)}</span>
               </span>
             )}
             {!!item.year && <span>{item.year}</span>}
@@ -249,7 +249,7 @@ export function MediaDetailView({
                 {item.badges.map((b) => (
                   <span
                     key={b}
-                    className="rounded border border-white/25 px-1.5 py-px text-[10px] font-semibold tracking-wide text-white/85"
+                    className="rounded border border-white/25 px-1.5 py-px text-micro font-semibold tracking-wide text-white/85"
                   >
                     {b}
                   </span>
@@ -276,7 +276,7 @@ export function MediaDetailView({
               <button
                 type="button"
                 onClick={openSubscribe}
-                className="btn-glass flex h-10 items-center gap-2 bg-white/10 px-5 text-[13px] font-medium backdrop-blur-md transition hover:bg-white/15"
+                className="btn-glass flex h-10 items-center gap-2 bg-white/10 px-5 text-ui font-medium backdrop-blur-md transition hover:bg-white/15"
               >
                 <CheckIcon
                   className="size-4"
@@ -288,14 +288,14 @@ export function MediaDetailView({
               <button
                 type="button"
                 onClick={openSubscribe}
-                className="btn-accent flex h-10 items-center gap-2 rounded-full px-5 text-[13px] font-semibold"
+                className="btn-accent flex h-10 items-center gap-2 rounded-full px-5 text-ui font-semibold"
               >
                 <BellIcon className="size-4" />
                 订阅追踪
               </button>
             )}
             {sub && (
-              <span className="text-on-image flex items-center gap-1.5 text-[12.5px] text-[var(--text-muted)]">
+              <span className="text-on-image flex items-center gap-1.5 text-sub text-[var(--text-muted)]">
                 <span
                   className="size-1.5 rounded-full"
                   style={{ backgroundColor: subscriptionStatusMeta[sub.status].color }}
@@ -318,10 +318,10 @@ export function MediaDetailView({
       <div className="mt-9 space-y-8 px-12 max-md:mt-6 max-md:space-y-6 max-md:px-4">
         {item.overview && (
           <section>
-            <h2 className="text-on-image mb-3 text-[15px] font-semibold tracking-[-0.01em] text-[var(--text)]">
+            <h2 className="text-on-image mb-3 text-body-lg font-semibold tracking-[-0.01em] text-[var(--text)]">
               剧情简介
             </h2>
-            <p className="text-on-image max-w-3xl text-[14px] leading-7 text-white/78">
+            <p className="text-on-image max-w-3xl text-body leading-7 text-white/78">
               {item.overview}
             </p>
           </section>
@@ -334,7 +334,7 @@ export function MediaDetailView({
             很容易落到「每一格都是空」的状态，那时候留下的是一个空玻璃盒子 */}
         {hasFacts && info && (
           <section>
-            <h2 className="text-on-image mb-3 text-[15px] font-semibold tracking-[-0.01em] text-[var(--text)]">
+            <h2 className="text-on-image mb-3 text-body-lg font-semibold tracking-[-0.01em] text-[var(--text)]">
               词条信息
             </h2>
             <div className="rounded-2xl border border-white/[0.07] bg-[rgba(14,16,22,0.45)] p-6 backdrop-blur-xl max-md:p-4">
@@ -390,7 +390,7 @@ function SourceLink({ href, label }: { href: string; label: string }) {
       href={href}
       target="_blank"
       rel="noreferrer"
-      className="text-[12px] text-[var(--text-faint)] underline-offset-4 transition-colors hover:text-[var(--text)] hover:underline"
+      className="text-sub text-[var(--text-faint)] underline-offset-4 transition-colors hover:text-[var(--text)] hover:underline"
     >
       {label} ↗
     </a>
@@ -495,7 +495,7 @@ function PhotoWall({
   return (
     <section className="group/photos">
       <div className="mb-3 flex items-center gap-3">
-        <h2 className="text-on-image text-[15px] font-semibold tracking-[-0.01em] text-[var(--text)]">
+        <h2 className="text-on-image text-body-lg font-semibold tracking-[-0.01em] text-[var(--text)]">
           剧照与海报
         </h2>
         {tabs.length > 1 && (
@@ -506,7 +506,7 @@ function PhotoWall({
                 type="button"
                 aria-pressed={tab.id === activeId}
                 onClick={() => switchTab(tab.id)}
-                className={`tnum rounded-full px-3 py-1 text-[12px] font-medium transition-colors ${
+                className={`tnum rounded-full px-3 py-1 text-sub font-medium transition-colors ${
                   tab.id === activeId
                     ? "bg-white/[0.14] text-white"
                     : "text-[var(--text-muted)] hover:bg-white/[0.07] hover:text-[var(--text)]"
@@ -603,21 +603,21 @@ function DetailFallback({ failed, onBack }: { failed: boolean; onBack: () => voi
     <div className="ambient-fallback flex flex-1 flex-col items-center justify-center gap-4 px-6 text-center">
       {failed ? (
         <>
-          <p className="text-[15px] font-semibold text-[var(--text)]">未能加载该影片详情</p>
-          <p className="max-w-sm text-[13px] leading-6 text-[var(--text-muted)]">
+          <p className="text-body-lg font-semibold text-[var(--text)]">未能加载该影片详情</p>
+          <p className="max-w-sm text-ui leading-6 text-[var(--text-muted)]">
             资源可能已下线，或网络暂时不可达。请返回后重试。
           </p>
           <button
             type="button"
             onClick={onBack}
-            className="btn-glass px-4 py-2 text-[13px] font-medium text-[var(--text)]"
+            className="btn-glass px-4 py-2 text-ui font-medium text-[var(--text)]"
           >
             <ArrowLeftIcon className="size-4" />
             返回
           </button>
         </>
       ) : (
-        <div className="flex items-center gap-2.5 text-[13px] text-[var(--text-muted)]">
+        <div className="flex items-center gap-2.5 text-ui text-[var(--text-muted)]">
           <span className="size-4 animate-spin rounded-full border-2 border-white/20 border-t-white/70" />
           正在加载详情…
         </div>
@@ -630,8 +630,8 @@ function DetailFallback({ failed, onBack }: { failed: boolean; onBack: () => voi
 function Fact({ label, value }: { label: string; value: string }) {
   return (
     <div>
-      <dt className="text-[12px] text-[var(--text-faint)]">{label}</dt>
-      <dd className="mt-1 text-[13.5px] leading-6 text-[var(--text)]">{value}</dd>
+      <dt className="text-sub text-[var(--text-faint)]">{label}</dt>
+      <dd className="mt-1 text-ui leading-6 text-[var(--text)]">{value}</dd>
     </div>
   );
 }

@@ -5,7 +5,7 @@ import { initialsOf } from "@/lib/session";
 /**
  * 用户头像徽标：上传过头像显示图片（圆形裁切），否则回退到昵称首字的银色徽标。
  * 用户菜单、设置页个人信息等所有展示头像处共用本组件，保证换头像后观感一致。
- * 尺寸与字号由调用方通过 className 指定（如 "size-9 text-[13px]"）。
+ * 尺寸与字号由调用方通过 className 指定（如 "size-9 text-ui"）。
  */
 export function AvatarBadge({
   nickname,

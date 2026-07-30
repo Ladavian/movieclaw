@@ -93,7 +93,7 @@ export default function LoginPage() {
           onChange={(e) => setPassword(e.target.value)}
           autoComplete="current-password"
         />
-        <label className="flex cursor-pointer items-center gap-2 text-[12px] text-[var(--text-muted)]">
+        <label className="flex cursor-pointer items-center gap-2 text-sub text-[var(--text-muted)]">
           <input
             type="checkbox"
             checked={remember}
@@ -106,7 +106,7 @@ export default function LoginPage() {
         <button
           type="submit"
           disabled={busy || !username.trim() || !password}
-          className="btn-accent w-full rounded-full px-4.5 py-2.5 text-[13px] font-semibold disabled:opacity-40"
+          className="btn-accent w-full rounded-full px-4.5 py-2.5 text-ui font-semibold disabled:opacity-40"
         >
           {busy ? "登录中…" : "登录"}
         </button>

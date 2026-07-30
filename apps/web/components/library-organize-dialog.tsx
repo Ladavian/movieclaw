@@ -167,13 +167,13 @@ export function LibraryOrganizeDialog({
         {/* —— 头部 —— */}
         <div className="flex items-start justify-between gap-3 border-b border-white/[0.08] px-6 pb-4 pt-5">
           <div className="min-w-0">
-            <h2 className="text-[17px] font-bold text-white">
+            <h2 className="text-title font-bold text-white">
               整理文件名
-              <span className="ml-2 text-[13px] font-normal text-[var(--text-muted)]">
+              <span className="ml-2 text-ui font-normal text-[var(--text-muted)]">
                 {library.name}
               </span>
             </h2>
-            <p className="mt-1 text-[12px] leading-5 text-[var(--text-muted)]">
+            <p className="mt-1 text-sub leading-5 text-[var(--text-muted)]">
               按刮削结果把存量文件改名归位为「标题 (年份){library.kind === "tv" ? "/Season NN" : ""}
               /规范文件名」，Plex / Emby 零歧义识别；字幕等附属文件同步改名。
             </p>
@@ -192,15 +192,15 @@ export function LibraryOrganizeDialog({
         {phase === "loading" && (
           <div className="flex flex-col items-center gap-3 px-6 py-16">
             <span className="size-5 animate-spin rounded-full border-2 border-white/20 border-t-white/70" />
-            <p className="text-[13px] text-[var(--text-muted)]">
+            <p className="text-ui text-[var(--text-muted)]">
               正在核对台账与磁盘，生成整理预览…
             </p>
           </div>
         )}
         {phase === "failed" && (
           <div className="flex flex-col items-center gap-4 px-6 py-14">
-            <p className="max-w-md text-center text-[13px] leading-6 text-red-200">{error}</p>
-            <button type="button" onClick={onClose} className="btn-glass px-4 py-2 text-[13px] font-medium">
+            <p className="max-w-md text-center text-ui leading-6 text-red-200">{error}</p>
+            <button type="button" onClick={onClose} className="btn-glass px-4 py-2 text-ui font-medium">
               关闭
             </button>
           </div>
@@ -226,10 +226,10 @@ export function LibraryOrganizeDialog({
               </div>
 
               {renameCount === 0 ? (
-                <p className="rounded-xl bg-white/[0.03] px-4 py-8 text-center text-[13.5px] leading-7 text-[var(--text-muted)]">
+                <p className="rounded-xl bg-white/[0.03] px-4 py-8 text-center text-ui leading-7 text-[var(--text-muted)]">
                   这个库已经很规整了，没有需要改名的文件 🎉
                   {preview.skips.length > 0 && (
-                    <span className="block text-[12px] text-[var(--text-faint)]">
+                    <span className="block text-sub text-[var(--text-faint)]">
                       （{preview.skips.length} 个文件因下方原因未参与整理）
                     </span>
                   )}
@@ -238,8 +238,8 @@ export function LibraryOrganizeDialog({
                 <>
                   {/* 风险告知：批量改名是半不可逆操作，三条风险必须看到 */}
                   <div className="rounded-xl border border-[#f5c451]/30 bg-[#f5c451]/[0.08] px-4 py-3">
-                    <p className="text-[12.5px] font-semibold text-[#f5c451]">开始前请确认</p>
-                    <ul className="mt-1.5 list-disc space-y-1 pl-4 text-[12px] leading-5 text-[#f5c451]/85">
+                    <p className="text-sub font-semibold text-[#f5c451]">开始前请确认</p>
+                    <ul className="mt-1.5 list-disc space-y-1 pl-4 text-sub leading-5 text-[#f5c451]/85">
                       <li>
                         改名直接发生在磁盘上，<strong>无法一键撤销</strong>；下方清单就是将要发生的全部变更。
                       </li>
@@ -257,7 +257,7 @@ export function LibraryOrganizeDialog({
                   <div className="space-y-3">
                     {groups.map((group) => (
                       <div key={`${group.title}-${group.year}`} className="rounded-xl bg-white/[0.03]">
-                        <p className="border-b border-white/[0.06] px-3.5 py-2 text-[12.5px] font-semibold text-white/85">
+                        <p className="border-b border-white/[0.06] px-3.5 py-2 text-sub font-semibold text-white/85">
                           {group.title}
                           {group.year ? ` (${group.year})` : ""}
                           <span className="ml-2 font-normal text-[var(--text-faint)]">
@@ -268,23 +268,23 @@ export function LibraryOrganizeDialog({
                           {group.actions.map((action) => (
                             <div key={action.file_id} className="py-2">
                               <p
-                                className="truncate font-mono text-[11px] text-[var(--text-faint)] line-through decoration-white/25"
+                                className="truncate font-mono text-caption text-[var(--text-faint)] line-through decoration-white/25"
                                 title={action.source_path}
                               >
                                 {action.source_rel}
                               </p>
                               <p
-                                className="mt-0.5 flex items-center gap-1 font-mono text-[11.5px] text-white/90"
+                                className="mt-0.5 flex items-center gap-1 font-mono text-caption text-white/90"
                                 title={action.target_path}
                               >
                                 <ChevronRightIcon className="size-3 shrink-0 text-[var(--accent)]" />
                                 <span className="truncate">{action.target_rel}</span>
-                                <span className="ml-auto shrink-0 pl-2 font-sans text-[10.5px] text-[var(--text-faint)]">
+                                <span className="ml-auto shrink-0 pl-2 font-sans text-micro text-[var(--text-faint)]">
                                   {formatBytes(action.size_bytes)}
                                 </span>
                               </p>
                               {action.sidecars.length > 0 && (
-                                <p className="mt-0.5 pl-4 text-[10.5px] text-[var(--text-faint)]">
+                                <p className="mt-0.5 pl-4 text-micro text-[var(--text-faint)]">
                                   +{action.sidecars.length} 个附属文件（字幕等）同步改名
                                 </p>
                               )}
@@ -303,7 +303,7 @@ export function LibraryOrganizeDialog({
                   <button
                     type="button"
                     onClick={() => setShowSkips((v) => !v)}
-                    className="flex w-full items-center gap-1.5 px-3.5 py-2.5 text-left text-[12.5px] font-medium text-[var(--text-muted)] transition hover:text-white"
+                    className="flex w-full items-center gap-1.5 px-3.5 py-2.5 text-left text-sub font-medium text-[var(--text-muted)] transition hover:text-white"
                   >
                     <ChevronRightIcon
                       className={`size-3.5 transition-transform ${showSkips ? "rotate-90" : ""}`}
@@ -315,12 +315,12 @@ export function LibraryOrganizeDialog({
                       {preview.skips.map((skip) => (
                         <div key={skip.file_path} className="py-2">
                           <p
-                            className="truncate font-mono text-[11px] text-[var(--text-faint)]"
+                            className="truncate font-mono text-caption text-[var(--text-faint)]"
                             title={skip.file_path}
                           >
                             {skip.file_path}
                           </p>
-                          <p className="mt-0.5 text-[11.5px] text-[#f5c451]/80">{skip.reason}</p>
+                          <p className="mt-0.5 text-caption text-[#f5c451]/80">{skip.reason}</p>
                         </div>
                       ))}
                     </div>
@@ -332,13 +332,13 @@ export function LibraryOrganizeDialog({
             {/* —— 确认区 —— */}
             <div className="border-t border-white/[0.08] px-6 py-4">
               {error && (
-                <p className="mb-3 rounded-lg border border-red-400/25 bg-red-500/10 px-3.5 py-2 text-[12.5px] text-red-200">
+                <p className="mb-3 rounded-lg border border-red-400/25 bg-red-500/10 px-3.5 py-2 text-sub text-red-200">
                   {error}
                 </p>
               )}
               {renameCount > 0 ? (
                 <div className="flex flex-wrap items-center justify-between gap-3">
-                  <label className="flex cursor-pointer select-none items-center gap-2 text-[12.5px] text-[var(--text-muted)]">
+                  <label className="flex cursor-pointer select-none items-center gap-2 text-sub text-[var(--text-muted)]">
                     <input
                       type="checkbox"
                       checked={agreed}
@@ -348,14 +348,14 @@ export function LibraryOrganizeDialog({
                     我已核对清单并了解上述风险
                   </label>
                   <div className="flex items-center gap-3">
-                    <button type="button" onClick={onClose} className="btn-glass h-9 px-4 text-[13px] font-medium">
+                    <button type="button" onClick={onClose} className="btn-glass h-9 px-4 text-ui font-medium">
                       取消
                     </button>
                     <button
                       type="button"
                       disabled={!agreed}
                       onClick={start}
-                      className="btn-accent h-9 rounded-full px-5 text-[13px] font-semibold disabled:opacity-40"
+                      className="btn-accent h-9 rounded-full px-5 text-ui font-semibold disabled:opacity-40"
                     >
                       开始整理 {renameCount} 个文件
                     </button>
@@ -363,7 +363,7 @@ export function LibraryOrganizeDialog({
                 </div>
               ) : (
                 <div className="flex justify-end">
-                  <button type="button" onClick={onClose} className="btn-glass h-9 px-4 text-[13px] font-medium">
+                  <button type="button" onClick={onClose} className="btn-glass h-9 px-4 text-ui font-medium">
                     关闭
                   </button>
                 </div>
@@ -381,13 +381,13 @@ export function LibraryOrganizeDialog({
                 style={{ width: `${pct ?? 8}%` }}
               />
             </div>
-            <p className="text-[13.5px] font-medium text-white">
+            <p className="text-ui font-medium text-white">
               正在整理…
               {progress && progress.total > 0
                 ? ` ${progress.processed} / ${progress.total}`
                 : ""}
             </p>
-            <p className="text-center text-[12px] leading-5 text-[var(--text-muted)]">
+            <p className="text-center text-sub leading-5 text-[var(--text-muted)]">
               每改名一个文件即同步台账，中断也不会账实不符；期间扫描自动让路。
               <br />
               关闭窗口不影响整理，库卡片上可继续查看进度。
@@ -402,8 +402,8 @@ export function LibraryOrganizeDialog({
               <span className="flex size-11 items-center justify-center rounded-full bg-[#4ade80]/15">
                 <CheckIcon className="size-5 text-[#4ade80]" />
               </span>
-              <p className="text-[15px] font-semibold text-white">整理完成</p>
-              <p className="text-center text-[13px] leading-6 text-[var(--text-muted)]">
+              <p className="text-body-lg font-semibold text-white">整理完成</p>
+              <p className="text-center text-ui leading-6 text-[var(--text-muted)]">
                 改名归位 {result?.renamed ?? 0} 个文件
                 {result && result.sidecars_renamed > 0
                   ? `，附属文件 ${result.sidecars_renamed} 个随迁`
@@ -416,10 +416,10 @@ export function LibraryOrganizeDialog({
               </p>
               {result && result.errors.length > 0 && (
                 <div className="w-full rounded-xl border border-[#f5c451]/30 bg-[#f5c451]/[0.08] px-4 py-3">
-                  <p className="text-[12.5px] font-semibold text-[#f5c451]">
+                  <p className="text-sub font-semibold text-[#f5c451]">
                     {result.errors.length} 个文件处理时遇到问题（未被改动）
                   </p>
-                  <ul className="mt-1.5 space-y-1 text-[11.5px] leading-5 text-[#f5c451]/85">
+                  <ul className="mt-1.5 space-y-1 text-caption leading-5 text-[#f5c451]/85">
                     {result.errors.map((message) => (
                       <li key={message} className="break-all">
                         {message}
@@ -431,7 +431,7 @@ export function LibraryOrganizeDialog({
               <button
                 type="button"
                 onClick={onClose}
-                className="btn-accent mt-2 h-9 rounded-full px-6 text-[13px] font-semibold"
+                className="btn-accent mt-2 h-9 rounded-full px-6 text-ui font-semibold"
               >
                 完成
               </button>
@@ -451,7 +451,7 @@ function StatChip({ tone, label }: { tone: "accent" | "ok" | "warn" | "muted"; l
     muted: "border-white/[0.1] bg-white/[0.05] text-[var(--text-muted)]",
   }[tone];
   return (
-    <span className={`rounded-full border px-3 py-1 text-[12px] font-semibold ${toneClass}`}>
+    <span className={`rounded-full border px-3 py-1 text-sub font-semibold ${toneClass}`}>
       {label}
     </span>
   );

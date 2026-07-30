@@ -38,13 +38,13 @@ export function MediaRow({
     // intrinsic-size 先占住一行的近似高度（auto 记住实测值），滚动条不跳
     <section className="relative [contain-intrinsic-size:auto_330px] [content-visibility:auto]">
       <div className="mb-3 flex items-center justify-between gap-4 px-6 max-md:mb-2 max-md:px-4">
-        <h3 className="text-on-image text-[15px] font-semibold tracking-[-0.01em] text-[var(--text)]">
+        <h3 className="text-on-image text-body-lg font-semibold tracking-[-0.01em] text-[var(--text)]">
           {row.title}
         </h3>
         {moreHref && (
           <Link
             href={moreHref}
-            className="shrink-0 text-xs font-semibold text-[var(--text-muted)] transition hover:text-[var(--text)]"
+            className="shrink-0 text-sub font-semibold text-[var(--text-muted)] transition hover:text-[var(--text)]"
           >
             {moreLabel}
           </Link>

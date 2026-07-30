@@ -55,7 +55,7 @@ export function SettingsSidebar({ active, onSelect, onBack }: SettingsSidebarPro
         <button
           type="button"
           onClick={onBack}
-          className="btn-glass px-3.5 py-1.5 text-xs font-medium text-[var(--text-muted)] hover:text-[var(--text)]"
+          className="btn-glass px-3.5 py-1.5 text-sub font-medium text-[var(--text-muted)] hover:text-[var(--text)]"
         >
           <ArrowLeftIcon className="size-4" />
           <span>返回工作台</span>
@@ -63,8 +63,8 @@ export function SettingsSidebar({ active, onSelect, onBack }: SettingsSidebarPro
       </div>
 
       <div className="px-4 pb-4 pt-4">
-        <h2 className="text-sheen text-[19px] font-semibold tracking-tight">设置</h2>
-        <p className="mt-1 text-xs text-[var(--text-muted)]">管理账号与工作台偏好</p>
+        <h2 className="text-sheen text-title-lg font-semibold tracking-tight">设置</h2>
+        <p className="mt-1 text-sub text-[var(--text-muted)]">管理账号与工作台偏好</p>
       </div>
 
       {/* 分区列表：标准 SaaS 设置菜单——紧凑单行（小图标内联 + 标签），
@@ -85,7 +85,7 @@ export function SettingsSidebar({ active, onSelect, onBack }: SettingsSidebarPro
                     className="glass-row nav-item gap-2.5 px-2.5 py-[7px]"
                   >
                     <Icon className="size-4 shrink-0" />
-                    <span className="truncate text-[13px] font-medium">
+                    <span className="truncate text-ui font-medium">
                       {section.label}
                     </span>
                   </button>
@@ -129,10 +129,10 @@ export function SettingsPanel({ active }: SettingsPanelProps) {
           <div className="min-w-0">
             {/* 实色 + 暗投影（不用 text-sheen 渐变裁切——全站蒙版默认轻档、
                 背景大图透上来时，半透明渐变字压在亮背景上会发灰，实色白字最稳） */}
-            <h1 className="text-on-image text-[22px] font-semibold tracking-tight text-[var(--text)] max-md:text-[19px]">
+            <h1 className="text-on-image text-[22px] font-semibold tracking-tight text-[var(--text)] max-md:text-title-lg">
               {section.label}
             </h1>
-            <p className="text-on-image mt-0.5 text-[13px] text-[var(--text-muted)]">
+            <p className="text-on-image mt-0.5 text-ui text-[var(--text-muted)]">
               {section.description}
             </p>
           </div>
@@ -225,7 +225,7 @@ function ProfileSection() {
           />
           {/* hover / 上传中：圆形遮罩浮出提示，暗示头像可点击更换 */}
           <span
-            className={`absolute inset-0 flex items-center justify-center rounded-full bg-black/55 text-[11px] font-semibold text-white transition-opacity ${
+            className={`absolute inset-0 flex items-center justify-center rounded-full bg-black/55 text-caption font-semibold text-white transition-opacity ${
               avatarBusy ? "opacity-100" : "touch-reveal opacity-0 group-hover:opacity-100"
             }`}
           >
@@ -242,13 +242,13 @@ function ProfileSection() {
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1">
             <p className="text-xl font-semibold tracking-tight">{session.nickname}</p>
-            <span className="rounded-full border border-white/[0.12] bg-[var(--accent-soft)] px-2.5 py-0.5 text-[11px] font-semibold text-[var(--accent)]">
+            <span className="rounded-full border border-white/[0.12] bg-[var(--accent-soft)] px-2.5 py-0.5 text-caption font-semibold text-[var(--accent)]">
               超级管理员
             </span>
           </div>
-          <p className="mt-1 text-sm text-[var(--text-muted)]">@{session.username}</p>
+          <p className="mt-1 text-body text-[var(--text-muted)]">@{session.username}</p>
           {avatarError && (
-            <p className="mt-1.5 text-[12px] text-[var(--danger)]">{avatarError}</p>
+            <p className="mt-1.5 text-sub text-[var(--danger)]">{avatarError}</p>
           )}
         </div>
       </div>
@@ -273,10 +273,10 @@ function FieldRow({ label, value, hint }: { label: string; value: string; hint?:
   return (
     <div className="flex items-center justify-between gap-4 px-5 py-4 first:rounded-t-2xl last:rounded-b-2xl">
       <div>
-        <p className="text-sm font-medium text-[var(--text)]">{label}</p>
-        {hint && <p className="mt-0.5 text-[11px] text-[var(--text-faint)]">{hint}</p>}
+        <p className="text-body font-medium text-[var(--text)]">{label}</p>
+        {hint && <p className="mt-0.5 text-caption text-[var(--text-faint)]">{hint}</p>}
       </div>
-      <span className="text-sm text-[var(--text-muted)]">{value}</span>
+      <span className="text-body text-[var(--text-muted)]">{value}</span>
     </div>
   );
 }
@@ -316,7 +316,7 @@ function NicknameRow() {
   return (
     <div className="px-5 py-4 first:rounded-t-2xl last:rounded-b-2xl">
       <div className="flex items-center justify-between gap-4">
-        <p className="text-sm font-medium text-[var(--text)]">昵称</p>
+        <p className="text-body font-medium text-[var(--text)]">昵称</p>
         {editing ? (
           <div className="flex items-center gap-2">
             <input
@@ -326,13 +326,13 @@ function NicknameRow() {
               onKeyDown={(e) => e.key === "Enter" && save()}
               maxLength={32}
               autoFocus
-              className="w-44 rounded-xl border border-white/[0.08] bg-white/[0.04] px-3 py-1.5 text-[13px] text-[var(--text)] outline-none focus:border-[var(--accent)]/60"
+              className="w-44 rounded-xl border border-white/[0.08] bg-white/[0.04] px-3 py-1.5 text-ui text-[var(--text)] outline-none focus:border-[var(--accent)]/60"
             />
             <button
               type="button"
               onClick={save}
               disabled={busy}
-              className="btn-accent rounded-full px-3.5 py-1.5 text-xs font-semibold disabled:opacity-40"
+              className="btn-accent rounded-full px-3.5 py-1.5 text-sub font-semibold disabled:opacity-40"
             >
               {busy ? "保存中…" : "保存"}
             </button>
@@ -340,21 +340,21 @@ function NicknameRow() {
               type="button"
               onClick={() => setEditing(false)}
               disabled={busy}
-              className="btn-glass px-3 py-1.5 text-xs font-medium"
+              className="btn-glass px-3 py-1.5 text-sub font-medium"
             >
               取消
             </button>
           </div>
         ) : (
           <div className="flex items-center gap-3">
-            <span className="text-sm text-[var(--text-muted)]">{session.nickname}</span>
-            <button type="button" onClick={startEdit} className="btn-glass px-3 py-1 text-xs font-medium">
+            <span className="text-body text-[var(--text-muted)]">{session.nickname}</span>
+            <button type="button" onClick={startEdit} className="btn-glass px-3 py-1 text-sub font-medium">
               编辑
             </button>
           </div>
         )}
       </div>
-      {error && <p className="mt-2 text-right text-[12px] text-[var(--danger)]">{error}</p>}
+      {error && <p className="mt-2 text-right text-sub text-[var(--danger)]">{error}</p>}
     </div>
   );
 }
@@ -400,13 +400,13 @@ function ChangePasswordCard() {
     autoComplete: string,
   ) => (
     <div>
-      <label className="mb-1.5 block text-xs font-medium text-[var(--text-muted)]">{label}</label>
+      <label className="mb-1.5 block text-sub font-medium text-[var(--text-muted)]">{label}</label>
       <input
         type="password"
         value={value}
         onChange={(e) => onChange(e.target.value)}
         autoComplete={autoComplete}
-        className="w-full rounded-xl border border-white/[0.08] bg-white/[0.04] px-3 py-2 text-[13px] text-[var(--text)] outline-none focus:border-[var(--accent)]/60"
+        className="w-full rounded-xl border border-white/[0.08] bg-white/[0.04] px-3 py-2 text-ui text-[var(--text)] outline-none focus:border-[var(--accent)]/60"
       />
     </div>
   );
@@ -416,9 +416,9 @@ function ChangePasswordCard() {
       {field("当前密码", oldPassword, setOldPassword, "current-password")}
       {field("新密码（至少 8 位）", newPassword, setNewPassword, "new-password")}
       {field("确认新密码", confirm, setConfirm, "new-password")}
-      {error && <p className="text-[12px] text-[var(--danger)]">{error}</p>}
+      {error && <p className="text-sub text-[var(--danger)]">{error}</p>}
       {done && (
-        <p className="text-[12px] text-[var(--text-muted)]">
+        <p className="text-sub text-[var(--text-muted)]">
           密码已修改，其他设备的登录已全部失效；当前会话保持有效。
         </p>
       )}
@@ -427,7 +427,7 @@ function ChangePasswordCard() {
           type="button"
           onClick={submit}
           disabled={busy || !oldPassword || !newPassword || !confirm}
-          className="btn-accent rounded-full px-4.5 py-2 text-[13px] font-semibold disabled:opacity-40"
+          className="btn-accent rounded-full px-4.5 py-2 text-ui font-semibold disabled:opacity-40"
         >
           {busy ? "提交中…" : "修改密码"}
         </button>
@@ -464,7 +464,7 @@ function AppearanceSection() {
             type="button"
             aria-pressed={t.id === tab}
             onClick={() => setTab(t.id)}
-            className={`rounded-full px-3.5 py-1.5 text-[12.5px] font-medium transition-colors ${
+            className={`rounded-full px-3.5 py-1.5 text-sub font-medium transition-colors ${
               t.id === tab
                 ? "bg-white/[0.14] text-white"
                 : "text-[var(--text-muted)] hover:bg-white/[0.07] hover:text-[var(--text)]"
@@ -573,23 +573,23 @@ function BackdropGroup() {
             {/* 底部信息渐变 + 当前背景名 */}
             <div className="pointer-events-none absolute inset-x-0 bottom-0 h-28 bg-gradient-to-t from-black/65 to-transparent" />
             <div className="pointer-events-none absolute bottom-4 left-5 text-white">
-              <p className="text-on-image text-sm font-semibold">
+              <p className="text-on-image text-body font-semibold">
                 {isCustom ? "自定义背景" : "默认背景 · 深色调"}
               </p>
-              <p className="text-on-image mt-0.5 text-[11px] text-white/75">
+              <p className="text-on-image mt-0.5 text-caption text-white/75">
                 点击或拖入图片即可更换
               </p>
             </div>
             {/* hover：轻压暗 + 中央浮出更换按钮 */}
             <div className="touch-reveal pointer-events-none absolute inset-0 flex items-center justify-center bg-black/0 opacity-0 transition duration-300 group-hover:bg-black/25 group-hover:opacity-100">
-              <span className="btn-accent rounded-full px-4.5 py-2 text-xs font-semibold">
+              <span className="btn-accent rounded-full px-4.5 py-2 text-sub font-semibold">
                 更换图片
               </span>
             </div>
             {/* 拖拽投放态 */}
             {dragging && (
               <div className="absolute inset-2 z-10 flex items-center justify-center rounded-xl border-2 border-dashed border-[var(--accent)] bg-black/50 backdrop-blur-sm">
-                <p className="text-sm font-semibold text-[var(--accent-strong)]">
+                <p className="text-body font-semibold text-[var(--accent-strong)]">
                   松开，设为首页背景
                 </p>
               </div>
@@ -597,7 +597,7 @@ function BackdropGroup() {
             {/* 上传 / 加载中的遮罩 */}
             {(busy || loading) && (
               <div className="absolute inset-0 z-10 flex items-center justify-center bg-black/50 backdrop-blur-sm">
-                <p className="text-sm font-medium text-white/90">
+                <p className="text-body font-medium text-white/90">
                   {busy ? "正在应用…" : "加载中…"}
                 </p>
               </div>
@@ -635,7 +635,7 @@ function BackdropGroup() {
               <span className="flex h-[68px] w-[120px] items-center justify-center rounded-lg border border-dashed border-white/[0.22] bg-black/25 backdrop-blur-md transition-colors group-hover/tile:border-white/[0.4] group-hover/tile:bg-white/[0.06]">
                 <PlusIcon className="size-5 text-[var(--text-muted)] transition-colors group-hover/tile:text-[var(--text)]" />
               </span>
-              <span className="text-on-image mt-1.5 block text-center text-[11px] text-[var(--text-muted)]">
+              <span className="text-on-image mt-1.5 block text-center text-caption text-[var(--text-muted)]">
                 上传
               </span>
             </button>
@@ -644,12 +644,12 @@ function BackdropGroup() {
           <input ref={inputRef} type="file" accept="image/*" hidden onChange={handlePick} />
 
           {error && (
-            <p className="rounded-xl border border-[var(--danger)]/30 bg-[var(--danger)]/10 px-4 py-2.5 text-xs text-[var(--danger)]">
+            <p className="rounded-xl border border-[var(--danger)]/30 bg-[var(--danger)]/10 px-4 py-2.5 text-sub text-[var(--danger)]">
               {error}
             </p>
           )}
 
-          <p className="text-on-image text-xs leading-5 text-[var(--text-faint)]">
+          <p className="text-on-image text-sub leading-5 text-[var(--text-faint)]">
             建议使用 16:9、分辨率较高的横图。上传的图全部保留在服务端图库（最多 20
             张），点选即切换、hover 缩略图可删除；玻璃面板的折射随生效图一并更新，跨设备访问同一实例保持一致。
           </p>
@@ -781,10 +781,10 @@ function InterfaceTextureGroup() {
           onChange={(v) => update({ scrim: { dark: v / 100 } })}
         />
 
-        {error && <p className="text-[12px] text-[var(--danger)]">{error}</p>}
+        {error && <p className="text-sub text-[var(--danger)]">{error}</p>}
 
         <div className="flex items-center justify-between gap-3">
-          <p className="text-[11px] text-[var(--text-faint)]">
+          <p className="text-caption text-[var(--text-faint)]">
             {dirty ? "调节实时预览中，保存后对所有设备生效" : "设置已保存，跨设备一致"}
           </p>
           <div className="flex items-center gap-2">
@@ -792,7 +792,7 @@ function InterfaceTextureGroup() {
               type="button"
               onClick={reset}
               disabled={loading || busy || isDefault}
-              className="btn-glass px-3.5 py-1.5 text-xs font-medium disabled:opacity-40"
+              className="btn-glass px-3.5 py-1.5 text-sub font-medium disabled:opacity-40"
             >
               恢复默认
             </button>
@@ -800,7 +800,7 @@ function InterfaceTextureGroup() {
               type="button"
               onClick={() => void save(draft)}
               disabled={loading || busy || !dirty}
-              className="btn-accent rounded-full px-4 py-1.5 text-xs font-semibold disabled:opacity-40"
+              className="btn-accent rounded-full px-4 py-1.5 text-sub font-semibold disabled:opacity-40"
             >
               {busy ? "保存中…" : "保存"}
             </button>
@@ -839,15 +839,15 @@ function SliderRow({
   return (
     <div>
       <div className="flex items-baseline justify-between">
-        <p className="text-sm font-medium text-[var(--text)]">{label}</p>
-        <span className="tnum text-xs text-[var(--text-muted)]">
+        <p className="text-body font-medium text-[var(--text)]">{label}</p>
+        <span className="tnum text-sub text-[var(--text-muted)]">
           {value}
           {unit}
         </span>
       </div>
-      <p className="mt-0.5 text-[11px] text-[var(--text-faint)]">{hint}</p>
+      <p className="mt-0.5 text-caption text-[var(--text-faint)]">{hint}</p>
       <div className="mt-2.5 flex items-center gap-3">
-        <span className="w-10 shrink-0 text-right text-[11px] text-[var(--text-faint)]">
+        <span className="w-10 shrink-0 text-right text-caption text-[var(--text-faint)]">
           {minLabel}
         </span>
         <input
@@ -861,7 +861,7 @@ function SliderRow({
           onChange={(e) => onChange(Number(e.target.value))}
           className="range-glass flex-1"
         />
-        <span className="w-10 shrink-0 text-[11px] text-[var(--text-faint)]">{maxLabel}</span>
+        <span className="w-10 shrink-0 text-caption text-[var(--text-faint)]">{maxLabel}</span>
       </div>
     </div>
   );
@@ -939,7 +939,7 @@ function BackdropTile({
         )}
       </div>
       <span
-        className={`text-on-image mt-1.5 block truncate text-center text-[11px] ${
+        className={`text-on-image mt-1.5 block truncate text-center text-caption ${
           active ? "font-semibold text-[var(--text)]" : "text-[var(--text-muted)]"
         }`}
       >
@@ -966,7 +966,7 @@ function GenericSection({ sectionId }: { sectionId: string }) {
               key={label}
               className="flex items-center justify-between gap-4 px-5 py-3.5"
             >
-              <span className="text-sm font-medium text-[var(--text)]">{label}</span>
+              <span className="text-body font-medium text-[var(--text)]">{label}</span>
               {/* LiquidGlassButton 本质是一个真实 WebGL 的开关控件 */}
               <LiquidGlassButton
                 backgroundImage={backdrop}
@@ -982,7 +982,7 @@ function GenericSection({ sectionId }: { sectionId: string }) {
         </div>
       </SettingsGroup>
 
-      <p className="text-xs leading-6 text-[var(--text-faint)]">
+      <p className="text-sub leading-6 text-[var(--text-faint)]">
         这是「{sectionId}」分区的占位内容。后续会接入真实配置项与后端接口。
       </p>
     </div>

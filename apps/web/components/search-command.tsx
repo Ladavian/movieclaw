@@ -405,7 +405,7 @@ function SearchPalette({
             autoCapitalize="off"
             autoCorrect="off"
             spellCheck={false}
-            className="h-[52px] min-w-0 flex-1 bg-transparent text-[15px] text-[var(--text)] outline-none placeholder:text-[var(--text-faint)]"
+            className="h-[52px] min-w-0 flex-1 bg-transparent text-body-lg text-[var(--text)] outline-none placeholder:text-[var(--text-faint)]"
           />
           <ModeSwitch mode={mode} onChange={changeMode} />
         </div>
@@ -435,25 +435,25 @@ function SearchPalette({
         <div className="scroll-thin max-h-[336px] min-h-[96px] overflow-y-auto p-2 max-md:max-h-none max-md:min-h-0 max-md:flex-1">
           {items !== null && items.length > 0 && (
             <div className="flex items-center justify-between px-2.5 pb-1 pt-1">
-              <span className="text-[11px] font-medium tracking-wide text-[var(--text-faint)]">
+              <span className="text-caption font-medium tracking-wide text-[var(--text-faint)]">
                 最近搜索
               </span>
               <button
                 type="button"
                 onClick={removeAll}
-                className="rounded-md px-1.5 py-0.5 text-[11px] text-[var(--text-faint)] transition-colors hover:bg-white/[0.08] hover:text-[var(--text-muted)]"
+                className="rounded-md px-1.5 py-0.5 text-caption text-[var(--text-faint)] transition-colors hover:bg-white/[0.08] hover:text-[var(--text-muted)]"
               >
                 清空
               </button>
             </div>
           )}
           {items !== null && items.length === 0 && (
-            <p className="px-2.5 py-6 text-center text-[12px] text-[var(--text-faint)]">
+            <p className="px-2.5 py-6 text-center text-sub text-[var(--text-faint)]">
               还没有搜索记录，输入关键词回车开始搜索
             </p>
           )}
           {items !== null && items.length > 0 && filteredGroups.length === 0 && (
-            <p className="px-2.5 py-6 text-center text-[12px] text-[var(--text-faint)]">
+            <p className="px-2.5 py-6 text-center text-sub text-[var(--text-faint)]">
               没有匹配「{keyword.trim()}」的搜索记录，回车直接搜索
             </p>
           )}
@@ -479,10 +479,10 @@ function SearchPalette({
 
         {/* —— 页脚：左侧模式说明，右侧快捷键 —— */}
         <div className="flex h-10 shrink-0 items-center justify-between border-t border-white/[0.06] px-4">
-          <span className="text-[11px] text-[var(--text-faint)]">
+          <span className="text-caption text-[var(--text-faint)]">
             {mode === "media" ? "在豆瓣中搜索影视条目" : "跨全部已配置站点搜索种子"}
           </span>
-          <span className="flex items-center gap-3 text-[11px] text-[var(--text-faint)] max-md:hidden">
+          <span className="flex items-center gap-3 text-caption text-[var(--text-faint)] max-md:hidden">
             <span className="flex items-center gap-1">
               <Kbd>⏎</Kbd> 搜索
             </span>
@@ -534,7 +534,7 @@ function ModeSwitch({
             // mousedown 抢焦点会让输入框失焦，preventDefault 保持焦点常驻输入框
             onMouseDown={(event) => event.preventDefault()}
             onClick={() => onChange(opt.id)}
-            className={`rounded-md px-2.5 py-1 text-[12px] font-medium transition-colors ${
+            className={`rounded-md px-2.5 py-1 text-sub font-medium transition-colors ${
               active
                 ? "bg-white/[0.13] text-[var(--text)]"
                 : "text-[var(--text-muted)] hover:text-[var(--text)]"
@@ -563,7 +563,7 @@ function CategoryChip({
       type="button"
       onMouseDown={(event) => event.preventDefault()}
       onClick={onClick}
-      className={`rounded-full px-2.5 py-[3px] text-[12px] transition-colors ${
+      className={`rounded-full px-2.5 py-[3px] text-sub transition-colors ${
         active
           ? "bg-white/[0.14] font-medium text-[var(--text)]"
           : "text-[var(--text-muted)] hover:bg-white/[0.06] hover:text-[var(--text)]"
@@ -629,15 +629,15 @@ function HistoryGroupRow({
           onClick={onPick}
           className="flex min-w-0 flex-1 items-center gap-2.5 py-2 pl-2.5 text-left"
         >
-          <span className="min-w-0 flex-1 truncate text-[13px] leading-5 text-[var(--text)]/90">
+          <span className="min-w-0 flex-1 truncate text-ui leading-5 text-[var(--text)]/90">
             {group.keyword}
           </span>
           {group.items.length > 1 ? (
             <>
-              <span className="shrink-0 rounded-md bg-white/[0.07] px-1.5 py-0.5 text-[10px] text-[var(--text-muted)]">
+              <span className="shrink-0 rounded-md bg-white/[0.07] px-1.5 py-0.5 text-micro text-[var(--text-muted)]">
                 {group.items.length} 种范围
               </span>
-              <span className="hidden shrink-0 text-[10px] text-[var(--text-faint)] sm:inline">
+              <span className="hidden shrink-0 text-micro text-[var(--text-faint)] sm:inline">
                 {mediaCount > 0 && `影视 ${mediaCount}`}
                 {mediaCount > 0 && torrentCount > 0 && " · "}
                 {torrentCount > 0 && `资源 ${torrentCount}`}
@@ -649,12 +649,12 @@ function HistoryGroupRow({
           {latest.has_snapshot && (
             <span
               title="最近一次搜索已有结果快照，点击秒开预览"
-              className="shrink-0 rounded-md bg-[#6aa7ff]/15 px-1.5 py-0.5 text-[10px] text-[#9cc2ff]"
+              className="shrink-0 rounded-md bg-[#6aa7ff]/15 px-1.5 py-0.5 text-micro text-[#9cc2ff]"
             >
               快照
             </span>
           )}
-          <span className="shrink-0 text-[11px] text-[var(--text-faint)]">
+          <span className="shrink-0 text-caption text-[var(--text-faint)]">
             {formatRelativeTime(latest.last_searched_at)}
           </span>
         </button>
@@ -729,19 +729,19 @@ function HistorySingleRow({
           active ? "bg-white/[0.07]" : ""
         }`}
       >
-        <span className="min-w-0 flex-1 truncate text-[13px] leading-5 text-[var(--text)]/90">
+        <span className="min-w-0 flex-1 truncate text-ui leading-5 text-[var(--text)]/90">
           {item.keyword}
         </span>
         <HistoryTypeBadges item={item} />
         {item.has_snapshot && (
           <span
             title="已留存结果快照，点击秒开预览"
-            className="shrink-0 rounded-md bg-[#6aa7ff]/15 px-1.5 py-0.5 text-[10px] text-[#9cc2ff]"
+            className="shrink-0 rounded-md bg-[#6aa7ff]/15 px-1.5 py-0.5 text-micro text-[#9cc2ff]"
           >
             快照
           </span>
         )}
-        <span className="shrink-0 text-[11px] text-[var(--text-faint)] transition-opacity group-hover/single:opacity-0">
+        <span className="shrink-0 text-caption text-[var(--text-faint)] transition-opacity group-hover/single:opacity-0">
           {formatRelativeTime(item.last_searched_at)}
         </span>
       </button>
@@ -771,15 +771,15 @@ function HistoryVariantRow({
         onClick={onPick}
         className="flex min-w-0 flex-1 items-center gap-2 py-1.5 pl-2 text-left"
       >
-        <span className="min-w-0 flex-1 truncate text-[12px] text-[var(--text-muted)]">
+        <span className="min-w-0 flex-1 truncate text-sub text-[var(--text-muted)]">
           {item.vertical === "media" ? "影视" : `资源 · ${item.label ?? "全部"}`}
         </span>
         {item.has_snapshot && (
-          <span className="shrink-0 rounded-md bg-[#6aa7ff]/15 px-1.5 py-0.5 text-[10px] text-[#9cc2ff]">
+          <span className="shrink-0 rounded-md bg-[#6aa7ff]/15 px-1.5 py-0.5 text-micro text-[#9cc2ff]">
             快照
           </span>
         )}
-        <span className="shrink-0 text-[10px] text-[var(--text-faint)]">
+        <span className="shrink-0 text-micro text-[var(--text-faint)]">
           {formatRelativeTime(item.last_searched_at)}
         </span>
       </button>
@@ -798,7 +798,7 @@ function HistoryTypeBadges({ item }: { item: SearchHistoryItem }) {
   return (
     <>
       <span
-        className={`shrink-0 rounded-md px-1.5 py-0.5 text-[10px] ${
+        className={`shrink-0 rounded-md px-1.5 py-0.5 text-micro ${
           isMedia
             ? "bg-[var(--accent-soft)] text-[var(--accent-2)]"
             : "bg-white/[0.07] text-[var(--text-muted)]"
@@ -807,7 +807,7 @@ function HistoryTypeBadges({ item }: { item: SearchHistoryItem }) {
         {isMedia ? "影视" : "资源"}
       </span>
       {!isMedia && item.label && (
-        <span className="shrink-0 rounded-md bg-white/[0.07] px-1.5 py-0.5 text-[10px] text-[var(--text-muted)]">
+        <span className="shrink-0 rounded-md bg-white/[0.07] px-1.5 py-0.5 text-micro text-[var(--text-muted)]">
           {item.label}
         </span>
       )}
@@ -850,7 +850,7 @@ function DeleteHistoryButton({
 
 function Kbd({ children }: { children: React.ReactNode }) {
   return (
-    <kbd className="rounded bg-white/[0.07] px-1 py-px font-sans text-[10px] text-[var(--text-muted)]">
+    <kbd className="rounded bg-white/[0.07] px-1 py-px font-sans text-micro text-[var(--text-muted)]">
       {children}
     </kbd>
   );

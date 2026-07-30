@@ -53,11 +53,11 @@ function AuthScreenInner({
           contentClassName="p-8"
         >
           <header className="mb-7">
-            <p className="text-[12px] font-semibold uppercase tracking-[0.18em] text-[var(--text-faint)]">
+            <p className="text-sub font-semibold uppercase tracking-[0.18em] text-[var(--text-faint)]">
               {publicEnv.appName}
             </p>
             <h1 className="mt-2 text-[22px] font-semibold text-[var(--text)]">{title}</h1>
-            <p className="mt-1.5 text-[13px] leading-relaxed text-[var(--text-muted)]">
+            <p className="mt-1.5 text-ui leading-relaxed text-[var(--text-muted)]">
               {subtitle}
             </p>
           </header>
@@ -75,10 +75,10 @@ export function AuthField({
 }: { label: string } & React.InputHTMLAttributes<HTMLInputElement>) {
   return (
     <div>
-      <label className="mb-1.5 block text-xs font-medium text-[var(--text-muted)]">{label}</label>
+      <label className="mb-1.5 block text-sub font-medium text-[var(--text-muted)]">{label}</label>
       <input
         {...inputProps}
-        className="w-full rounded-xl border border-white/[0.08] bg-white/[0.04] px-3 py-2 text-[13px] text-[var(--text)] outline-none focus:border-[var(--accent)]/60"
+        className="w-full rounded-xl border border-white/[0.08] bg-white/[0.04] px-3 py-2 text-ui text-[var(--text)] outline-none focus:border-[var(--accent)]/60"
       />
     </div>
   );
@@ -88,7 +88,7 @@ export function AuthField({
 export function AuthError({ message }: { message: string | null }) {
   if (!message) return null;
   return (
-    <p className="rounded-xl border border-[rgba(255,107,107,0.25)] bg-[rgba(255,107,107,0.1)] px-3 py-2 text-[12px] leading-relaxed text-[var(--danger)]">
+    <p className="rounded-xl border border-[rgba(255,107,107,0.25)] bg-[rgba(255,107,107,0.1)] px-3 py-2 text-sub leading-relaxed text-[var(--danger)]">
       {message}
     </p>
   );

@@ -70,7 +70,7 @@ export function SubscriptionsView() {
           <h2 className="text-on-image text-[26px] font-bold leading-tight tracking-[-0.02em] text-white max-md:text-[21px]">
             我的订阅
           </h2>
-          <p className="text-on-image mt-1.5 text-[13px] text-[var(--text-muted)] max-md:mt-1 max-md:text-[12px]">
+          <p className="text-on-image mt-1.5 text-ui text-[var(--text-muted)] max-md:mt-1 max-md:text-sub">
             共 {visible.length} 部{mediaType === "movie" ? "电影" : "剧集"} ·
             movieclaw 会持续追踪并在新资源放出后自动入库
           </p>
@@ -84,7 +84,7 @@ export function SubscriptionsView() {
       {healthIssue && (
         <Link
           href={"/settings/subscription" as Route}
-          className="mx-6 mt-4 block rounded-xl border border-amber-400/25 bg-amber-500/10 px-4 py-3 text-[12.5px] leading-relaxed text-amber-200 transition hover:bg-amber-500/15 max-md:mx-4"
+          className="mx-6 mt-4 block rounded-xl border border-amber-400/25 bg-amber-500/10 px-4 py-3 text-sub leading-relaxed text-amber-200 transition hover:bg-amber-500/15 max-md:mx-4"
         >
           {healthIssue.libraryErrors > 0
             ? `${healthIssue.libraryErrors} 个媒体库的入库链路有问题，相关订阅暂时无法自动下载入库（已下达的任务会自动重试）`
@@ -94,7 +94,7 @@ export function SubscriptionsView() {
       )}
 
       {subscriptions === null && !failed && (
-        <div className="mt-16 flex items-center justify-center gap-2.5 text-[13px] text-[var(--text-muted)]">
+        <div className="mt-16 flex items-center justify-center gap-2.5 text-ui text-[var(--text-muted)]">
           <span className="size-4 animate-spin rounded-full border-2 border-white/20 border-t-white/70" />
           正在加载订阅…
         </div>
@@ -102,11 +102,11 @@ export function SubscriptionsView() {
 
       {failed && (
         <div className="mt-16 flex flex-col items-center gap-3 text-center">
-          <p className="text-[13.5px] text-[var(--text-muted)]">订阅列表加载失败</p>
+          <p className="text-ui text-[var(--text-muted)]">订阅列表加载失败</p>
           <button
             type="button"
             onClick={reload}
-            className="btn-glass px-4 py-2 text-[13px] font-medium text-[var(--text)]"
+            className="btn-glass px-4 py-2 text-ui font-medium text-[var(--text)]"
           >
             重试
           </button>
@@ -114,7 +114,7 @@ export function SubscriptionsView() {
       )}
 
       {subscriptions !== null && !failed && visible.length === 0 && (
-        <p className="mt-16 text-center text-[13.5px] leading-7 text-[var(--text-muted)]">
+        <p className="mt-16 text-center text-ui leading-7 text-[var(--text-muted)]">
           还没有订阅任何{mediaType === "movie" ? "电影" : "剧集"}。
           <br />
           在发现页或搜索结果里打开影片详情，点「订阅追踪」即可加入。
@@ -149,7 +149,7 @@ function MediaTypeSwitcher({
           type="button"
           aria-pressed={value === type}
           onClick={() => onChange(type)}
-          className={`rounded-full px-4 py-1.5 text-xs font-semibold transition ${
+          className={`rounded-full px-4 py-1.5 text-sub font-semibold transition ${
             value === type
               ? "bg-white/15 text-white shadow-sm"
               : "text-[var(--text-muted)] hover:text-white"
@@ -184,7 +184,7 @@ function SubscriptionCell({ sub }: { sub: Subscription }) {
         item={toVisualItem(sub)}
         href={`/subscriptions/${sub.id}` as Route}
       />
-      <p className="text-on-image mt-1.5 flex items-center gap-1.5 truncate text-[11px] text-[var(--text-muted)]">
+      <p className="text-on-image mt-1.5 flex items-center gap-1.5 truncate text-caption text-[var(--text-muted)]">
         <span
           className="size-1.5 shrink-0 rounded-full"
           style={{ backgroundColor: meta.color }}

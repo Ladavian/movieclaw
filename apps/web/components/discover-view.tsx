@@ -183,7 +183,7 @@ function SourceSwitcher({
             key={source}
             type="button"
             onClick={() => onChange(source)}
-            className={`rounded-full px-4 py-1.5 text-xs font-semibold transition ${
+            className={`rounded-full px-4 py-1.5 text-sub font-semibold transition ${
               value === source
                 ? "bg-white/15 text-white shadow-sm"
                 : "text-[var(--text-muted)] hover:text-white"
@@ -233,18 +233,18 @@ function DiscoverError({ error, onRetry }: { error: DiscoverErrorInfo; onRetry: 
             <GlobeIcon className="size-5" />
           </span>
         )}
-        <p className="text-[15px] font-semibold text-[var(--text)]">
+        <p className="text-body-lg font-semibold text-[var(--text)]">
           {unreachable ? "无法连接数据源" : "发现页加载失败"}
         </p>
-        <p className="mt-2 break-all text-[13px] leading-6 text-[var(--text-muted)]">{error.message}</p>
+        <p className="mt-2 break-all text-ui leading-6 text-[var(--text-muted)]">{error.message}</p>
         {unreachable && error.hint && (
-          <p className="mt-2 text-[12px] leading-6 text-[var(--text-faint)]">{error.hint}</p>
+          <p className="mt-2 text-sub leading-6 text-[var(--text-faint)]">{error.hint}</p>
         )}
         <div className="mt-5 flex items-center justify-center gap-3">
           {unreachable && (
             <Link
               href={"/settings/network" as Route}
-              className="btn-accent flex h-9 items-center rounded-full px-5 text-[13px] font-semibold"
+              className="btn-accent flex h-9 items-center rounded-full px-5 text-ui font-semibold"
             >
               前往网络设置
             </Link>
@@ -252,7 +252,7 @@ function DiscoverError({ error, onRetry }: { error: DiscoverErrorInfo; onRetry: 
           <button
             type="button"
             onClick={onRetry}
-            className={`${unreachable ? "btn-glass" : "btn-accent"} h-9 rounded-full px-5 text-[13px] font-semibold`}
+            className={`${unreachable ? "btn-glass" : "btn-accent"} h-9 rounded-full px-5 text-ui font-semibold`}
           >
             重试
           </button>
@@ -382,16 +382,16 @@ function HeroSlide({
           active ? "translate-y-0 opacity-100" : "translate-y-3 opacity-0"
         }`}
       >
-        <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-[var(--accent-2)]">
+        <p className="text-caption font-semibold uppercase tracking-[0.22em] text-[var(--accent-2)]">
           今日精选 · {item.type === "movie" ? "电影" : "剧集"}
         </p>
         <h2 className="text-on-image mt-2 text-[34px] font-bold leading-[1.1] tracking-[-0.02em] text-white max-md:mt-1 max-md:text-[23px] sm:text-[40px]">
           {item.title}
         </h2>
-        <p className="text-on-image mt-1 truncate text-[13px] text-white/55 max-md:text-[11.5px]">{item.originalTitle}</p>
+        <p className="text-on-image mt-1 truncate text-ui text-white/55 max-md:text-caption">{item.originalTitle}</p>
 
         {/* 元信息行：评分 / 年份 / 类型 / 规模 / 质量徽章（空字段不占位） */}
-        <div className="tnum mt-3 flex flex-wrap items-center gap-x-3 gap-y-1.5 text-[12.5px] text-white/80">
+        <div className="tnum mt-3 flex flex-wrap items-center gap-x-3 gap-y-1.5 text-sub text-white/80">
           {item.rating > 0 && (
             <span className="flex items-center gap-1 font-semibold text-white">
               <StarIcon className="size-3.5 text-[#f5c451]" />
@@ -406,7 +406,7 @@ function HeroSlide({
               {item.badges.map((b) => (
                 <span
                   key={b}
-                  className="rounded border border-white/25 px-1.5 py-px text-[10px] font-semibold tracking-wide text-white/85"
+                  className="rounded border border-white/25 px-1.5 py-px text-micro font-semibold tracking-wide text-white/85"
                 >
                   {b}
                 </span>
@@ -415,14 +415,14 @@ function HeroSlide({
           )}
         </div>
 
-        <p className="text-on-image mt-3 line-clamp-2 max-w-lg text-[13px] leading-6 text-white/75 max-md:mt-2 max-md:text-[12px] max-md:leading-5 sm:line-clamp-3">
+        <p className="text-on-image mt-3 line-clamp-2 max-w-lg text-ui leading-6 text-white/75 max-md:mt-2 max-md:text-sub max-md:leading-5 sm:line-clamp-3">
           {item.overview}
         </p>
 
         <div className="mt-5 flex flex-wrap items-center gap-3 max-md:mt-3.5 max-md:gap-2">
           <button
             type="button"
-            className="btn-accent flex h-10 items-center gap-2 rounded-full px-5 text-[13px] font-semibold"
+            className="btn-accent flex h-10 items-center gap-2 rounded-full px-5 text-ui font-semibold"
           >
             <BellIcon className="size-4" />
             订阅追踪
@@ -430,7 +430,7 @@ function HeroSlide({
           <button
             type="button"
             {...tapGuard}
-            className="btn-glass h-10 bg-white/10 px-5 text-[13px] font-medium backdrop-blur-md"
+            className="btn-glass h-10 bg-white/10 px-5 text-ui font-medium backdrop-blur-md"
           >
             <InfoIcon className="size-4" />
             更多信息

@@ -205,10 +205,10 @@ export function DownloadTargetDialog({
   return (
     <Modal open onClose={onClose} label="选择保存位置">
       <div className="space-y-4 p-6">
-          <h2 className="text-[17px] font-bold text-white">选择保存位置</h2>
+          <h2 className="text-title font-bold text-white">选择保存位置</h2>
 
           {error && (
-            <p className="rounded-lg border border-red-400/25 bg-red-500/10 px-3.5 py-2.5 text-[13px] leading-6 text-red-200">
+            <p className="rounded-lg border border-red-400/25 bg-red-500/10 px-3.5 py-2.5 text-ui leading-6 text-red-200">
               {error}
             </p>
           )}
@@ -230,16 +230,16 @@ export function DownloadTargetDialog({
                 >
                   <FolderIcon className="mt-0.5 size-4 shrink-0 text-[var(--accent)]/80" />
                   <span className="min-w-0 flex-1">
-                    <span className="block truncate font-mono text-[13px] font-medium text-[var(--text)]">
+                    <span className="block truncate font-mono text-ui font-medium text-[var(--text)]">
                       {option.label}
                     </span>
                     {option.detail && (
-                      <span className="mt-0.5 block text-[11px] leading-relaxed text-[var(--text-faint)]">
+                      <span className="mt-0.5 block text-caption leading-relaxed text-[var(--text-faint)]">
                         {option.detail}
                       </span>
                     )}
                     {option.warning && (
-                      <span className="mt-1 block rounded-md bg-amber-500/10 px-2 py-1 text-[11px] leading-relaxed text-amber-200">
+                      <span className="mt-1 block rounded-md bg-amber-500/10 px-2 py-1 text-caption leading-relaxed text-amber-200">
                         {option.warning}
                       </span>
                     )}
@@ -249,7 +249,7 @@ export function DownloadTargetDialog({
             </div>
           )}
 
-          <p className="text-[11px] leading-relaxed text-[var(--text-faint)]">
+          <p className="text-caption leading-relaxed text-[var(--text-faint)]">
             movieclaw 与下载器不在同一容器/主机、看到的路径不同？到
             <Link href="/settings/downloaders" className="mx-0.5 text-[var(--accent)] hover:underline">
               设置 → 下载器
@@ -258,14 +258,14 @@ export function DownloadTargetDialog({
           </p>
 
           <div className="flex justify-end gap-3 pt-1">
-            <button type="button" onClick={onClose} className="btn-glass h-9 px-4 text-[13px] font-medium">
+            <button type="button" onClick={onClose} className="btn-glass h-9 px-4 text-ui font-medium">
               取消
             </button>
             <button
               type="button"
               onClick={submit}
               disabled={busy || loading || selected === null}
-              className="btn-accent h-9 rounded-full px-5 text-[13px] font-semibold disabled:opacity-40"
+              className="btn-accent h-9 rounded-full px-5 text-ui font-semibold disabled:opacity-40"
             >
               {busy ? "提交中…" : "确认下载"}
             </button>

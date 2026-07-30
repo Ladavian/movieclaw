@@ -52,7 +52,7 @@ export function CastRow({ cast, title = "演职员" }: { cast: CastRowPerson[]; 
   if (cast.length === 0) return null;
   return (
     <section>
-      <h2 className="text-on-image mb-3 text-[15px] font-semibold tracking-[-0.01em] text-[var(--text)]">
+      <h2 className="text-on-image mb-3 text-body-lg font-semibold tracking-[-0.01em] text-[var(--text)]">
         {title}
       </h2>
       <HScroller className="-mx-1 gap-3 px-1 pb-1">
@@ -85,9 +85,9 @@ function CastCard({ person }: { person: CastRowPerson }) {
           }
         />
       </div>
-      <p className="mt-1.5 truncate text-[12px] font-medium text-[var(--text)]">{person.name}</p>
+      <p className="mt-1.5 truncate text-sub font-medium text-[var(--text)]">{person.name}</p>
       {person.role && (
-        <p className="truncate text-[11px] text-[var(--text-faint)]">饰 {person.role}</p>
+        <p className="truncate text-caption text-[var(--text-faint)]">饰 {person.role}</p>
       )}
     </>
   );
