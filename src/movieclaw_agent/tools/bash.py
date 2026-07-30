@@ -33,8 +33,10 @@ _DESCRIPTION = (
 
 
 def make_bash_tool(workdir: Path, extra_env: dict[str, str] | None = None) -> AgentTool:
-    """extra_env：附加到子进程环境的变量（如 mclaw CLI 的服务器地址与令牌），
-    与进程环境合并、同名覆盖。"""
+    """extra_env：附加到子进程环境的变量，与进程环境合并、同名覆盖。
+
+    产品授权令牌刻意**不**走这里（bash 里 `env` 不该看到凭证）——
+    mclaw 操作有专用工具（tools/mclaw.py），令牌只注入那边的子进程。"""
 
     async def handler(args: dict) -> str:
         command: str = args["command"]
@@ -99,6 +101,4 @@ def _truncate_tail(text: str, *, label: str) -> str:
     ) as f:
         f.write(text)
         full_path = f.name
-    return (
-        f"（输出过长已截断，仅保留末尾部分；完整输出已保存到 {full_path}）\n" + truncated
-    )
+    return f"（输出过长已截断，仅保留末尾部分；完整输出已保存到 {full_path}）\n" + truncated

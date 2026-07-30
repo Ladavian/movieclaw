@@ -7,7 +7,8 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from movieclaw_agent import AgentRunner, AgentStartParams, AgentTool
-from movieclaw_agent.tools import builtin_tools
+from movieclaw_agent.tools import builtin_tools, make_mclaw_tool
+from movieclaw_api.api.deps import require_login
 from movieclaw_api.core.config import get_settings
 from movieclaw_api.exceptions import BadRequestException, NotFoundException
 from movieclaw_api.schemas.agent import (
@@ -23,6 +24,7 @@ from movieclaw_api.services.agent_runs import get_agent_run_registry
 from movieclaw_api.services.agent_session_recorder import AgentSessionRecorder
 from movieclaw_api.services.agent_sessions import get_agent_session_store
 from movieclaw_api.services.llm_config import acquire_llm_router
+from movieclaw_api.services.mclaw_tool import render_service_map
 from movieclaw_db.engine import get_session
 from movieclaw_db.repositories.agent_session_repo import (
     AgentSessionRepository,
@@ -33,17 +35,19 @@ from movieclaw_llm import ChatMessage
 router = APIRouter(prefix="/agent", tags=["agent"])
 
 
-def get_agent_tools(extra_env: dict[str, str] | None = None) -> list[AgentTool]:
-    """Agent 的工具集（内置基础工具 + 后续领域工具的注册挂点）。
+def get_agent_tools(cli_env: dict[str, str]) -> list[AgentTool]:
+    """Agent 的工具集：内置基础工具 + mclaw 产品操作工具。
 
-    一期内置 bash / read / write / edit，工作目录取配置的 agent 工作区
-    （首次调用时确保目录存在）。领域工具（站点搜索、提交下载等）后续
-    在此列表追加。extra_env 注入 bash 子进程环境——mclaw CLI 的自动授权
-    走这里（每次运行的令牌不同，因此每次运行都重新构建工具集）。
+    bash/read/write/edit 是纯工作区工具，**不携带**产品授权；mclaw 工具
+    单独构建，令牌只注入它的子进程（每次运行的令牌不同，因此每次运行都
+    重新构建工具集）。服务目录渲染自 CLI 内置 spec，与命令面严格同版。
     """
     workdir = Path(get_settings().agent_workspace_dir).resolve()
     workdir.mkdir(parents=True, exist_ok=True)
-    return [*builtin_tools(workdir, extra_env)]
+    return [
+        *builtin_tools(workdir),
+        make_mclaw_tool(workdir, cli_env, render_service_map()),
+    ]
 
 
 async def _cli_env(session_id: str) -> dict[str, str]:
@@ -70,6 +74,7 @@ async def _cli_env(session_id: str) -> dict[str, str]:
 )
 async def start_agent(
     payload: AgentStartPayload,
+    identity: str = Depends(require_login),
     session: AsyncSession = Depends(get_session),
 ) -> ApiResponse[AgentStartView]:
     """创建后台运行并立即返回编号，执行生命周期不再绑定当前 HTTP 连接。
@@ -83,6 +88,12 @@ async def start_agent(
     再访问该 session。尚未配置模型供应商时同步返回 404，且因校验前置，不会残
     留任何空会话记录，便于前端引导用户去设置。
     """
+    # 递归硬闸（docs/design/agent-cli-integration.md §4）：Agent 工作区令牌
+    # 不允许再发起新的 Agent 运行——工具层已有软闸，这里是绕过工具（curl 等）
+    # 也拦得住的最后防线。放在一切校验/落盘之前。
+    if identity.startswith("agent:"):
+        raise BadRequestException("Agent 工作区内不能再发起新的 Agent 运行（禁止递归）")
+
     store = get_agent_session_store()
     repo = AgentSessionRepository(session)
 
@@ -116,7 +127,7 @@ async def start_agent(
 
     runner = AgentRunner(
         llm_router,
-        tools=get_agent_tools(extra_env=await _cli_env(session_id)),
+        tools=get_agent_tools(await _cli_env(session_id)),
         on_message=recorder.on_message,
     )
     params = AgentStartParams(input=payload.input, history=history, model=payload.model)
