@@ -44,9 +44,11 @@ class PreparePayload(BaseModel):
       收敛精度更高）。
     """
 
-    source: Literal["tmdb", "douban"] = "tmdb"
+    source: Literal["tmdb", "douban"] = Field(
+        default="tmdb", description="入口来源：tmdb（带 tmdb_id）/ douban（带 title，可配 year）"
+    )
     kind: MediaKind
-    tmdb_id: int | None = None
+    tmdb_id: int | None = Field(default=None, description="source=tmdb 时必填的 TMDB 条目 id")
     title: str | None = Field(default=None, description="豆瓣入口：豆瓣标题")
     year: int | None = Field(default=None, description="豆瓣入口：年份（可缺）")
     douban_id: str | None = Field(default=None, description="豆瓣入口：豆瓣条目 ID")
@@ -192,23 +194,31 @@ class DispatchPreviewView(BaseModel):
 
 class SubscriptionCreatePayload(BaseModel):
     kind: MediaKind
-    tmdb_id: int
-    selected_seasons: list[int] = Field(default_factory=list)
-    follow_future: bool = False
+    tmdb_id: int = Field(description="TMDB 条目 id（movie 用电影 id，tv 用剧集 id）")
+    selected_seasons: list[int] = Field(
+        default_factory=list, description="剧集要订阅的季号数组，如 [1,2]；空=全部缺失季"
+    )
+    follow_future: bool = Field(default=False, description="持续追新：未来新季自动纳入订阅")
     rule_set_id: int | None = Field(default=None, description="缺省用默认规则组")
     library_id: int | None = Field(default=None, description="入库目标库；缺省用该类型默认库")
     douban_id: str | None = Field(default=None, description="豆瓣入口时带上，留存来源身份")
 
 
 class SubscriptionUpdatePayload(BaseModel):
-    selected_seasons: list[int] | None = None
-    follow_future: bool | None = None
-    rule_set_id: int | None = None
+    """部分更新语义：不传的字段一律保持不变。"""
+
+    selected_seasons: list[int] | None = Field(
+        default=None, description="新的季选择，如 [1,2]；不传=不变"
+    )
+    follow_future: bool | None = Field(
+        default=None, description="是否持续追新（新季自动纳入）；不传=不变"
+    )
+    rule_set_id: int | None = Field(default=None, description="换绑规则组 id；不传=不变")
     library_id: int | None = Field(default=None, description="换入库目标库；缺省不变")
 
 
 class SubscriptionPausePayload(BaseModel):
-    paused: bool
+    paused: bool = Field(description="true=暂停（停止抓种与投递）；false=恢复追踪")
 
 
 class ProgressView(BaseModel):
@@ -353,8 +363,19 @@ class ActivityView(BaseModel):
 
 
 class RuleSetPayload(BaseModel):
-    name: str
-    spec: dict = Field(default_factory=dict, description="RuleSetSpec 形态的 JSON")
+    name: str = Field(description="规则组名称（订阅列表与选择器里的展示名）")
+    spec: dict = Field(
+        default_factory=dict,
+        description=(
+            "过滤规则 JSON（全部键可缺省=不限）："
+            'resolutions 分辨率偏好序（如 ["2160p","1080p"]，顺序即优先级）、'
+            "video_codecs 编码白名单、release_groups_allow/release_groups_block "
+            "制作组白/黑名单、hdr 策略（any/require/forbid）、free_only 只要免费种、"
+            "min_seeders 做种数下限、size_min_mb/size_max_mb 体积区间（整季包按每集均摊）、"
+            "exclude_hr 排除 H&R。"
+            '例：{"resolutions":["2160p"],"free_only":true}'
+        ),
+    )
 
 
 class HealthCheckView(BaseModel):

@@ -78,7 +78,9 @@ def _translate(exc: TmdbError | DoubanError) -> AppException:
 )
 async def search_media(
     q: str = Query(min_length=1, max_length=100),
-    source: DiscoverSource = Query(default=DiscoverSource.DOUBAN),
+    source: DiscoverSource = Query(
+        default=DiscoverSource.DOUBAN, description="元数据来源：tmdb / douban"
+    ),
     history: bool = Query(
         False,
         description="是否记录搜索历史并留存结果快照（统一搜索入口传 True；"
@@ -154,7 +156,9 @@ async def _record_media_history(
 )
 async def get_discover_page(
     kind: MediaKind,
-    source: DiscoverSource = Query(default=DiscoverSource.TMDB),
+    source: DiscoverSource = Query(
+        default=DiscoverSource.TMDB, description="数据来源：tmdb（热门榜单）/ douban（豆瓣 Top250）"
+    ),
 ) -> ApiResponse[DiscoverPage]:
     """返回一个完整发现页：kind=movie 发现电影，kind=tv 发现剧集。
 

@@ -38,7 +38,7 @@ def _service(session: AsyncSession) -> SubscriptionService:
 @router.post(
     "/prepare",
     response_model=ApiResponse[PrepareView],
-    summary="订阅预检：建档条目并返回季集结构（弹层数据源）",
+    summary="订阅预检：建档条目、返回季集结构与库存；歧义时返回候选清单",
     operation_id="sub.prepare",
 )
 async def prepare_subscription(
@@ -151,7 +151,7 @@ async def dispatch_preview(
     ),
     session: AsyncSession = Depends(get_session),
 ) -> ApiResponse[DispatchPreviewView]:
-    """订阅弹窗选库时调用：与真实投递同源的三级兜底 + 映射守门判定，
+    """创建订阅前调用：与真实投递同源的三级兜底 + 映射守门判定，
     配置有问题（映射不覆盖/无下载器/无库根）在订阅那一刻就亮出来；
     未手选库时返回收藏范围路由结论（预选库 + 中文理由徽标）。"""
     from movieclaw_api.services.subscription import preview_dispatch_route
@@ -216,7 +216,7 @@ async def get_subscription(
 )
 async def list_subscription_activities(
     subscription_id: int,
-    limit: int = Query(default=100, ge=1, le=500),
+    limit: int = Query(default=100, ge=1, le=500, description="返回条数上限（时间倒序）"),
     session: AsyncSession = Depends(get_session),
 ) -> ApiResponse[list[ActivityView]]:
     service = _service(session)

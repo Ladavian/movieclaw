@@ -38,12 +38,19 @@ class AgentStartPayload(BaseModel):
     """
 
     input: str = Field(min_length=1, max_length=4000, description="任务描述（自然语言）")
-    #: 服务端会话 id：给出则续聊该会话（历史由服务端从转录重建），
-    #: 留空则新建会话。给出 session_id 时 history 字段被忽略。
-    session_id: str | None = Field(default=None, max_length=64)
-    #: （过渡期兼容）前端本地累积的历史；仅在未给 session_id 时用于拼装
-    #: LLM 上下文，不会写入服务端转录。前端切到服务端会话后删除。
-    history: list[AgentHistoryMessage] = Field(default_factory=list, max_length=100)
+    session_id: str | None = Field(
+        default=None,
+        max_length=64,
+        description="续聊已有会话的 id（历史由服务端从转录重建）；留空=新建会话。"
+        "给出时 history 字段被忽略",
+    )
+    # （过渡期兼容）调用方本地累积的历史；仅在未给 session_id 时用于拼装
+    # LLM 上下文，不会写入服务端转录
+    history: list[AgentHistoryMessage] = Field(
+        default_factory=list,
+        max_length=100,
+        description="本地历史消息数组（仅新建会话且需要预置上下文时用；一般留空）",
+    )
     model: str = Field(default="", description="模型引用（留空用默认供应商的默认模型）")
 
     @field_validator("input", "model", mode="before")

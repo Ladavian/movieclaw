@@ -123,7 +123,7 @@ async def configure_site(
 ) -> ApiResponse[ConfiguredSite]:
     """保存站点授权信息（状态置为 pending），并在后台异步发起有效性验证。
 
-    接口立即返回，前端可轮询 GET /sites/{site_id} 观察 status 变化：
+    接口立即返回，调用方可轮询站点详情（CLI：mclaw site show <id>）观察 status 变化：
     pending → verifying → active（可用）/ failed（见 last_error）。
     """
     service = SiteConfigService(session)

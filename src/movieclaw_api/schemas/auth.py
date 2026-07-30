@@ -25,7 +25,7 @@ class LoginRequest(BaseModel):
 
 
 class ChangePasswordRequest(BaseModel):
-    old_password: str = Field(min_length=1, max_length=128)
+    old_password: str = Field(min_length=1, max_length=128, description="当前密码（校验身份）")
     new_password: str = Field(min_length=8, max_length=128, description="新密码，至少 8 位")
 
 

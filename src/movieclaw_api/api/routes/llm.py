@@ -51,7 +51,7 @@ async def save_llm_provider(
     session: AsyncSession = Depends(get_session),
 ) -> ApiResponse[LlmProviderView]:
     """单例 upsert：有配置则整体覆盖。保存后状态置 pending 并在后台
-    用默认模型发一次最小对话验证；前端可轮询 GET /llm/provider 观察
+    用默认模型发一次最小对话验证；调用方可轮询供应商配置（CLI：mclaw llm provider show）观察
     status：pending → verifying → active / failed（见 last_error）。"""
     service = LlmConfigService(session)
     await service.upsert(

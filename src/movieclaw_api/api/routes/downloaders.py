@@ -41,7 +41,7 @@ async def submit_download(
 ) -> ApiResponse[DownloadSubmitView]:
     """手动下载：带站点登录态取回 .torrent → 提交给默认下载器。
 
-    保存目录取值：用户在下载弹窗手选的目录最优先；否则与订阅同一决策——
+    保存目录取值：调用方手选的 save_path 最优先；否则与订阅同一决策——
     选了库且库有监听导入规则 → 规则源目录（完成后监听导入接管、规范命名
     进库）；选库无规则 → 库推导路径（主根/标题 (年份)，直接下载进库原地
     收纳——扫描的完整性检测保证半成品不入账）；未选库 → 下载器默认目录。
@@ -135,7 +135,7 @@ async def create_downloader_config(
 ) -> ApiResponse[DownloaderView]:
     """保存下载器连接信息（状态置 pending），并在后台异步测试连通性。
 
-    接口立即返回，前端可轮询 GET /downloaders/{id} 观察 status 变化：
+    接口立即返回，调用方可轮询下载器详情（CLI：mclaw dl show <id>）观察 status 变化：
     pending → verifying → active（可用）/ failed（见 last_error）。
     """
     service = DownloaderConfigService(session)
@@ -212,7 +212,7 @@ async def set_default_downloader(
 ) -> ApiResponse[DownloaderView]:
     """把该下载器设为默认（一键下载不选目标时投给它），同时取消其他台的默认。
 
-    注意：其他记录的 is_default 也会随之变化，前端应整体刷新列表。"""
+    注意：其他记录的 is_default 也会随之变化，调用方应重新读取列表。"""
     service = DownloaderConfigService(session)
     row = await service.set_default(downloader_id)
     return ok(DownloaderView.from_model(row), message="已设为默认下载器")

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, Header
+from fastapi import APIRouter, Depends, Header, Query
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -135,12 +135,12 @@ async def start_agent(
     operation_id="agent.sessions.list",
 )
 async def list_agent_sessions(
-    limit: int = 50,
-    offset: int = 0,
+    limit: int = Query(default=50, description="返回条数上限"),
+    offset: int = Query(default=0, description="分页偏移（跳过前 N 条）"),
     session: AsyncSession = Depends(get_session),
 ) -> ApiResponse[list[AgentSessionListItem]]:
     """从索引表分页读取；运行状态由 active_run_id + 心跳窗派生，
-    running 的条目附带 active_run_id 供前端重新挂上 SSE。"""
+    running 的条目附带 active_run_id 供调用方重新订阅事件流。"""
     rows = await AgentSessionRepository(session).list_recent(
         limit=min(limit, 200), offset=max(offset, 0)
     )

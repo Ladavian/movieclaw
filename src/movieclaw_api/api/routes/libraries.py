@@ -270,7 +270,7 @@ async def list_libraries(
 @router.get(
     "/routing-options",
     response_model=ApiResponse[dict],
-    summary="收藏范围的可选项（类型 chips 与区域预设，配置界面数据源）",
+    summary="收藏范围的可选项（媒体类型与区域预设，配置库路由规则时使用）",
     operation_id="lib.routing-options",
 )
 async def routing_options() -> ApiResponse[dict]:
@@ -349,7 +349,7 @@ async def _group_by_entry_dir(
     operation_id="lib.unidentified.list",
 )
 async def list_unidentified(
-    library_id: int | None = Query(default=None),
+    library_id: int | None = Query(default=None, description="按库过滤；不传=全部库"),
     session: AsyncSession = Depends(get_session),
 ) -> ApiResponse[list[UnidentifiedGroupView]]:
     repo = LibraryFileRepository(session)
@@ -364,7 +364,7 @@ async def list_unidentified(
     operation_id="lib.ignored.list",
 )
 async def list_ignored(
-    library_id: int | None = Query(default=None),
+    library_id: int | None = Query(default=None, description="按库过滤；不传=全部库"),
     session: AsyncSession = Depends(get_session),
 ) -> ApiResponse[list[UnidentifiedGroupView]]:
     """被忽略的文件不再参与识别，也不占待识别清单——但记录始终保留。
@@ -385,7 +385,7 @@ async def list_ignored(
     operation_id="lib.review.list",
 )
 async def list_identity_review(
-    library_id: int | None = Query(default=None),
+    library_id: int | None = Query(default=None, description="按库过滤；不传=全部库"),
     session: AsyncSession = Depends(get_session),
 ) -> ApiResponse[list[ReviewGroupView]]:
     """识别器升级后，扫描复核发现「现挂身份」与「新识别结论」不一致的文件。
@@ -597,7 +597,7 @@ async def set_default_library(
     session: AsyncSession = Depends(get_session),
 ) -> ApiResponse[LibraryView]:
     """把该库设为其类型的默认库（订阅/手动下载不选库时用它），
-    同 kind 其他库的默认标记随之取消，前端应整体刷新列表。"""
+    同 kind 其他库的默认标记随之取消，调用方应重新读取列表。"""
     service = LibraryConfigService(session)
     row = await service.set_default(library_id)
     return ok(LibraryView.from_model(row), message=f"「{row.name}」已设为默认库")
@@ -793,7 +793,7 @@ async def refresh_item_metadata(
 @router.get(
     "/{library_id}/items/{media_item_id}/artwork/candidates",
     response_model=ApiResponse[ArtworkCandidatesView],
-    summary="条目的候选海报/背景（「更换图片」弹层数据源）",
+    summary="条目的候选海报/背景图列表（选图前先看这里）",
     operation_id="lib.items.artwork-candidates",
 )
 async def list_artwork_candidates_route(
@@ -911,7 +911,7 @@ async def start_organize(
     session: AsyncSession = Depends(get_session),
 ) -> ApiResponse[OrganizeStartView]:
     """执行时重新计算计划并逐文件「改名 → 台账随迁」。改名直接发生在
-    磁盘上、无法一键撤销——前端必须先展示预览并取得用户确认再调用。"""
+    磁盘上、无法一键撤销——调用方必须先用预览接口确认影响面再调用。"""
     service = LibraryConfigService(session)
     library = await service.get(library_id)
     if is_organizing(library_id):
@@ -1154,7 +1154,7 @@ async def get_library_item(
 async def list_item_episodes(
     library_id: int,
     media_item_id: int,
-    season_number: int = Query(ge=0),
+    season_number: int = Query(ge=0, description="季号（0=特别篇）"),
     session: AsyncSession = Depends(get_session),
 ) -> ApiResponse[SeasonEpisodesView]:
     """并集"元数据里的集 ∪ 库里实有的集"：缺集也列出（owned=false 置灰）。
@@ -1211,7 +1211,9 @@ async def get_file_thumb(
 async def get_item_artwork(
     library_id: int,
     media_item_id: int,
-    kind: Literal["poster", "fanart"] = Query(default="poster"),
+    kind: Literal["poster", "fanart"] = Query(
+        default="poster", description="poster=海报 / fanart=背景图"
+    ),
     session: AsyncSession = Depends(get_session),
 ) -> FileResponse:
     """路径完全由服务端从台账推导（客户端只给 id），不存在路径注入面。"""
@@ -1246,7 +1248,7 @@ async def delete_library_item(
     session: AsyncSession = Depends(get_session),
 ) -> ApiResponse[ItemDeleteResultView]:
     """全站唯一会删磁盘文件的接口——与「忽略/清理记录」（只动台账）截然
-    不同，前端必须经过明确的二次确认才能调用。删除失败的文件保留台账行。"""
+    不同，调用方必须先向用户明确确认再调用（CLI 已强制 --yes）。删除失败的文件保留台账行。"""
     service = LibraryConfigService(session)
     library = await service.get(library_id)
     _assert_not_busy(library.name, library_id)
