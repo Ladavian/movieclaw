@@ -260,20 +260,39 @@ class _Collection:
     count: int = 30
 
 
+# 行序参考 Netflix 的发现页编排：实时趋势（大数字排名行）打头，随后是时效性
+# 内容（院线/热门），再到口碑榜，最后是常青的经典与分类榜——越靠上时效性越强。
 _MOVIE_COLLECTIONS = (
     _Collection("movie_real_time_hotest", "豆瓣实时热门电影", True),
+    _Collection("movie_showing", "影院热映"),
+    _Collection("movie_soon", "即将上映"),
+    _Collection("movie_hot_gaia", "豆瓣热门电影"),
     _Collection("movie_weekly_best", "豆瓣一周口碑电影榜", True),
+    _Collection("EC7Q5H2QI", "近期高分电影"),
     # 豆瓣接口支持单次返回完整 250 条；普通榜单仍只取首屏 30 条，避免无谓传输。
     _Collection("movie_top250", "豆瓣电影 Top 250", True, 250),
-    _Collection("EC7Q5H2QI", "近期高分电影"),
+    _Collection("movie_classic", "经典电影"),
+    _Collection("movie_scifi", "高分经典科幻片榜"),
+    _Collection("movie_comedy", "高分经典喜剧片榜"),
+    _Collection("movie_action", "高分经典动作片榜"),
+    _Collection("movie_love", "高分经典爱情片榜"),
 )
+# 剧集侧同理：实时榜与全量热门在前，口碑榜居中，地区细分行随后，动画与综艺
+# 垫底自成品类区。地区行使用豆瓣官方命名榜单 ID（tv_domestic 等），不再用内容
+# 等价但含义不透明的 EC 自定义榜单 ID。综艺/动画条目在豆瓣侧 type 同为 tv，
+# 可直接通过 _to_card 的类型过滤。
 _TV_COLLECTIONS = (
+    _Collection("tv_real_time_hotest", "豆瓣实时热门剧集", True),
+    _Collection("tv_hot", "近期热门剧集"),
     _Collection("tv_chinese_best_weekly", "华语口碑剧集榜", True),
     _Collection("tv_global_best_weekly", "全球口碑剧集榜", True),
-    _Collection("EC74443FY", "近期热门大陆剧"),
-    _Collection("ECFA5DI7Q", "近期热门美剧"),
-    _Collection("ECNA46YBA", "近期热门日剧"),
-    _Collection("ECBE5CBEI", "近期热门韩剧"),
+    _Collection("tv_domestic", "近期热门国产剧"),
+    _Collection("tv_american", "近期热门美剧"),
+    _Collection("tv_japanese", "近期热门日剧"),
+    _Collection("tv_korean", "近期热门韩剧"),
+    _Collection("tv_animation", "近期热门动画"),
+    _Collection("show_domestic", "近期热门国内综艺"),
+    _Collection("show_foreign", "近期热门国外综艺"),
 )
 
 

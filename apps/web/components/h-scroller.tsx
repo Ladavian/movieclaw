@@ -61,7 +61,11 @@ export function HScroller({
   };
 
   return (
-    <div className="group/hscroll relative">
+    // onPointerEnter 重测：行被 content-visibility 跳过渲染时挂载测量读到的
+    // 尺寸全是 0，滚入视口浏览器恢复渲染但不会触发 React 重渲染——翻页钮
+    // 只在悬停时浮现，进场先重测一次即可保证钮的可用性正确；测量已并帧，
+    // 重复触发无额外开销
+    <div className="group/hscroll relative" onPointerEnter={updateEdges}>
       <div
         ref={scrollerRef}
         onScroll={updateEdges}

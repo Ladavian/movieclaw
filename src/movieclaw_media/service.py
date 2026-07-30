@@ -85,44 +85,119 @@ class _RowSpec:
 
 
 def _movie_rows(region: str) -> tuple[_RowSpec, ...]:
+    # 行序参考 Netflix 发现页编排：趋势排名行打头，院线时效内容随后，热门与
+    # 口碑居中，地区行与类型行垫后。discover 查询统一带 vote_count 下限挡住
+    # 冷门残缺条目；类型 ID（878 科幻、28 动作等）是 TMDB 官方文档的稳定常量。
     return (
         _RowSpec("trending-day", "今日热榜 Top 10", "trending/movie/day", ranked=True, limit=10),
-        _RowSpec("popular", "热门电影", "movie/popular"),
         _RowSpec("now-playing", "正在热映", "movie/now_playing", {"region": region}),
-        _RowSpec("top-rated", "高分经典", "movie/top_rated"),
         _RowSpec("upcoming", "即将上映", "movie/upcoming", {"region": region}),
+        _RowSpec("popular", "热门电影", "movie/popular"),
+        _RowSpec("top-rated", "高分经典", "movie/top_rated"),
         _RowSpec(
             "chinese", "华语佳片", "discover/movie",
             {"with_original_language": "zh", "sort_by": "popularity.desc", "vote_count.gte": 50},
         ),
         _RowSpec(
+            "japanese", "日本电影", "discover/movie",
+            {"with_origin_country": "JP", "sort_by": "popularity.desc", "vote_count.gte": 100},
+        ),
+        _RowSpec(
+            "korean", "韩国电影", "discover/movie",
+            {"with_origin_country": "KR", "sort_by": "popularity.desc", "vote_count.gte": 100},
+        ),
+        _RowSpec(
             "scifi", "科幻巨制", "discover/movie",
             {"with_genres": "878", "sort_by": "popularity.desc", "vote_count.gte": 300},
+        ),
+        # with_genres 里的竖线是「或」（逗号才是「且」）：28|12 = 动作或冒险
+        _RowSpec(
+            "action", "动作与冒险", "discover/movie",
+            {"with_genres": "28|12", "sort_by": "popularity.desc", "vote_count.gte": 300},
+        ),
+        _RowSpec(
+            "thriller", "悬疑惊悚", "discover/movie",
+            {"with_genres": "53|9648", "sort_by": "popularity.desc", "vote_count.gte": 300},
+        ),
+        _RowSpec(
+            "comedy", "喜剧佳作", "discover/movie",
+            {"with_genres": "35", "sort_by": "popularity.desc", "vote_count.gte": 200},
+        ),
+        _RowSpec(
+            "romance", "爱情电影", "discover/movie",
+            {"with_genres": "10749", "sort_by": "popularity.desc", "vote_count.gte": 200},
+        ),
+        _RowSpec(
+            "horror", "恐怖片", "discover/movie",
+            {"with_genres": "27", "sort_by": "popularity.desc", "vote_count.gte": 200},
         ),
         _RowSpec(
             "animation", "动画电影", "discover/movie",
             {"with_genres": "16", "sort_by": "popularity.desc", "vote_count.gte": 200},
         ),
+        _RowSpec(
+            "documentary", "纪录片", "discover/movie",
+            {"with_genres": "99", "sort_by": "popularity.desc", "vote_count.gte": 50},
+        ),
     )
 
 
 def _tv_rows() -> tuple[_RowSpec, ...]:
+    # 剧集侧同理：趋势与在播内容在前，热门/口碑居中，然后是地区行与播出平台
+    # 品牌行（Netflix/HBO 是发现页里辨识度最高的两块金字招牌），类型行垫后。
     return (
         _RowSpec("trending-day", "今日热榜 Top 10", "trending/tv/day", ranked=True, limit=10),
-        _RowSpec("popular", "热门剧集", "tv/popular"),
         _RowSpec("on-the-air", "正在播出", "tv/on_the_air"),
+        _RowSpec("popular", "热门剧集", "tv/popular"),
         _RowSpec("top-rated", "高分神剧", "tv/top_rated"),
         _RowSpec(
             "chinese", "华语剧集", "discover/tv",
             {"with_original_language": "zh", "sort_by": "popularity.desc", "vote_count.gte": 20},
         ),
         _RowSpec(
+            "us", "热门美剧", "discover/tv",
+            {"with_origin_country": "US", "sort_by": "popularity.desc", "vote_count.gte": 50},
+        ),
+        _RowSpec(
+            "japanese", "热门日剧", "discover/tv",
+            {"with_origin_country": "JP", "sort_by": "popularity.desc", "vote_count.gte": 20},
+        ),
+        _RowSpec(
+            "korean", "热门韩剧", "discover/tv",
+            {"with_origin_country": "KR", "sort_by": "popularity.desc", "vote_count.gte": 20},
+        ),
+        # 播出平台行：with_networks 的 213=Netflix、49=HBO（TMDB network ID）
+        _RowSpec(
+            "netflix", "Netflix 出品", "discover/tv",
+            {"with_networks": "213", "sort_by": "popularity.desc", "vote_count.gte": 50},
+        ),
+        _RowSpec(
+            "hbo", "HBO 出品", "discover/tv",
+            {"with_networks": "49", "sort_by": "popularity.desc", "vote_count.gte": 50},
+        ),
+        _RowSpec(
             "scifi-fantasy", "科幻与奇幻", "discover/tv",
             {"with_genres": "10765", "sort_by": "popularity.desc", "vote_count.gte": 100},
         ),
         _RowSpec(
+            "crime-mystery", "悬疑罪案", "discover/tv",
+            {"with_genres": "80|9648", "sort_by": "popularity.desc", "vote_count.gte": 50},
+        ),
+        _RowSpec(
+            "comedy", "喜剧剧集", "discover/tv",
+            {"with_genres": "35", "sort_by": "popularity.desc", "vote_count.gte": 100},
+        ),
+        _RowSpec(
             "animation", "动画剧集", "discover/tv",
             {"with_genres": "16", "sort_by": "popularity.desc", "vote_count.gte": 100},
+        ),
+        _RowSpec(
+            "reality", "真人秀", "discover/tv",
+            {"with_genres": "10764", "sort_by": "popularity.desc", "vote_count.gte": 20},
+        ),
+        _RowSpec(
+            "documentary", "纪录片", "discover/tv",
+            {"with_genres": "99", "sort_by": "popularity.desc", "vote_count.gte": 20},
         ),
     )
 

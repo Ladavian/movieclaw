@@ -33,7 +33,10 @@ export function MediaRow({
   cardHref?: (item: MediaItem) => Route | undefined;
 }) {
   return (
-    <section className="relative">
+    // content-visibility：视口外的整行（标题 + 几十张海报卡）跳过布局与绘制，
+    // 发现页 16 行 / 库首页多行「最近添加」的首帧与滚动成本只与可见行相关；
+    // intrinsic-size 先占住一行的近似高度（auto 记住实测值），滚动条不跳
+    <section className="relative [contain-intrinsic-size:auto_330px] [content-visibility:auto]">
       <div className="mb-3 flex items-center justify-between gap-4 px-6 max-md:mb-2 max-md:px-4">
         <h3 className="text-on-image text-[15px] font-semibold tracking-[-0.01em] text-[var(--text)]">
           {row.title}

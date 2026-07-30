@@ -157,7 +157,7 @@ async def _record_media_history(
 async def get_discover_page(
     kind: MediaKind,
     source: DiscoverSource = Query(
-        default=DiscoverSource.TMDB, description="数据来源：tmdb（热门榜单）/ douban（豆瓣 Top250）"
+        default=DiscoverSource.TMDB, description="数据来源：tmdb（热门榜单）/ douban（豆瓣榜单）"
     ),
 ) -> ApiResponse[DiscoverPage]:
     """返回一个完整发现页：kind=movie 发现电影，kind=tv 发现剧集。
