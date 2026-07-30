@@ -289,7 +289,7 @@ def _confirm_danger(op: dict[str, Any], settings: Any, arg_line: str) -> None:
     )
 
 
-def _wait_long_task(
+def wait_long_task(
     op: dict[str, Any],
     ops_by_id: dict[str, dict[str, Any]],
     api: Api,
@@ -380,7 +380,7 @@ def _make_command(op: dict[str, Any], ops_by_id: dict[str, dict[str, Any]]) -> c
                 print(api.last_message, file=sys.stderr)
             emit(data, output=settings.output, quiet=settings.quiet)
             if op["long_task"] and wait:
-                _wait_long_task(op, ops_by_id, api, kwargs, wait_timeout)
+                wait_long_task(op, ops_by_id, api, kwargs, wait_timeout)
         finally:
             api.close()
 

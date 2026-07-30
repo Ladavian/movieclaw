@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 
 from movieclaw_cli.core.errors import CliError, ExitCode
-from movieclaw_cli.gen.tree_builder import _build_body, _wait_long_task
+from movieclaw_cli.gen.tree_builder import _build_body, wait_long_task
 
 
 def _op_with_body() -> dict:
@@ -51,7 +51,7 @@ def test_input_replaces_field_flags(tmp_path) -> None:
 
 
 class _FakeApi:
-    """按序返回预设进度的假客户端（只实现 _wait_long_task 用到的 request）。"""
+    """按序返回预设进度的假客户端（只实现 wait_long_task 用到的 request）。"""
 
     def __init__(self, responses: list) -> None:
         self._responses = responses
@@ -82,7 +82,7 @@ def test_wait_terminates_when_progress_field_becomes_null(monkeypatch) -> None:
             {"scan_progress": None},
         ]
     )
-    _wait_long_task(op, ops_by_id, api, {"library_id": 1}, wait_timeout=60)
+    wait_long_task(op, ops_by_id, api, {"library_id": 1}, wait_timeout=60)
     assert api.calls == 3
 
 
@@ -90,7 +90,7 @@ def test_wait_terminates_on_done_field(monkeypatch) -> None:
     monkeypatch.setattr("time.sleep", lambda _s: None)
     op, ops_by_id = _long_task_op({"progress_op": "lib.show", "done_field": "refreshing"})
     api = _FakeApi([{"refreshing": True}, {"refreshing": False}])
-    _wait_long_task(op, ops_by_id, api, {"library_id": 1}, wait_timeout=60)
+    wait_long_task(op, ops_by_id, api, {"library_id": 1}, wait_timeout=60)
     assert api.calls == 2
 
 
@@ -105,6 +105,6 @@ def test_wait_timeout_exits_6(monkeypatch) -> None:
     op, ops_by_id = _long_task_op({"progress_op": "lib.show", "progress_field": "scan_progress"})
     api = _FakeApi([{"scan_progress": {"phase": "盘点"}} for _ in range(10)])
     with pytest.raises(CliError) as exc:
-        _wait_long_task(op, ops_by_id, api, {"library_id": 1}, wait_timeout=50)
+        wait_long_task(op, ops_by_id, api, {"library_id": 1}, wait_timeout=50)
     assert exc.value.exit_code == ExitCode.TASK_FAILED
     assert "lib show" in (exc.value.hint or "")

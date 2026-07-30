@@ -27,6 +27,9 @@ SPEC_HASH_HEADER = "X-Movieclaw-Spec-Hash"
 last_seen_spec_hash: str | None = None
 last_seen_server: str | None = None
 
+# 测试注入点：进程内测试用 httpx.MockTransport 替换真实网络（生产恒为 None）
+default_transport: httpx.BaseTransport | None = None
+
 
 class Api:
     """面向单个 movieclaw 服务器的同步 HTTP 客户端。"""
@@ -54,7 +57,7 @@ class Api:
             timeout=timeout,
             cookies=cookies,
             headers=headers,
-            transport=transport,
+            transport=transport or default_transport,
         )
 
     def close(self) -> None:
@@ -90,6 +93,39 @@ class Api:
             files = {"file": (upload_path.name, upload_path.read_bytes())}
         response = self._send(method, path, params=params, json_body=json_body, files=files)
         return self._parse(response), response
+
+    def stream_sse(
+        self,
+        path: str,
+        *,
+        params: dict[str, Any] | None = None,
+        last_event_id: int | None = None,
+    ):
+        """订阅一个 SSE 端点，产出 SseEvent（生成器；调用方 for 循环消费）。
+
+        连接前的 4xx（未登录/不存在）走统一错误映射；连接建立后的断流
+        由调用方决定是否用 last_event_id 重连（Agent 流）或放弃（搜索流）。
+        """
+        from movieclaw_cli.core.sse import parse_sse_lines
+
+        url = f"{API_PREFIX}{path}"
+        headers = {"Accept": "text/event-stream"}
+        if last_event_id is not None:
+            headers["Last-Event-ID"] = str(last_event_id)
+        try:
+            with self._client.stream(
+                "GET", url, params=params, headers=headers, timeout=httpx.Timeout(30, read=None)
+            ) as response:
+                if response.status_code >= 400:
+                    response.read()
+                    self._parse(response)  # 统一错误映射（会抛 CliError）
+                yield from parse_sse_lines(response.iter_lines())
+        except httpx.ConnectError as exc:
+            raise CliError(
+                f"无法连接 movieclaw 服务器：{self.server}",
+                exit_code=ExitCode.NETWORK,
+                hint="确认服务已启动、地址正确（含端口）",
+            ) from exc
 
     def download(self, path: str, target: Path, *, params: dict[str, Any] | None = None) -> None:
         """文件直出端点：把响应内容写到本地文件。"""
