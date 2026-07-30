@@ -22,6 +22,7 @@ import {
   updateDownloader,
 } from "@/lib/api/downloaders";
 import { formatRelativeTime } from "@/lib/time";
+import { useVisiblePolling } from "@/lib/use-visible-polling";
 import { LiquidGlassButton } from "@/vendor/liquid-glass";
 
 /** 连接状态 → 展示文案与颜色（与站点配置同语言） */
@@ -93,19 +94,18 @@ export function DownloaderConfigSection() {
     setEditing(target.id);
   }, [suggestMapping, loading, downloaders]);
 
-  // 有下载器处于 pending/verifying 时轮询刷新，直到全部落定
+  // 有下载器处于 pending/verifying 时轮询刷新，直到全部落定（页面隐藏时暂停）
   const hasInProgress = downloaders.some((d) => IN_PROGRESS.includes(d.status));
-  useEffect(() => {
-    if (!hasInProgress) return;
-    const timer = setInterval(() => {
+  useVisiblePolling(
+    () => {
       void listDownloaders()
         .then(setDownloaders)
         .catch(() => {
           /* 轮询失败静默重试，不打断页面 */
         });
-    }, 2000);
-    return () => clearInterval(timer);
-  }, [hasInProgress]);
+    },
+    hasInProgress ? 2000 : null,
+  );
 
   // 原地替换已有条目、新条目追加到末尾（保持列表顺序稳定，避免操作后跳位）
   const upsert = useCallback((next: ConfiguredDownloader) => {

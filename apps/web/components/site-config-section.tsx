@@ -25,6 +25,7 @@ import {
 } from "@/lib/api/sites";
 import { formatBytes, formatCompact, formatDuration, formatRatio } from "@/lib/format";
 import { formatDateTime, formatRelativeTime } from "@/lib/time";
+import { useVisiblePolling } from "@/lib/use-visible-polling";
 import { LiquidGlassButton, LiquidGlassInput } from "@/vendor/liquid-glass";
 
 /** 站点验证状态 → 展示文案与颜色 */
@@ -135,19 +136,18 @@ export function SiteConfigSection() {
     void load();
   }, [load]);
 
-  // 有站点处于 pending/verifying 时轮询刷新，直到全部落定
+  // 有站点处于 pending/verifying 时轮询刷新，直到全部落定（页面隐藏时暂停）
   const hasInProgress = configured.some((s) => IN_PROGRESS.includes(s.status));
-  useEffect(() => {
-    if (!hasInProgress) return;
-    const timer = setInterval(() => {
+  useVisiblePolling(
+    () => {
       void listConfiguredSites()
         .then(setConfigured)
         .catch(() => {
           /* 轮询失败静默重试，不打断页面 */
         });
-    }, 2500);
-    return () => clearInterval(timer);
-  }, [hasInProgress]);
+    },
+    hasInProgress ? 2500 : null,
+  );
 
   // 原地替换已有站点、新站点追加到末尾。
   // 注意：切换启用开关等操作也会走这里，必须保持列表顺序不变，否则被操作的站点会跳位，体验割裂。

@@ -14,6 +14,7 @@ import {
   startLibraryOrganize,
 } from "@/lib/api/libraries";
 import { formatBytes } from "@/lib/format";
+import { useVisiblePolling } from "@/lib/use-visible-polling";
 
 /**
  * 整理文件名对话框：预览 → 确认 → 执行 → 结果，四段式流程。
@@ -92,10 +93,10 @@ export function LibraryOrganizeDialog({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [libraryId]);
 
-  // 执行中轮询单库详情：画进度，结束后取整理结论进结果页
-  useEffect(() => {
-    if (phase !== "running" || libraryId === null) return;
-    const timer = setInterval(() => {
+  // 执行中轮询单库详情：画进度，结束后取整理结论进结果页（页面隐藏时暂停）
+  useVisiblePolling(
+    () => {
+      if (libraryId === null) return;
       void getLibrary(libraryId)
         .then((lib) => {
           if (lib.organizing) {
@@ -113,9 +114,9 @@ export function LibraryOrganizeDialog({
           // 两个凭据都没有：任务还没起跑，继续等下一轮
         })
         .catch(() => {});
-    }, 1500);
-    return () => clearInterval(timer);
-  }, [phase, libraryId, onChanged]);
+    },
+    phase === "running" && libraryId !== null ? 1500 : null,
+  );
 
   // 预览按条目分组：同一部作品的文件放在一起看，比平铺清单好核对得多
   const groups = useMemo(() => {

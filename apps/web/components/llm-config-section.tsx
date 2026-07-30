@@ -17,6 +17,7 @@ import {
   saveLlmProvider,
 } from "@/lib/api/llm";
 import { formatRelativeTime } from "@/lib/time";
+import { useVisiblePolling } from "@/lib/use-visible-polling";
 
 /** 连接状态 → 展示文案与颜色（与站点/下载器配置同语言） */
 const STATUS_META: Record<LlmProviderStatus, { label: string; color: string }> = {
@@ -64,19 +65,18 @@ export function LlmConfigSection() {
       .catch((e) => setError((e as Error).message));
   }, [load]);
 
-  // 处于 pending/verifying 时轮询刷新，直到落定
+  // 处于 pending/verifying 时轮询刷新，直到落定（页面隐藏时暂停）
   const inProgress = config != null && IN_PROGRESS.includes(config.status);
-  useEffect(() => {
-    if (!inProgress) return;
-    const timer = setInterval(() => {
+  useVisiblePolling(
+    () => {
       void getLlmProvider()
         .then(setConfig)
         .catch(() => {
           /* 轮询失败静默重试，不打断页面 */
         });
-    }, 2000);
-    return () => clearInterval(timer);
-  }, [inProgress]);
+    },
+    inProgress ? 2000 : null,
+  );
 
   async function guard(fn: () => Promise<void>) {
     setBusy(true);

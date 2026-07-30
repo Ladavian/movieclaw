@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { memo, useEffect, useMemo, useRef, useState } from "react";
 
 import { Composer } from "@/components/composer";
 import { HighlightedCode } from "@/components/highlighted-code";
@@ -134,7 +134,10 @@ export function AgentConversationView({ conversationId }: { conversationId: stri
 
 /* —— 单轮：用户气泡 + Agent 回应块 —— */
 
-function TurnView({ turn }: { turn: AgentTurn }) {
+/** memo：流式更新只替换正在生成那一轮的 turn 对象（store 是逐轮不可变更新），
+ *  历史轮次引用不变、比对通过即整轮跳过——长会话里没有它，每次增量都要
+ *  重建全部历史轮次的元素树。 */
+const TurnView = memo(function TurnView({ turn }: { turn: AgentTurn }) {
   return (
     <div className="space-y-4">
       {/* 用户消息：右侧玻璃气泡 */}
@@ -197,7 +200,7 @@ function TurnView({ turn }: { turn: AgentTurn }) {
       </div>
     </div>
   );
-}
+});
 
 /** 进行中的处理块此刻在做什么：取末尾条目推导实时状态。 */
 function processStatus(items: AgentProcessItem[]): string {
@@ -224,7 +227,7 @@ function processSummary(items: AgentProcessItem[]): string {
  * 处理过程折叠块（仿 Claude）：头部进行中显示实时状态、完成后显示一句话
  * 总结；点击展开思考与工具调用的混合列表（按实际发生顺序）。
  */
-function ProcessBlock({ segment, active }: { segment: AgentTurnSegment & { kind: "process" }; active: boolean }) {
+const ProcessBlock = memo(function ProcessBlock({ segment, active }: { segment: AgentTurnSegment & { kind: "process" }; active: boolean }) {
   const [open, setOpen] = useState(false);
   return (
     <div>
@@ -256,7 +259,7 @@ function ProcessBlock({ segment, active }: { segment: AgentTurnSegment & { kind:
       )}
     </div>
   );
-}
+});
 
 /**
  * 从定稿的 label（形如 `name({...json...})`）还原参数明细：
@@ -277,8 +280,15 @@ function toolInput(tool: AgentTurnToolCall): { lang: CodeLang; code: string } | 
   }
 }
 
-/** 单次工具调用卡片：参数完整展示（shiki 高亮）+ 生成/执行中/回执三种状态。 */
-function ToolCallCard({ tool }: { tool: AgentTurnToolCall }) {
+/** 单次工具调用卡片：参数完整展示（shiki 高亮）+ 生成/执行中/回执三种状态。
+ *  memo：store 对工具条目也是不可变更新，未被触碰的卡片整卡跳过；
+ *  参数明细的 JSON.parse/stringify（大参数可达几 KB）按 tool 缓存，
+ *  不再在每次渲染中内联执行。 */
+const ToolCallCard = memo(function ToolCallCard({ tool }: { tool: AgentTurnToolCall }) {
+  const input = useMemo(
+    () => (tool.argsDone === false ? null : toolInput(tool)),
+    [tool],
+  );
   return (
     <div className="rounded-lg border border-white/[0.05] bg-white/[0.02] px-2.5 py-1.5">
       {tool.argsDone === false ? (
@@ -295,10 +305,7 @@ function ToolCallCard({ tool }: { tool: AgentTurnToolCall }) {
       ) : (
         <>
           <p className="font-mono text-[11px] text-[var(--accent-2)]">⚙ {tool.name}</p>
-          {(() => {
-            const input = toolInput(tool);
-            return input && <HighlightedCode code={input.code} lang={input.lang} />;
-          })()}
+          {input && <HighlightedCode code={input.code} lang={input.lang} />}
         </>
       )}
       {tool.argsDone === false ? (
@@ -317,7 +324,7 @@ function ToolCallCard({ tool }: { tool: AgentTurnToolCall }) {
       )}
     </div>
   );
-}
+});
 
 /** 流式光标：正文尾部的呼吸圆点。 */
 function StreamingCursor() {

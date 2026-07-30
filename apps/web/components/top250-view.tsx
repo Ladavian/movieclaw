@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 
 import { PageNav } from "@/components/page-nav";
 import { SearchIcon } from "@/components/icons";
@@ -48,8 +48,18 @@ export function Top250View() {
     return [...counts].sort((a, b) => b[1] - a[1]);
   }, [items]);
 
+  // 排名查表：渲染时用 items.indexOf 是每格 O(n) 的线性扫描，250 格一轮渲染
+  // 就是数万次比较；榜单加载后排名固定，建一次 Map 终身使用
+  const rankById = useMemo(
+    () => new Map((items ?? []).map((item, index) => [item.id, index + 1])),
+    [items],
+  );
+
+  // 搜索输入用延迟值参与过滤：连续敲字时先渲染输入框本身，网格的全量
+  // 过滤与重渲染放到浏览器空闲时批量跟上，输入不再一字一卡
+  const deferredQuery = useDeferredValue(query);
   const filtered = useMemo(() => {
-    const keyword = query.trim().toLocaleLowerCase();
+    const keyword = deferredQuery.trim().toLocaleLowerCase();
     if (!items) return [];
     return items.filter((item) => {
       // 同一筛选维度采用「或」逻辑：选择科幻 + 动画即显示任一类型命中的影片。
@@ -62,7 +72,7 @@ export function Top250View() {
         item.originalTitle.toLocaleLowerCase().includes(keyword);
       return matchesGenre && matchesKeyword;
     });
-  }, [items, query, selectedGenres]);
+  }, [items, deferredQuery, selectedGenres]);
 
   const hasMore = visibleCount < filtered.length;
 
@@ -197,7 +207,7 @@ export function Top250View() {
           ) : (
             <div className="grid grid-cols-2 gap-x-4 gap-y-7 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 2xl:grid-cols-8">
               {filtered.slice(0, visibleCount).map((item) => {
-                const rank = items.indexOf(item) + 1;
+                const rank = rankById.get(item.id) ?? 0;
                 return (
                   <div key={item.id} className="relative min-w-0">
                     <RankBadge rank={rank} />

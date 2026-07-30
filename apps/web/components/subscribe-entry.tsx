@@ -51,27 +51,6 @@ export interface SubscriptionLookupKey {
   type?: MediaType;
 }
 
-/**
- * 按外部 ID 在订阅列表中匹配条目（详情页与海报卡片共用的同一判断口径）：
- *   - 豆瓣来源：按 douban_id 匹配（订阅从 TMDB 入口建立且未关联豆瓣 ID 时
- *     匹配不到，属已知限制——两边没有可靠的对齐键，不按标题猜）；
- *   - TMDB 来源：按 tmdb_id 匹配；电影和剧集的 TMDB ID 是两个独立号段，
- *     卡片带 type 时用它消歧，缺失时（历史快照数据）仅按 ID 匹配。
- */
-export function findSubscription(
-  subs: Subscription[],
-  key: SubscriptionLookupKey,
-): Subscription | undefined {
-  if ((key.source ?? "tmdb") === "douban") {
-    return subs.find((s) => s.media.douban_id === key.id);
-  }
-  return subs.find(
-    (s) =>
-      String(s.media.tmdb_id) === key.id &&
-      (key.type === undefined || s.media.kind === key.type),
-  );
-}
-
 const SubscribeEntryContext = createContext<SubscribeEntryValue | null>(null);
 
 export function useSubscribeEntry(): SubscribeEntryValue {
@@ -119,9 +98,37 @@ export function SubscribeEntryProvider({ children }: { children: ReactNode }) {
     });
   }, []);
 
+  // 查表索引：subscriptionOf 在海报墙的每张卡片渲染时都会被调用，线性查找
+  // 是 O(卡片数 × 订阅数)；列表变化时建一次索引，单次查询 O(1)，同键保留首条。
+  // 匹配口径（详情页与海报卡片共用）：
+  //   - 豆瓣来源：按 douban_id 匹配（订阅从 TMDB 入口建立且未关联豆瓣 ID 时
+  //     匹配不到，属已知限制——两边没有可靠的对齐键，不按标题猜）；
+  //   - TMDB 来源：按 tmdb_id 匹配；电影和剧集的 TMDB ID 是两个独立号段，
+  //     卡片带 type 时用它消歧，缺失时（历史快照数据）仅按 ID 匹配。
+  const subscriptionIndex = useMemo(() => {
+    const byDouban = new Map<string, Subscription>();
+    const byTmdbTyped = new Map<string, Subscription>();
+    const byTmdb = new Map<string, Subscription>();
+    for (const s of subs ?? []) {
+      if (s.media.douban_id && !byDouban.has(s.media.douban_id)) {
+        byDouban.set(s.media.douban_id, s);
+      }
+      const id = String(s.media.tmdb_id);
+      const typed = `${id}:${s.media.kind}`;
+      if (!byTmdbTyped.has(typed)) byTmdbTyped.set(typed, s);
+      if (!byTmdb.has(id)) byTmdb.set(id, s);
+    }
+    return { byDouban, byTmdbTyped, byTmdb };
+  }, [subs]);
+
   const subscriptionOf = useCallback(
-    (key: SubscriptionLookupKey) => findSubscription(subs ?? [], key),
-    [subs],
+    (key: SubscriptionLookupKey) => {
+      if ((key.source ?? "tmdb") === "douban") return subscriptionIndex.byDouban.get(key.id);
+      return key.type === undefined
+        ? subscriptionIndex.byTmdb.get(key.id)
+        : subscriptionIndex.byTmdbTyped.get(`${key.id}:${key.type}`);
+    },
+    [subscriptionIndex],
   );
 
   const value = useMemo(
