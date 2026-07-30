@@ -1,0 +1,67 @@
+"""mclaw 工具的一级服务目录渲染（docs/design/agent-cli-integration.md §2）。
+
+目录进工具 description，让模型「知道去哪个域找」；二级以下坚决不进
+（--help 现查）。数据源是 CLI 内置 spec——同仓构建保证与真实命令面同版；
+每域的一行说明在 _DOMAIN_LINES 手工润色（信息密度比 DOMAIN_HELP 的短标签
+高），守护测试保证与 spec 的域集合严格同步。
+"""
+
+from __future__ import annotations
+
+from functools import lru_cache
+
+from movieclaw_cli.gen.spec_loader import load_baseline
+from movieclaw_cli.gen.tree_builder import DOMAIN_HELP, is_generable, iter_operations
+
+# 域 → 目录行（一行说明 + 关键子能力/入口提示）。新增域忘了补会被守护测试拦下，
+# 届时可先回落 DOMAIN_HELP 的短标签保证不漏。
+_DOMAIN_LINES = {
+    "search": 'search   站点资源搜索：search "关键词" 流式聚合出带行号的结果',
+    "sub": "sub      订阅：sub create 一步完成消歧/预检/创建；list/show/update/pause/delete",
+    "lib": "lib      媒体库：库管理、scan 扫描、organize 整理、items 条目、"
+    "unidentified 待识别认领、missing 缺失重下、review 身份复核",
+    "site": "site     PT 站点接入与验证（catalog 看支持哪些站）",
+    "dl": "dl       下载器接入、默认下载器与路径映射",
+    "watch": "watch    监听导入规则（下载完成目录 → 自动入库）",
+    "rules": "rules    订阅过滤规则组（分辨率/制作组/体积等偏好）",
+    "discover": "discover 影视元数据与榜单（media 搜索条目、拿 TMDB ID）",
+    "people": "people   影人档案（本地库）",
+    "llm": "llm      AI 模型供应商配置",
+    "ui": "ui       界面偏好（Web 端玻璃质感参数）",
+    "net": "net      网络与代理（show/set/test）",
+    "logs": "logs     系统日志（tail -f 可跟随）",
+    "auth": "auth     账号、API 令牌管理",
+    "appearance": "appearance 外观背景图库",
+    "extension": "extension 浏览器插件 Cookie 同步令牌",
+    "fs": "fs       浏览服务器目录（选路径前先看有什么）",
+    "health": "health   服务健康检查（一般用 status 即可）",
+}
+
+# 不属于生成域、但必须让模型知道的顶级捷径
+_TOP_LEVEL_LINES = [
+    "download 下载：download <行号> 提交上次 search 结果的某行（或 --site-id + --url）",
+    "status   一眼看部署状态：服务健康、登录身份、版本同步",
+]
+
+# 不进目录的域：agent 被工具硬闸禁止（递归），目录里出现只会误导模型
+_EXCLUDED_DOMAINS = {"agent"}
+
+
+def spec_domains() -> set[str]:
+    """spec 里全部会生成命令、且对模型开放的域（守护测试与渲染共用）。"""
+    return {
+        op["operation_id"].split(".")[0]
+        for op in iter_operations(load_baseline())
+        if is_generable(op)
+    } - _EXCLUDED_DOMAINS
+
+
+@lru_cache(maxsize=1)
+def render_service_map() -> str:
+    """渲染一级服务目录（进程内缓存；spec 是构建期产物，运行期不变）。"""
+    lines = ['可用服务（一级目录；参数细节用 --help 现查，如 args="sub --help"）：']
+    for domain in sorted(spec_domains()):
+        lines.append("- " + _DOMAIN_LINES.get(domain, f"{domain}   {DOMAIN_HELP.get(domain, '')}"))
+    for extra in _TOP_LEVEL_LINES:
+        lines.append("- " + extra)
+    return "\n".join(lines)

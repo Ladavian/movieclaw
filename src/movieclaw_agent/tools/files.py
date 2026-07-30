@@ -145,9 +145,7 @@ def make_edit_tool(workdir: Path) -> AgentTool:
                 raise ValueError(f"第 {i} 处编辑的 oldText 不能为空")
             count = original.count(old)
             if count == 0:
-                raise ValueError(
-                    f"第 {i} 处编辑的 oldText 未在文件中找到，请先 read 确认当前内容"
-                )
+                raise ValueError(f"第 {i} 处编辑的 oldText 未在文件中找到，请先 read 确认当前内容")
             if count > 1:
                 raise ValueError(
                     f"第 {i} 处编辑的 oldText 在文件中匹配到 {count} 处，"
@@ -159,9 +157,7 @@ def make_edit_tool(workdir: Path) -> AgentTool:
         spans.sort(key=lambda s: s[0])
         for (_, prev_end, _), (cur_start, _, _) in zip(spans, spans[1:], strict=False):
             if cur_start < prev_end:
-                raise ValueError(
-                    "编辑区域相互重叠：请把影响同一区域的多处修改合并为一处编辑"
-                )
+                raise ValueError("编辑区域相互重叠：请把影响同一区域的多处修改合并为一处编辑")
 
         result: list[str] = []
         cursor = 0

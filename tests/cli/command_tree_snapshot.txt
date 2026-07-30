@@ -1,0 +1,126 @@
+agent runs cancel
+agent sessions delete
+agent sessions list
+agent sessions rename
+agent sessions show
+agent start
+appearance active set
+appearance backdrops delete
+appearance backdrops download
+appearance backdrops upload
+appearance show
+auth avatar download
+auth avatar upload
+auth bootstrap create
+auth bootstrap status
+auth me
+auth password update
+auth profile update
+auth tokens create
+auth tokens list
+auth tokens revoke
+discover douban show
+discover page
+discover search
+discover show
+dl add
+dl default set
+dl delete
+dl list
+dl show
+dl status set
+dl submit
+dl update
+dl verify
+extension cookies push
+extension ping
+extension sites list
+extension token create
+extension token revoke
+extension token show
+fs browse
+health check
+lib create
+lib default set
+lib delete
+lib files claim
+lib files claim-batch
+lib files ignore
+lib files restore
+lib files thumb
+lib ignored list
+lib items artwork-candidates
+lib items artwork-download
+lib items artwork-select
+lib items delete
+lib items episodes
+lib items list
+lib items refresh
+lib items reidentify
+lib items show
+lib list
+lib missing clear
+lib missing list
+lib missing redownload
+lib organize preview
+lib organize start
+lib refresh progress
+lib refresh start
+lib refresh stop
+lib review list
+lib review resolve
+lib routing-options
+lib scan start
+lib scan stop
+lib show
+lib unidentified clear
+lib unidentified list
+lib update
+llm presets
+llm provider delete
+llm provider set
+llm provider show
+llm provider verify
+logs days
+logs read
+net set
+net show
+net test
+people show
+rules create
+rules delete
+rules list
+rules update
+search history clear
+search history delete
+search history list
+search history media-snapshot
+search history snapshot
+search prefs show
+search prefs update
+search run
+site add
+site catalog
+site delete
+site list
+site show
+site stats
+site status set
+site update
+site verify
+sub activities
+sub create
+sub delete
+sub dispatch-preview
+sub health
+sub list
+sub pause
+sub prepare
+sub show
+sub update
+ui prefs show
+ui prefs update
+watch create
+watch delete
+watch list
+watch update

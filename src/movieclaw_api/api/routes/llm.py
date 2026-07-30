@@ -16,6 +16,7 @@ router = APIRouter(prefix="/llm", tags=["llm"])
     "/presets",
     response_model=ApiResponse[list[LlmPresetView]],
     summary="列出可接入的供应商类型及其模型目录",
+    operation_id="llm.presets",
 )
 async def list_llm_presets() -> ApiResponse[list[LlmPresetView]]:
     """返回内置供应商预设（OpenAI / 阿里云百炼 / 通用兼容端点），
@@ -27,6 +28,7 @@ async def list_llm_presets() -> ApiResponse[list[LlmPresetView]]:
     "/provider",
     response_model=ApiResponse[LlmProviderView | None],
     summary="获取当前的模型供应商配置",
+    operation_id="llm.provider.show",
 )
 async def get_llm_provider(
     session: AsyncSession = Depends(get_session),
@@ -41,6 +43,7 @@ async def get_llm_provider(
     "/provider",
     response_model=ApiResponse[LlmProviderView],
     summary="保存模型供应商配置（保存后异步测试连接）",
+    operation_id="llm.provider.set",
 )
 async def save_llm_provider(
     payload: LlmProviderPayload,
@@ -48,7 +51,7 @@ async def save_llm_provider(
     session: AsyncSession = Depends(get_session),
 ) -> ApiResponse[LlmProviderView]:
     """单例 upsert：有配置则整体覆盖。保存后状态置 pending 并在后台
-    用默认模型发一次最小对话验证；前端可轮询 GET /llm/provider 观察
+    用默认模型发一次最小对话验证；调用方可轮询供应商配置（CLI：mclaw llm provider show）观察
     status：pending → verifying → active / failed（见 last_error）。"""
     service = LlmConfigService(session)
     await service.upsert(
@@ -67,6 +70,7 @@ async def save_llm_provider(
     "/provider/verify",
     response_model=ApiResponse[LlmProviderView],
     summary="手动重新测试模型连接",
+    operation_id="llm.provider.verify",
 )
 async def reverify_llm_provider(
     background_tasks: BackgroundTasks,
@@ -84,6 +88,8 @@ async def reverify_llm_provider(
     "/provider",
     response_model=ApiResponse[dict],
     summary="删除模型供应商配置",
+    operation_id="llm.provider.delete",
+    openapi_extra={"x-cli-dangerous": "confirm"},
 )
 async def delete_llm_provider(
     session: AsyncSession = Depends(get_session),

@@ -9,7 +9,13 @@ from movieclaw_api.services.image_cache import get_image_cache
 router = APIRouter(prefix="/images", tags=["images"])
 
 
-@router.get("/proxy", response_class=FileResponse, summary="代理并缓存远程图片")
+@router.get(
+    "/proxy",
+    response_class=FileResponse,
+    summary="代理并缓存远程图片",
+    operation_id="images.proxy",
+    openapi_extra={"x-cli-hidden": True},
+)
 async def proxy_image(url: str = Query(min_length=1, max_length=2048)) -> FileResponse:
     """前端所有远程图片的统一入口：命中读本地缓存，未命中回源抓取后落盘。
 
@@ -28,6 +34,8 @@ async def proxy_image(url: str = Query(min_length=1, max_length=2048)) -> FileRe
     "/assets/{path:path}",
     response_class=FileResponse,
     summary="刮削图片资产直出（data/metadata/images 下的本地文件）",
+    operation_id="images.asset",
+    openapi_extra={"x-cli-hidden": True},
 )
 async def get_metadata_asset(path: str) -> FileResponse:
     """海报/剧照等刮削资产的服务通道（docs/design/metadata.md 6.1）。

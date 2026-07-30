@@ -39,6 +39,7 @@ async def _to_view(service: SiteConfigService, row: SiteCredential) -> Configure
     "/catalog",
     response_model=ApiResponse[list[CatalogItem]],
     summary="列出系统支持的可配置站点及授权要求",
+    operation_id="site.catalog",
 )
 async def list_catalog() -> ApiResponse[list[CatalogItem]]:
     """返回所有"可选项"。前端据此展示可配置的站点，以及每个站点支持的
@@ -57,6 +58,7 @@ async def list_catalog() -> ApiResponse[list[CatalogItem]]:
     "",
     response_model=ApiResponse[list[ConfiguredSite]],
     summary="列出用户已配置的站点及验证状态",
+    operation_id="site.list",
 )
 async def list_configured(
     session: AsyncSession = Depends(get_session),
@@ -72,6 +74,7 @@ async def list_configured(
     "/sync-stats",
     response_model=ApiResponse[dict[str, SiteSyncStatsView]],
     summary="各站点的种子缓存量与同步节奏",
+    operation_id="site.stats",
 )
 async def list_sync_stats(
     session: AsyncSession = Depends(get_session),
@@ -96,6 +99,7 @@ async def list_sync_stats(
     "/{site_id}",
     response_model=ApiResponse[ConfiguredSite],
     summary="获取单个已配置站点详情",
+    operation_id="site.show",
 )
 async def get_configured(
     site_id: str,
@@ -110,6 +114,7 @@ async def get_configured(
     "",
     response_model=ApiResponse[ConfiguredSite],
     summary="配置一个站点（保存后异步验证）",
+    operation_id="site.add",
 )
 async def configure_site(
     payload: SiteConfigCreate,
@@ -118,7 +123,7 @@ async def configure_site(
 ) -> ApiResponse[ConfiguredSite]:
     """保存站点授权信息（状态置为 pending），并在后台异步发起有效性验证。
 
-    接口立即返回，前端可轮询 GET /sites/{site_id} 观察 status 变化：
+    接口立即返回，调用方可轮询站点详情（CLI：mclaw site show <id>）观察 status 变化：
     pending → verifying → active（可用）/ failed（见 last_error）。
     """
     service = SiteConfigService(session)
@@ -141,6 +146,7 @@ async def configure_site(
     "/{site_id}",
     response_model=ApiResponse[ConfiguredSite],
     summary="更新站点授权信息（更新后重新异步验证）",
+    operation_id="site.update",
 )
 async def update_site(
     site_id: str,
@@ -167,6 +173,7 @@ async def update_site(
     "/{site_id}/status",
     response_model=ApiResponse[ConfiguredSite],
     summary="启用 / 停用站点",
+    operation_id="site.status.set",
 )
 async def set_site_status(
     site_id: str,
@@ -182,6 +189,7 @@ async def set_site_status(
     "/{site_id}/verify",
     response_model=ApiResponse[ConfiguredSite],
     summary="手动重新触发验证",
+    operation_id="site.verify",
 )
 async def reverify_site(
     site_id: str,
@@ -202,6 +210,8 @@ async def reverify_site(
     "/{site_id}",
     response_model=ApiResponse[dict],
     summary="删除站点配置（连带清理 cookie 缓存）",
+    operation_id="site.delete",
+    openapi_extra={"x-cli-dangerous": "confirm"},
 )
 async def delete_site(
     site_id: str,

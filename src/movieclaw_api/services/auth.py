@@ -22,6 +22,8 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import hmac
 import logging
 import secrets
 import time
@@ -38,6 +40,8 @@ from movieclaw_api.exceptions import (
 )
 from movieclaw_api.settings import (
     AdminAccountSetting,
+    ApiTokenRecord,
+    ApiTokensSetting,
     SessionSecretSetting,
     get_descriptor_by_model,
     get_setting_store,
@@ -250,6 +254,87 @@ async def verify_session_token(token: str | None) -> str:
     if not isinstance(payload, dict) or int(payload.get("exp", 0)) < time.time():
         raise UnauthorizedException("登录已过期，请重新登录")
     return str(payload.get("u", ""))
+
+
+# ---------------------------------------------------------------------------
+# Bearer 令牌：CLI 长期令牌（PAT）+ 产品内 Agent 短时效令牌
+# ---------------------------------------------------------------------------
+# 两类令牌共用同一个验签入口 verify_bearer_token（docs/design/cli.md §6.2/§8.1）：
+# - PAT：面向用户脚本/远程 CLI，落库只存 sha256 哈希，明文创建时返回一次，
+#   可按 id 单独吊销；
+# - Agent 令牌：产品内 AI 助手工作区专用，itsdangerous 签名（复用会话签名
+#   密钥 + 独立 salt），无状态不落库，过期自动作废；管理员改密轮换签名
+#   密钥时与会话一起全体失效（全局熔断免费获得）。
+
+_AGENT_TOKEN_SALT = "movieclaw.agent-token.v1"
+AGENT_TOKEN_TTL_SECONDS = 2 * 3600  # 一次 Agent 运行的令牌有效期上限
+_PAT_PREFIX = "mclaw_"  # 令牌明文前缀：肉眼可辨认来源，误提交扫描器也好识别
+
+
+def _hash_token(token: str) -> str:
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+
+async def create_api_token(name: str) -> tuple[str, ApiTokenRecord]:
+    """创建一枚 API 令牌，返回 (明文, 落库记录)。明文仅此一次，服务端不可再回显。"""
+    store = get_setting_store()
+    setting = await store.get(ApiTokensSetting)
+    plaintext = _PAT_PREFIX + secrets.token_urlsafe(32)
+    record = ApiTokenRecord(
+        id=secrets.token_hex(8),
+        name=name,
+        token_hash=_hash_token(plaintext),
+        created_at=datetime.now(UTC).isoformat(timespec="seconds"),
+    )
+    setting.tokens.append(record)
+    await store.set(setting)
+    logger.info("已创建 API 令牌「%s」（id=%s）", name, record.id)
+    return plaintext, record
+
+
+async def list_api_tokens() -> list[ApiTokenRecord]:
+    return (await get_setting_store().get(ApiTokensSetting)).tokens
+
+
+async def revoke_api_token(token_id: str) -> bool:
+    """按 id 吊销令牌；返回是否真的删掉了一枚。"""
+    store = get_setting_store()
+    setting = await store.get(ApiTokensSetting)
+    remaining = [t for t in setting.tokens if t.id != token_id]
+    if len(remaining) == len(setting.tokens):
+        return False
+    setting.tokens = remaining
+    await store.set(setting)
+    logger.info("已吊销 API 令牌 id=%s", token_id)
+    return True
+
+
+async def issue_agent_token(session_id: str) -> str:
+    """为一次 Agent 运行签发短时效令牌（注入工作区环境变量 MOVIECLAW_TOKEN）。"""
+    serializer = URLSafeSerializer(await _get_session_secret(), salt=_AGENT_TOKEN_SALT)
+    return serializer.dumps(
+        {"aud": "agent", "sid": session_id, "exp": int(time.time()) + AGENT_TOKEN_TTL_SECONDS}
+    )
+
+
+async def verify_bearer_token(token: str) -> str:
+    """校验 Bearer 令牌（Agent 签名令牌或 PAT），返回身份标识（用于日志归因）。"""
+    # 先试无状态的 Agent 签名令牌（无 IO），再查落库的 PAT
+    serializer = URLSafeSerializer(await _get_session_secret(), salt=_AGENT_TOKEN_SALT)
+    try:
+        payload = serializer.loads(token)
+    except BadSignature:
+        payload = None
+    if isinstance(payload, dict) and payload.get("aud") == "agent":
+        if int(payload.get("exp", 0)) < time.time():
+            raise UnauthorizedException("Agent 令牌已过期，请重新发起 Agent 运行")
+        return f"agent:{payload.get('sid', '')}"
+
+    provided_hash = _hash_token(token)
+    for record in await list_api_tokens():
+        if hmac.compare_digest(provided_hash, record.token_hash):
+            return f"token:{record.name}"
+    raise UnauthorizedException("令牌无效或已吊销，请重新创建（mclaw auth tokens create）")
 
 
 def reset_auth_state() -> None:

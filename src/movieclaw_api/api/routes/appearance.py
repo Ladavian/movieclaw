@@ -54,6 +54,7 @@ def _view() -> AppearanceView:
     "",
     response_model=ApiResponse[AppearanceView],
     summary="读取外观设置（背景图库与当前生效图）",
+    operation_id="appearance.show",
 )
 async def get_appearance() -> ApiResponse[AppearanceView]:
     """前端启动时调用：拿到图库列表与生效图地址；生效图为空则用内置默认背景。"""
@@ -65,6 +66,7 @@ async def get_appearance() -> ApiResponse[AppearanceView]:
     response_model=ApiResponse[AppearanceView],
     summary="上传一张新背景图（加入图库并设为生效）",
     dependencies=[Depends(require_login)],
+    operation_id="appearance.backdrops.upload",
 )
 async def upload_backdrop(file: UploadFile = File(...)) -> ApiResponse[AppearanceView]:
     """接收一张图片存入图库并立即启用；已有的图全部保留，供随时切换。
@@ -96,6 +98,7 @@ async def upload_backdrop(file: UploadFile = File(...)) -> ApiResponse[Appearanc
     response_model=ApiResponse[AppearanceView],
     summary="切换当前生效的背景图",
     dependencies=[Depends(require_login)],
+    operation_id="appearance.active.set",
 )
 async def set_active_backdrop(
     payload: ActiveBackdropUpdate,
@@ -111,6 +114,8 @@ async def set_active_backdrop(
     response_model=ApiResponse[AppearanceView],
     summary="从图库删除一张背景图",
     dependencies=[Depends(require_login)],
+    operation_id="appearance.backdrops.delete",
+    openapi_extra={"x-cli-dangerous": "confirm"},
 )
 async def delete_backdrop(backdrop_id: str) -> ApiResponse[AppearanceView]:
     """删除指定背景图；若删的是当前生效图，自动回退到内置默认背景。"""
@@ -123,6 +128,7 @@ async def delete_backdrop(backdrop_id: str) -> ApiResponse[AppearanceView]:
     "/backdrops/{backdrop_id}",
     summary="读取一张背景图文件",
     response_class=Response,
+    operation_id="appearance.backdrops.download",
 )
 async def read_backdrop(backdrop_id: str) -> FileResponse:
     """直接返回图片文件本身，供 <img> 与 WebGL 着色器加载。

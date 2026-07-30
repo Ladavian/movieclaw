@@ -38,7 +38,8 @@ class DownloaderView(BaseModel):
     username: str | None = None
     save_path: str | None = Field(default=None, description="提交下载时的默认保存目录")
     path_mappings: list[PathMapping] | None = Field(
-        default=None, description="路径映射（movieclaw 路径 → 下载器路径）"
+        default=None, description="路径映射 JSON 数组（movieclaw 路径 → 下载器路径），"
+        '形如 [{"local":"/volume1/downloads","remote":"/downloads"}]'
     )
     enabled: bool
     is_default: bool = Field(description="是否为默认下载器（一键下载不选目标时投给它）")
@@ -140,7 +141,7 @@ class DownloaderPayload(BaseModel):
 class DownloaderStatusUpdate(BaseModel):
     """启用/停用请求体。"""
 
-    enabled: bool
+    enabled: bool = Field(description="true=启用 / false=停用（停用后不接收新的下载提交）")
 
 
 class DownloadSubmitPayload(BaseModel):

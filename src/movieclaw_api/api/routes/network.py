@@ -28,6 +28,7 @@ router = APIRouter(prefix="/network", tags=["network"])
     "/config",
     response_model=ApiResponse[NetworkConfigView],
     summary="读取网络与代理配置",
+    operation_id="net.show",
 )
 async def get_network_config(
     session: AsyncSession = Depends(get_session),
@@ -39,6 +40,7 @@ async def get_network_config(
     "/config",
     response_model=ApiResponse[NetworkConfigView],
     summary="保存网络与代理配置（立即生效，无需重启）",
+    operation_id="net.set",
 )
 async def save_network_config(
     payload: NetworkConfigPayload,
@@ -51,6 +53,7 @@ async def save_network_config(
     "/test",
     response_model=ApiResponse[NetworkTestResult],
     summary="按服务做一次连通性测试（走当前保存的出口配置）",
+    operation_id="net.test",
 )
 async def test_network_service(
     payload: NetworkTestPayload,

@@ -158,6 +158,34 @@ async def revoke_sync_token() -> None:
 
 
 # ---------------------------------------------------------------------------
+# CLI API 令牌（PAT）
+# ---------------------------------------------------------------------------
+# mclaw 等远程客户端的长期凭证（docs/design/cli.md §8.1）。与插件同步令牌的
+# 关键差异：**只存哈希、不可回显**——PAT 面向脚本/定时任务，明文只在创建
+# 时返回一次，用户抄走后服务端无法（也无需）再展示；泄露疑虑时按 id 单独
+# 吊销即可，不影响其他令牌。
+
+
+class ApiTokenRecord(BaseModel):
+    """单枚 API 令牌的落库记录（仅哈希与元信息，无明文）。"""
+
+    id: str = Field(description="令牌 id（吊销时使用）")
+    name: str = Field(description="用户起的名字，如 'nas-cron'")
+    token_hash: str = Field(description="令牌明文的 sha256 十六进制哈希")
+    created_at: str = Field(description="创建时间（ISO8601 字符串）")
+
+
+@register_setting(
+    namespace="auth.api_tokens",
+    title="CLI API 令牌",
+)
+class ApiTokensSetting(SettingSchema):
+    """全部有效 API 令牌的清单；吊销即从清单移除。"""
+
+    tokens: list[ApiTokenRecord] = Field(default_factory=list)
+
+
+# ---------------------------------------------------------------------------
 # 搜索偏好（标签栏：内置分类 + 自定义分类，统一混排）
 # ---------------------------------------------------------------------------
 # 搜索面板的分类栏是一个用户自定义的「标签列表」，两种标签统一排序、统一显隐：

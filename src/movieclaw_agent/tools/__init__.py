@@ -15,10 +15,16 @@ from pathlib import Path
 from movieclaw_agent.toolkit import AgentTool
 from movieclaw_agent.tools.bash import make_bash_tool
 from movieclaw_agent.tools.files import make_edit_tool, make_read_tool, make_write_tool
+from movieclaw_agent.tools.mclaw import make_mclaw_tool
 
 
 def builtin_tools(workdir: Path | None = None) -> list[AgentTool]:
-    """构建内置工具集。workdir 是 bash 的 cwd 与相对路径的解析基准。"""
+    """构建内置工具集（bash/read/write/edit）。workdir 是 bash 的 cwd 与
+    相对路径的解析基准。
+
+    注意：产品操作的授权令牌**不在这里注入**——bash 环境拿不到凭证是刻意
+    设计（泄漏面收窄），mclaw 专用工具由 make_mclaw_tool 单独构建并携带令牌。
+    """
     wd = (workdir or Path.cwd()).resolve()
     return [
         make_bash_tool(wd),
@@ -28,4 +34,4 @@ def builtin_tools(workdir: Path | None = None) -> list[AgentTool]:
     ]
 
 
-__all__ = ["AgentTool", "builtin_tools"]
+__all__ = ["AgentTool", "builtin_tools", "make_mclaw_tool"]

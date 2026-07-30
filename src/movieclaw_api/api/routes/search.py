@@ -50,6 +50,7 @@ router = APIRouter(prefix="/search", tags=["search"])
     "",
     response_model=ApiResponse[SearchResponse],
     summary="跨站点并发搜索种子资源（支持多分类与站点子集）",
+    operation_id="search.run",
 )
 async def search_torrents(
     keyword: str = Query(..., min_length=1, description="搜索关键词，支持 IMDb ID"),
@@ -148,6 +149,8 @@ async def _save_snapshot(
 @router.get(
     "/stream",
     summary="跨站点流式搜索（SSE）：站点开始/返回结果/失败逐事件实时推送",
+    operation_id="search.stream",
+    openapi_extra={"x-cli-stream": {"terminal_events": ["done"]}},
 )
 async def search_torrents_stream(
     keyword: str = Query(..., min_length=1, description="搜索关键词，支持 IMDb ID"),
@@ -265,6 +268,7 @@ def _validate_tabs(payload: SearchPreferencesUpdate) -> None:
     "/preferences",
     response_model=ApiResponse[SearchPreferencesView],
     summary="读取搜索偏好（标签栏：内置分类 + 自定义分类）",
+    operation_id="search.prefs.show",
 )
 async def get_preferences() -> ApiResponse[SearchPreferencesView]:
     """返回全量标签的有序列表（含隐藏项）。
@@ -279,6 +283,7 @@ async def get_preferences() -> ApiResponse[SearchPreferencesView]:
     "/preferences",
     response_model=ApiResponse[SearchPreferencesView],
     summary="保存搜索偏好（标签栏：内置分类 + 自定义分类）",
+    operation_id="search.prefs.update",
 )
 async def update_preferences(
     payload: SearchPreferencesUpdate,
@@ -314,6 +319,7 @@ async def update_preferences(
     "/history",
     response_model=ApiResponse[list[SearchHistoryItem]],
     summary="获取最近的搜索历史",
+    operation_id="search.history.list",
 )
 async def list_search_history(
     limit: int = Query(10, ge=1, le=50, description="返回关键词组数上限"),
@@ -328,6 +334,7 @@ async def list_search_history(
     "/history/{history_id}/snapshot",
     response_model=ApiResponse[SearchSnapshotView],
     summary="读取某条搜索历史的结果快照",
+    operation_id="search.history.snapshot",
 )
 async def get_search_snapshot(
     history_id: int,
@@ -370,6 +377,7 @@ async def get_search_snapshot(
     "/history/{history_id}/media-snapshot",
     response_model=ApiResponse[MediaSearchSnapshotView],
     summary="读取某条媒体搜索历史的结果快照",
+    operation_id="search.history.media-snapshot",
 )
 async def get_media_search_snapshot(
     history_id: int,
@@ -405,6 +413,8 @@ async def get_media_search_snapshot(
     "/history/{history_id}",
     response_model=ApiResponse[None],
     summary="删除单条搜索历史",
+    operation_id="search.history.delete",
+    openapi_extra={"x-cli-dangerous": "confirm"},
 )
 async def delete_search_history(
     history_id: int,
@@ -420,6 +430,8 @@ async def delete_search_history(
     "/history",
     response_model=ApiResponse[None],
     summary="清空搜索历史",
+    operation_id="search.history.clear",
+    openapi_extra={"x-cli-dangerous": "confirm"},
 )
 async def clear_search_history(
     session: AsyncSession = Depends(get_session),

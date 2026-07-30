@@ -1,14 +1,14 @@
 from __future__ import annotations
 
-from functools import lru_cache
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, Header
+from fastapi import APIRouter, Depends, Header, Query
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from movieclaw_agent import AgentRunner, AgentStartParams, AgentTool
-from movieclaw_agent.tools import builtin_tools
+from movieclaw_agent.tools import builtin_tools, make_mclaw_tool
+from movieclaw_api.api.deps import require_login
 from movieclaw_api.core.config import get_settings
 from movieclaw_api.exceptions import BadRequestException, NotFoundException
 from movieclaw_api.schemas.agent import (
@@ -19,10 +19,12 @@ from movieclaw_api.schemas.agent import (
     AgentStartView,
 )
 from movieclaw_api.schemas.response import ApiResponse, ok
+from movieclaw_api.services import auth as auth_service
 from movieclaw_api.services.agent_runs import get_agent_run_registry
 from movieclaw_api.services.agent_session_recorder import AgentSessionRecorder
 from movieclaw_api.services.agent_sessions import get_agent_session_store
 from movieclaw_api.services.llm_config import acquire_llm_router
+from movieclaw_api.services.mclaw_tool import render_service_map
 from movieclaw_db.engine import get_session
 from movieclaw_db.repositories.agent_session_repo import (
     AgentSessionRepository,
@@ -33,17 +35,34 @@ from movieclaw_llm import ChatMessage
 router = APIRouter(prefix="/agent", tags=["agent"])
 
 
-@lru_cache(maxsize=1)
-def get_agent_tools() -> list[AgentTool]:
-    """Agent 的工具集（内置基础工具 + 后续领域工具的注册挂点）。
+def get_agent_tools(cli_env: dict[str, str]) -> list[AgentTool]:
+    """Agent 的工具集：内置基础工具 + mclaw 产品操作工具。
 
-    一期内置 bash / read / write / edit，工作目录取配置的 agent 工作区
-    （首次调用时确保目录存在）。领域工具（站点搜索、提交下载等）后续
-    在此列表追加。lru_cache 保证进程内构建一次。
+    bash/read/write/edit 是纯工作区工具，**不携带**产品授权；mclaw 工具
+    单独构建，令牌只注入它的子进程（每次运行的令牌不同，因此每次运行都
+    重新构建工具集）。服务目录渲染自 CLI 内置 spec，与命令面严格同版。
     """
     workdir = Path(get_settings().agent_workspace_dir).resolve()
     workdir.mkdir(parents=True, exist_ok=True)
-    return [*builtin_tools(workdir)]
+    return [
+        *builtin_tools(workdir),
+        make_mclaw_tool(workdir, cli_env, render_service_map()),
+    ]
+
+
+async def _cli_env(session_id: str) -> dict[str, str]:
+    """构造工作区里 mclaw CLI 的自动授权环境（docs/design/cli.md §6.2）。
+
+    令牌按运行签发、短时效、无状态签名（改密轮换密钥即全体失效）；
+    服务器地址走容器内回环直连。Agent 在工作区内执行 `mclaw ...` 即可
+    直接操作本产品，全程零登录零交互。
+    """
+    settings = get_settings()
+    token = await auth_service.issue_agent_token(session_id)
+    return {
+        "MOVIECLAW_SERVER": f"http://127.0.0.1:{settings.port}",
+        "MOVIECLAW_TOKEN": token,
+    }
 
 
 @router.post(
@@ -51,9 +70,11 @@ def get_agent_tools() -> list[AgentTool]:
     response_model=ApiResponse[AgentStartView],
     status_code=202,
     summary="创建一次异步 Agent 运行",
+    operation_id="agent.start",
 )
 async def start_agent(
     payload: AgentStartPayload,
+    identity: str = Depends(require_login),
     session: AsyncSession = Depends(get_session),
 ) -> ApiResponse[AgentStartView]:
     """创建后台运行并立即返回编号，执行生命周期不再绑定当前 HTTP 连接。
@@ -67,6 +88,12 @@ async def start_agent(
     再访问该 session。尚未配置模型供应商时同步返回 404，且因校验前置，不会残
     留任何空会话记录，便于前端引导用户去设置。
     """
+    # 递归硬闸（docs/design/agent-cli-integration.md §4）：Agent 工作区令牌
+    # 不允许再发起新的 Agent 运行——工具层已有软闸，这里是绕过工具（curl 等）
+    # 也拦得住的最后防线。放在一切校验/落盘之前。
+    if identity.startswith("agent:"):
+        raise BadRequestException("Agent 工作区内不能再发起新的 Agent 运行（禁止递归）")
+
     store = get_agent_session_store()
     repo = AgentSessionRepository(session)
 
@@ -100,7 +127,7 @@ async def start_agent(
 
     runner = AgentRunner(
         llm_router,
-        tools=get_agent_tools(),
+        tools=get_agent_tools(await _cli_env(session_id)),
         on_message=recorder.on_message,
     )
     params = AgentStartParams(input=payload.input, history=history, model=payload.model)
@@ -116,14 +143,15 @@ async def start_agent(
     "/sessions",
     response_model=ApiResponse[list[AgentSessionListItem]],
     summary="最近会话列表（按最后活跃时间倒序）",
+    operation_id="agent.sessions.list",
 )
 async def list_agent_sessions(
-    limit: int = 50,
-    offset: int = 0,
+    limit: int = Query(default=50, description="返回条数上限"),
+    offset: int = Query(default=0, description="分页偏移（跳过前 N 条）"),
     session: AsyncSession = Depends(get_session),
 ) -> ApiResponse[list[AgentSessionListItem]]:
     """从索引表分页读取；运行状态由 active_run_id + 心跳窗派生，
-    running 的条目附带 active_run_id 供前端重新挂上 SSE。"""
+    running 的条目附带 active_run_id 供调用方重新订阅事件流。"""
     rows = await AgentSessionRepository(session).list_recent(
         limit=min(limit, 200), offset=max(offset, 0)
     )
@@ -134,6 +162,7 @@ async def list_agent_sessions(
     "/sessions/{session_id}",
     response_model=ApiResponse[AgentSessionDetailView],
     summary="会话详情（完整消息回放）",
+    operation_id="agent.sessions.show",
 )
 async def get_agent_session(
     session_id: str,
@@ -156,6 +185,7 @@ async def get_agent_session(
     "/sessions/{session_id}",
     response_model=ApiResponse[AgentSessionListItem],
     summary="重命名会话",
+    operation_id="agent.sessions.rename",
 )
 async def rename_agent_session(
     session_id: str,
@@ -173,6 +203,8 @@ async def rename_agent_session(
     "/sessions/{session_id}",
     response_model=ApiResponse[dict],
     summary="删除会话（转录文件与索引一并删除）",
+    operation_id="agent.sessions.delete",
+    openapi_extra={"x-cli-dangerous": "confirm"},
 )
 async def delete_agent_session(
     session_id: str,
@@ -194,6 +226,10 @@ async def delete_agent_session(
 @router.get(
     "/runs/{run_id}/stream",
     summary="订阅 Agent 运行事件（SSE，支持断线续传）",
+    operation_id="agent.runs.stream",
+    openapi_extra={
+        "x-cli-stream": {"terminal_events": ["agent_done", "agent_error", "agent_cancelled"]},
+    },
 )
 async def stream_agent_run(
     run_id: str,
@@ -254,6 +290,7 @@ async def stream_agent_run(
     "/runs/{run_id}/cancel",
     response_model=ApiResponse[dict],
     summary="取消一次 Agent 运行",
+    operation_id="agent.runs.cancel",
 )
 async def cancel_agent_run(run_id: str) -> ApiResponse[dict]:
     """幂等请求取消后台任务；运行的 SSE 会以 agent_cancelled 事件收尾。"""

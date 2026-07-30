@@ -56,6 +56,9 @@ dependencies = [
   # 种子名抽取小模型的推理三件套（movieclaw_enrich.inference）：
   # onnxruntime 跑 int8 模型（CPU 单条约 3ms），tokenizers 只做分词（比拖整个
   # transformers 轻两个数量级），模型文件本体从 GitHub Release 下载、不进包。
+  # CLI（mclaw）的命令行框架：命令树由 OpenAPI spec 运行时动态构建，
+  # click 的 Group/Command 对象模型适合程序化注册（设计见 docs/design/cli.md §9）。
+  "click>=8.1.0,<9.0.0",
   "onnxruntime>=1.19,<2.0",
   "tokenizers>=0.20,<1.0",
   "numpy>=1.26,<3.0",
@@ -70,12 +73,18 @@ dev = [
 
 [project.scripts]
 movieclaw-api = "movieclaw_api.main:run"
+# CLI 唯一入口（不注册别名，设计决策见 docs/design/cli.md §0.3）
+mclaw = "movieclaw_cli.__main__:main"
 
 [tool.setuptools]
 package-dir = { "" = "src" }
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+# CLI 内置基线 spec：构建期由 movieclaw_api.export_openapi 导出，随包分发
+movieclaw_cli = ["data/spec.json"]
 
 [tool.pytest.ini_options]
 pythonpath = ["src"]

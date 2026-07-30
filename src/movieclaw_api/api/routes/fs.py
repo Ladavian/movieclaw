@@ -27,6 +27,7 @@ router = APIRouter(prefix="/fs", tags=["fs"])
     "/browse",
     response_model=ApiResponse[FsBrowseView],
     summary="列出服务器上某目录的子目录（目录选择器数据源）",
+    operation_id="fs.browse",
 )
 def browse_directory(
     path: str | None = Query(default=None, description="要浏览的绝对路径，缺省为根目录 /"),

@@ -429,7 +429,7 @@ class ArtworkCandidatesView(BaseModel):
 class ArtworkSelectPayload(BaseModel):
     """选图请求：kind 指海报还是背景；file_path 为 null 表示恢复自动选图。"""
 
-    kind: Literal["poster", "backdrop"]
+    kind: Literal["poster", "backdrop"] = Field(description="poster=海报 / backdrop=背景图")
     file_path: str | None = Field(
         default=None, description="TMDB 图片路径；null=解锁并恢复自动选图"
     )
@@ -524,9 +524,9 @@ class UnidentifiedGroupView(BaseModel):
 class ClaimPayload(BaseModel):
     """人工认领：把待识别文件挂到 TMDB 条目。"""
 
-    tmdb_id: int
-    season_number: int = 0
-    episode_number: int = 0
+    tmdb_id: int = Field(description="认领目标的 TMDB 条目 id（剧集用整部剧的 id，不是季/集）")
+    season_number: int = Field(default=0, description="季号；电影固定 0")
+    episode_number: int = Field(default=0, description="集号；电影固定 0")
 
 
 class ClaimBatchPayload(BaseModel):
@@ -536,8 +536,10 @@ class ClaimBatchPayload(BaseModel):
     这正是"一部剧几十集一次认领"能成立的前提。
     """
 
-    file_ids: list[int] = Field(min_length=1)
-    tmdb_id: int
+    file_ids: list[int] = Field(
+        min_length=1, description="待识别文件 id 数组（来自待识别清单接口），如 [101,102]"
+    )
+    tmdb_id: int = Field(description="认领目标的 TMDB 条目 id（剧集用整部剧的 id）")
 
 
 class ReviewItemView(BaseModel):
@@ -576,8 +578,8 @@ class ReviewResolvePayload(BaseModel):
     后续识别器升级不再对它们提复核建议。
     """
 
-    file_ids: list[int] = Field(min_length=1)
-    accept: bool
+    file_ids: list[int] = Field(min_length=1, description="同一复核组内的文件 id 数组")
+    accept: bool = Field(description="true=采纳建议改挂新条目；false=维持现状")
 
 
 class MissingFileView(BaseModel):
@@ -608,27 +610,29 @@ class MissingItemView(BaseModel):
 class MissingClearPayload(BaseModel):
     """清理缺失记录（只删台账行，绝不动磁盘）。media_item_id 缺省 = 清整库。"""
 
-    library_id: int
-    media_item_id: int | None = None
+    library_id: int = Field(description="所属媒体库 id")
+    media_item_id: int | None = Field(
+        default=None, description="只清理该条目的缺失记录；不传=清理整库"
+    )
 
 
 class RedownloadPayload(BaseModel):
     """重新下载：把某条目的缺失单元交回订阅管线。"""
 
-    library_id: int
-    media_item_id: int
+    library_id: int = Field(description="所属媒体库 id")
+    media_item_id: int = Field(description="要重新下载缺失内容的条目 id")
 
 
 class UnidentifiedClearPayload(BaseModel):
     """批量忽略整库的待识别文件（只打忽略标记，绝不动磁盘）。"""
 
-    library_id: int
+    library_id: int = Field(description="要批量忽略待识别文件的媒体库 id")
 
 
 class RestorePayload(BaseModel):
     """恢复已忽略的文件：清掉忽略标记，重新参与识别。"""
 
-    file_ids: list[int] = Field(min_length=1)
+    file_ids: list[int] = Field(min_length=1, description="要恢复识别的已忽略文件 id 数组")
 
 
 class ScanResultView(BaseModel):

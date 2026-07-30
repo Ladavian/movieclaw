@@ -15,6 +15,7 @@ router = APIRouter(prefix="/rule-sets", tags=["rule-sets"])
     "",
     response_model=ApiResponse[list[RuleSetView]],
     summary="规则组列表（首次访问自动创建默认组）",
+    operation_id="rules.list",
 )
 async def list_rule_sets(
     session: AsyncSession = Depends(get_session),
@@ -28,6 +29,7 @@ async def list_rule_sets(
     "",
     response_model=ApiResponse[RuleSetView],
     summary="创建规则组",
+    operation_id="rules.create",
 )
 async def create_rule_set(
     payload: RuleSetPayload,
@@ -42,6 +44,7 @@ async def create_rule_set(
     "/{rule_set_id}",
     response_model=ApiResponse[RuleSetView],
     summary="更新规则组（只影响之后的匹配评估）",
+    operation_id="rules.update",
 )
 async def update_rule_set(
     rule_set_id: int,
@@ -57,6 +60,8 @@ async def update_rule_set(
     "/{rule_set_id}",
     response_model=ApiResponse[dict],
     summary="删除规则组（默认组与被引用的组禁删）",
+    operation_id="rules.delete",
+    openapi_extra={"x-cli-dangerous": "confirm"},
 )
 async def delete_rule_set(
     rule_set_id: int,

@@ -27,6 +27,7 @@ router = APIRouter(prefix="/people", tags=["people"])
     "/{tmdb_person_id}",
     response_model=ApiResponse[PersonView],
     summary="人物页：库内这个影人的档案与作品",
+    operation_id="people.show",
 )
 async def get_person(
     tmdb_person_id: int, session: AsyncSession = Depends(get_session)

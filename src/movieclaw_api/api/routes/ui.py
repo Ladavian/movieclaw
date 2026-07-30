@@ -27,6 +27,7 @@ router = APIRouter(prefix="/ui", tags=["ui"])
     "/preferences",
     response_model=ApiResponse[UiPreferencesSetting],
     summary="读取界面偏好（按页面分组的样式设定）",
+    operation_id="ui.prefs.show",
 )
 async def get_preferences() -> ApiResponse[UiPreferencesSetting]:
     """返回全站界面样式偏好；从未配置过的页面返回其默认值。"""
@@ -37,6 +38,7 @@ async def get_preferences() -> ApiResponse[UiPreferencesSetting]:
     "/preferences",
     response_model=ApiResponse[UiPreferencesSetting],
     summary="保存界面偏好（整体覆盖）",
+    operation_id="ui.prefs.update",
 )
 async def update_preferences(
     payload: UiPreferencesSetting,

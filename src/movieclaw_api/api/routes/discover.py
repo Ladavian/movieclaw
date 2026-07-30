@@ -74,10 +74,13 @@ def _translate(exc: TmdbError | DoubanError) -> AppException:
     "/search",
     response_model=ApiResponse[list[MediaSearchItem]],
     summary="搜索影视元数据候选",
+    operation_id="discover.search",
 )
 async def search_media(
     q: str = Query(min_length=1, max_length=100),
-    source: DiscoverSource = Query(default=DiscoverSource.DOUBAN),
+    source: DiscoverSource = Query(
+        default=DiscoverSource.DOUBAN, description="元数据来源：tmdb / douban"
+    ),
     history: bool = Query(
         False,
         description="是否记录搜索历史并留存结果快照（统一搜索入口传 True；"
@@ -109,6 +112,7 @@ async def search_media(
     "/douban/{douban_id}",
     response_model=ApiResponse[MediaDetail],
     summary="豆瓣影视条目详情",
+    operation_id="discover.douban.show",
 )
 async def get_douban_media_detail(douban_id: str) -> ApiResponse[MediaDetail]:
     """返回豆瓣轻量详情；条目类型由豆瓣响应自动识别。"""
@@ -148,10 +152,13 @@ async def _record_media_history(
     "/{kind}",
     response_model=ApiResponse[DiscoverPage],
     summary="发现页聚合数据（Hero 精选 + 分类横滚行）",
+    operation_id="discover.page",
 )
 async def get_discover_page(
     kind: MediaKind,
-    source: DiscoverSource = Query(default=DiscoverSource.TMDB),
+    source: DiscoverSource = Query(
+        default=DiscoverSource.TMDB, description="数据来源：tmdb（热门榜单）/ douban（豆瓣 Top250）"
+    ),
 ) -> ApiResponse[DiscoverPage]:
     """返回一个完整发现页：kind=movie 发现电影，kind=tv 发现剧集。
 
@@ -172,6 +179,7 @@ async def get_discover_page(
     "/{kind}/{tmdb_id}",
     response_model=ApiResponse[MediaDetail],
     summary="影视条目详情（词条信息 + 相似推荐）",
+    operation_id="discover.show",
 )
 async def get_media_detail(kind: MediaKind, tmdb_id: int) -> ApiResponse[MediaDetail]:
     """返回单个条目的详情：回填片长/季数的卡片字段、演职员等词条信息、相似推荐。"""

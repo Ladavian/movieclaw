@@ -32,6 +32,7 @@ from movieclaw_api.api.routes.people import router as people_router
 from movieclaw_api.api.routes.rule_sets import router as rule_sets_router
 from movieclaw_api.api.routes.search import router as search_router
 from movieclaw_api.api.routes.sites import router as sites_router
+from movieclaw_api.api.routes.spec import router as spec_router
 from movieclaw_api.api.routes.subscriptions import router as subscriptions_router
 from movieclaw_api.api.routes.ui import router as ui_router
 
@@ -65,6 +66,7 @@ _PROTECTED_ROUTERS = [
     logs_router,
     network_router,
     people_router,
+    spec_router,
 ]
 for _router in _PROTECTED_ROUTERS:
     api_router.include_router(_router, dependencies=[Depends(require_login)])

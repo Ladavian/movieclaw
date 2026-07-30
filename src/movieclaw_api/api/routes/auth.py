@@ -23,6 +23,9 @@ from movieclaw_api.api.deps import require_login
 from movieclaw_api.core.config import get_settings
 from movieclaw_api.exceptions import BadRequestException, NotFoundException
 from movieclaw_api.schemas.auth import (
+    ApiTokenCreatedView,
+    ApiTokenCreateRequest,
+    ApiTokenView,
     BootstrapRequest,
     BootstrapStatus,
     ChangePasswordRequest,
@@ -78,6 +81,7 @@ def _set_session_cookie(response: Response, token: str, max_age: int) -> None:
     "/bootstrap",
     response_model=ApiResponse[BootstrapStatus],
     summary="查询系统是否已完成首次初始化",
+    operation_id="auth.bootstrap.status",
 )
 async def bootstrap_status() -> ApiResponse[BootstrapStatus]:
     """公开接口：仅返回布尔状态，供前端决定进 /setup 还是 /login。"""
@@ -88,6 +92,7 @@ async def bootstrap_status() -> ApiResponse[BootstrapStatus]:
     "/bootstrap",
     response_model=ApiResponse[SessionView],
     summary="首次初始化：创建超级管理员（全生命周期仅一次）",
+    operation_id="auth.bootstrap.create",
 )
 async def bootstrap_create(
     payload: BootstrapRequest, response: Response
@@ -105,6 +110,10 @@ async def bootstrap_create(
     "/login",
     response_model=ApiResponse[SessionView],
     summary="管理员登录",
+    operation_id="auth.login",
+    # CLI 侧登录/登出由精选命令 mclaw login/logout 负责（要持久化本地凭证），
+    # 生成层隐藏本端点避免出现语义不完整的同名命令
+    openapi_extra={"x-cli-hidden": True},
 )
 async def login(payload: LoginRequest, response: Response) -> ApiResponse[SessionView]:
     """校验账号密码并种下会话 Cookie。连续失败会触发限速（429）。"""
@@ -120,6 +129,10 @@ async def login(payload: LoginRequest, response: Response) -> ApiResponse[Sessio
     "/logout",
     response_model=ApiResponse[None],
     summary="退出登录",
+    operation_id="auth.logout",
+    # CLI 侧登录/登出由精选命令 mclaw login/logout 负责（要持久化本地凭证），
+    # 生成层隐藏本端点避免出现语义不完整的同名命令
+    openapi_extra={"x-cli-hidden": True},
 )
 async def logout(response: Response) -> ApiResponse[None]:
     """清除会话 Cookie。无需登录态即可调用（会话已过期时也能正常登出）。"""
@@ -132,6 +145,7 @@ async def logout(response: Response) -> ApiResponse[None]:
     response_model=ApiResponse[SessionView],
     summary="查询当前登录状态",
     dependencies=[Depends(require_login)],
+    operation_id="auth.me",
 )
 async def me() -> ApiResponse[SessionView]:
     return ok(_session_view(await auth_service.get_admin_account()))
@@ -142,6 +156,7 @@ async def me() -> ApiResponse[SessionView]:
     response_model=ApiResponse[SessionView],
     summary="修改个人信息（昵称）",
     dependencies=[Depends(require_login)],
+    operation_id="auth.profile.update",
 )
 async def update_profile(payload: UpdateProfileRequest) -> ApiResponse[SessionView]:
     """昵称只影响界面展示；登录用户名与会话均不受影响。"""
@@ -154,6 +169,7 @@ async def update_profile(payload: UpdateProfileRequest) -> ApiResponse[SessionVi
     response_model=ApiResponse[SessionView],
     summary="上传（替换）头像",
     dependencies=[Depends(require_login)],
+    operation_id="auth.avatar.upload",
 )
 async def upload_avatar(file: UploadFile = File(...)) -> ApiResponse[SessionView]:
     """接收一张图片存为头像；已有头像直接替换（单槽位，不保留历史）。
@@ -181,6 +197,7 @@ async def upload_avatar(file: UploadFile = File(...)) -> ApiResponse[SessionView
     summary="读取头像文件",
     response_class=Response,
     dependencies=[Depends(require_login)],
+    operation_id="auth.avatar.download",
 )
 async def read_avatar() -> FileResponse:
     """直接返回头像图片本体，供 <img> 加载；地址由会话视图的 avatar_url 给出。"""
@@ -199,6 +216,7 @@ async def read_avatar() -> FileResponse:
     "/password",
     response_model=ApiResponse[SessionView],
     summary="修改管理员密码（其余会话全部强制下线）",
+    operation_id="auth.password.update",
 )
 async def change_password(
     payload: ChangePasswordRequest,
@@ -214,3 +232,51 @@ async def change_password(
         _session_view(await auth_service.get_admin_account()),
         message="密码已修改，其他设备已全部下线",
     )
+
+
+# ---------------------------------------------------------------------------
+# CLI API 令牌（PAT）管理。管理接口本身要求登录（Cookie 或已有令牌均可）。
+# ---------------------------------------------------------------------------
+
+
+@router.post(
+    "/tokens",
+    response_model=ApiResponse[ApiTokenCreatedView],
+    summary="创建 CLI API 令牌（明文仅返回这一次，请立即保存）",
+    dependencies=[Depends(require_login)],
+    operation_id="auth.tokens.create",
+)
+async def create_api_token(payload: ApiTokenCreateRequest) -> ApiResponse[ApiTokenCreatedView]:
+    plaintext, record = await auth_service.create_api_token(payload.name.strip())
+    return ok(
+        ApiTokenCreatedView(
+            id=record.id, name=record.name, created_at=record.created_at, token=plaintext
+        ),
+        message="令牌已创建；明文不会再次显示，请立即保存",
+    )
+
+
+@router.get(
+    "/tokens",
+    response_model=ApiResponse[list[ApiTokenView]],
+    summary="列出已创建的 CLI API 令牌（仅元信息，不含明文）",
+    dependencies=[Depends(require_login)],
+    operation_id="auth.tokens.list",
+)
+async def list_api_tokens() -> ApiResponse[list[ApiTokenView]]:
+    records = await auth_service.list_api_tokens()
+    return ok([ApiTokenView(id=r.id, name=r.name, created_at=r.created_at) for r in records])
+
+
+@router.delete(
+    "/tokens/{token_id}",
+    response_model=ApiResponse[None],
+    summary="吊销一枚 CLI API 令牌（立即失效，不影响其他令牌）",
+    dependencies=[Depends(require_login)],
+    operation_id="auth.tokens.revoke",
+    openapi_extra={"x-cli-dangerous": "confirm"},
+)
+async def revoke_api_token(token_id: str) -> ApiResponse[None]:
+    if not await auth_service.revoke_api_token(token_id):
+        raise NotFoundException("令牌不存在或已被吊销")
+    return ok(None, message="令牌已吊销")

@@ -87,9 +87,14 @@ class LlmProviderPayload(BaseModel):
     base_url: str | None = Field(default=None, description="API 端点（留空用预设默认）")
     api_key: str = Field(min_length=1, description="API Key")
     default_model: str = Field(min_length=1, description="默认使用的模型 id")
-    #: 自定义模型目录（含上下文/输出上限/思考预算等参数）。自定义端点的
-    #: default_model 必须能在这里找到——只有裸 id 没有参数，agent 无法做预算决策
-    extra_models: list[ModelInfo] = Field(default_factory=list)
+    # 自定义端点的 default_model 必须能在这里找到——只有裸 id 没有参数，
+    # agent 无法做预算决策
+    extra_models: list[ModelInfo] = Field(
+        default_factory=list,
+        description="自定义模型目录 JSON 数组，元素形如 "
+        '{"id":"模型id","context_window":131072,"max_output_tokens":8192}'
+        "（openai_compat 端点必填，且须包含 default_model 对应的条目）",
+    )
 
     @field_validator("provider_type", "base_url", "api_key", "default_model", mode="before")
     @classmethod

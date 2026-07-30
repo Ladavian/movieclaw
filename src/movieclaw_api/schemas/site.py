@@ -207,7 +207,9 @@ class SiteConfigCreate(BaseModel):
     - credential  → username + password
     """
 
-    site_id: str = Field(description="要配置的站点标识，须来自目录（GET /sites/catalog）")
+    site_id: str = Field(
+        description="要配置的站点标识，须来自站点目录（CLI：mclaw site catalog）"
+    )
     auth_type: AuthType = Field(description="选用的授权类型，须在该站点 supported 列表内")
     cookie: str | None = Field(default=None, description="COOKIE 模式：浏览器 cookie 字符串")
     api_key: str | None = Field(default=None, description="APIKEY 模式：API 密钥")
@@ -219,15 +221,15 @@ class SiteConfigCreate(BaseModel):
 class SiteConfigUpdate(BaseModel):
     """更新站点授权信息的请求体（site_id 走路径参数，故此处不含）。"""
 
-    auth_type: AuthType
-    cookie: str | None = None
-    api_key: str | None = None
-    username: str | None = None
-    password: str | None = None
-    enabled: bool = True
+    auth_type: AuthType = Field(description="选用的授权类型，须在该站点 supported 列表内")
+    cookie: str | None = Field(default=None, description="COOKIE 模式：浏览器 cookie 字符串")
+    api_key: str | None = Field(default=None, description="APIKEY 模式：API 密钥")
+    username: str | None = Field(default=None, description="CREDENTIAL 模式：用户名")
+    password: str | None = Field(default=None, description="CREDENTIAL 模式：密码")
+    enabled: bool = Field(default=True, description="true=启用 / false=停用")
 
 
 class SiteStatusUpdate(BaseModel):
     """启用/停用请求体。"""
 
-    enabled: bool
+    enabled: bool = Field(description="true=启用 / false=停用（停用后不再参与搜索与同步）")

@@ -33,6 +33,7 @@ def _mappings_to_rows(payload: DownloaderPayload) -> list[dict[str, str]] | None
     "/submit",
     response_model=ApiResponse[DownloadSubmitView],
     summary="把一条搜索结果种子提交到默认下载器",
+    operation_id="dl.submit",
 )
 async def submit_download(
     payload: DownloadSubmitPayload,
@@ -40,7 +41,7 @@ async def submit_download(
 ) -> ApiResponse[DownloadSubmitView]:
     """手动下载：带站点登录态取回 .torrent → 提交给默认下载器。
 
-    保存目录取值：用户在下载弹窗手选的目录最优先；否则与订阅同一决策——
+    保存目录取值：调用方手选的 save_path 最优先；否则与订阅同一决策——
     选了库且库有监听导入规则 → 规则源目录（完成后监听导入接管、规范命名
     进库）；选库无规则 → 库推导路径（主根/标题 (年份)，直接下载进库原地
     收纳——扫描的完整性检测保证半成品不入账）；未选库 → 下载器默认目录。
@@ -97,6 +98,7 @@ async def submit_download(
     "",
     response_model=ApiResponse[list[DownloaderView]],
     summary="列出已配置的下载器及连接状态",
+    operation_id="dl.list",
 )
 async def list_downloaders(
     session: AsyncSession = Depends(get_session),
@@ -110,6 +112,7 @@ async def list_downloaders(
     "/{downloader_id}",
     response_model=ApiResponse[DownloaderView],
     summary="获取单个下载器详情",
+    operation_id="dl.show",
 )
 async def get_downloader(
     downloader_id: int,
@@ -123,6 +126,7 @@ async def get_downloader(
     "",
     response_model=ApiResponse[DownloaderView],
     summary="添加一个下载器（保存后异步测试连接）",
+    operation_id="dl.add",
 )
 async def create_downloader_config(
     payload: DownloaderPayload,
@@ -131,7 +135,7 @@ async def create_downloader_config(
 ) -> ApiResponse[DownloaderView]:
     """保存下载器连接信息（状态置 pending），并在后台异步测试连通性。
 
-    接口立即返回，前端可轮询 GET /downloaders/{id} 观察 status 变化：
+    接口立即返回，调用方可轮询下载器详情（CLI：mclaw dl show <id>）观察 status 变化：
     pending → verifying → active（可用）/ failed（见 last_error）。
     """
     service = DownloaderConfigService(session)
@@ -155,6 +159,7 @@ async def create_downloader_config(
     "/{downloader_id}",
     response_model=ApiResponse[DownloaderView],
     summary="更新下载器配置（更新后重新测试连接）",
+    operation_id="dl.update",
 )
 async def update_downloader_config(
     downloader_id: int,
@@ -183,6 +188,7 @@ async def update_downloader_config(
     "/{downloader_id}/status",
     response_model=ApiResponse[DownloaderView],
     summary="启用 / 停用下载器",
+    operation_id="dl.status.set",
 )
 async def set_downloader_status(
     downloader_id: int,
@@ -198,6 +204,7 @@ async def set_downloader_status(
     "/{downloader_id}/default",
     response_model=ApiResponse[DownloaderView],
     summary="设为默认下载器",
+    operation_id="dl.default.set",
 )
 async def set_default_downloader(
     downloader_id: int,
@@ -205,7 +212,7 @@ async def set_default_downloader(
 ) -> ApiResponse[DownloaderView]:
     """把该下载器设为默认（一键下载不选目标时投给它），同时取消其他台的默认。
 
-    注意：其他记录的 is_default 也会随之变化，前端应整体刷新列表。"""
+    注意：其他记录的 is_default 也会随之变化，调用方应重新读取列表。"""
     service = DownloaderConfigService(session)
     row = await service.set_default(downloader_id)
     return ok(DownloaderView.from_model(row), message="已设为默认下载器")
@@ -215,6 +222,7 @@ async def set_default_downloader(
     "/{downloader_id}/verify",
     response_model=ApiResponse[DownloaderView],
     summary="手动重新测试连接",
+    operation_id="dl.verify",
 )
 async def reverify_downloader(
     downloader_id: int,
@@ -235,6 +243,8 @@ async def reverify_downloader(
     "/{downloader_id}",
     response_model=ApiResponse[dict],
     summary="删除下载器配置",
+    operation_id="dl.delete",
+    openapi_extra={"x-cli-dangerous": "confirm"},
 )
 async def delete_downloader_config(
     downloader_id: int,
