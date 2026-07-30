@@ -7,7 +7,7 @@ from typing import Any
 import pytest
 
 from movieclaw_media.models import MediaKind
-from movieclaw_media.service import MediaDiscoverService
+from movieclaw_media.service import MediaDiscoverService, _movie_rows, _tv_rows
 from movieclaw_media.tmdb import TmdbError
 
 _IMAGE_BASE = "https://image.tmdb.org/t/p"
@@ -128,6 +128,40 @@ async def test_ranked_row_limits_to_top10() -> None:
     top = next(r for r in page.rows if r.id == "trending-day")
     assert top.ranked is True
     assert len(top.items) == 10
+
+
+async def test_pages_render_all_configured_rows_in_order() -> None:
+    """全部端点有数据时，电影/剧集页的行序应与行定义完整一致（含地区/平台/类型行）。"""
+    enough = {"results": [_movie(i) for i in range(1, 8)]}
+    movie_svc = _service(
+        {
+            path: enough
+            for path in (
+                "trending/movie/day", "movie/now_playing", "movie/upcoming",
+                "movie/popular", "movie/top_rated", "discover/movie",
+            )
+        }
+    )
+    movie_page = await movie_svc.discover_page(MediaKind.MOVIE)
+    assert [r.id for r in movie_page.rows] == [s.row_id for s in _movie_rows("CN")]
+
+    tv_item = {
+        "id": 9,
+        "name": "剧集9",
+        "first_air_date": "2025-03-01",
+        "vote_average": 8.0,
+        "poster_path": "/tv9.jpg",
+    }
+    tv_svc = _service(
+        {
+            path: {"results": [dict(tv_item, id=i) for i in range(1, 8)]}
+            for path in (
+                "trending/tv/day", "tv/on_the_air", "tv/popular", "tv/top_rated", "discover/tv",
+            )
+        }
+    )
+    tv_page = await tv_svc.discover_page(MediaKind.TV)
+    assert [r.id for r in tv_page.rows] == [s.row_id for s in _tv_rows()]
 
 
 async def test_single_row_failure_is_isolated() -> None:
