@@ -311,8 +311,9 @@ class SubscriptionService:
         subscription = await self._get_or_404(subscription_id)
         item = await self._media_repo_get(subscription.media_item_id)
 
+        new_rule_set = None
         if rule_set_id is not None and rule_set_id != subscription.rule_set_id:
-            await self._rule_sets.get(rule_set_id)
+            new_rule_set = await self._rule_sets.get(rule_set_id)
             subscription.rule_set_id = rule_set_id
         if library_id is not None and library_id != subscription.library_id:
             await self._validate_library(subscription.kind, library_id)
@@ -371,15 +372,17 @@ class SubscriptionService:
         if to_remove:
             await self._repo.delete_wanted(to_remove)
         season_text = self._season_text(list(subscription.selected_seasons))
+        rule_note = f"，规则组改为「{new_rule_set.name}」" if new_rule_set is not None else ""
         await self._log(
             subscription,
             ActivityType.ADJUSTED,
-            f"调整订阅：勾选{season_text}，持续追新{'开' if subscription.follow_future else '关'}；"
-            f"补 {len(to_add)} 个工单，移除 {len(to_remove)} 个未完成工单"
+            f"调整订阅：勾选{season_text}，持续追新{'开' if subscription.follow_future else '关'}"
+            f"{rule_note}；补 {len(to_add)} 个工单，移除 {len(to_remove)} 个未完成工单"
             "（已提交下载的保留，不会重复下载）",
             payload={
                 "selected_seasons": list(subscription.selected_seasons),
                 "follow_future": subscription.follow_future,
+                "rule_set_id": subscription.rule_set_id,
                 "added": len(to_add),
                 "removed": len(to_remove),
             },

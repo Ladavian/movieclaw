@@ -5,6 +5,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { CheckIcon } from "@/components/icons";
 import { Modal } from "@/components/modal";
 import { PosterImage } from "@/components/poster-image";
+import { RuleSetEditorDialog, specSummary } from "@/components/rule-sets-panel";
 import { listLibraries, type MediaLibrary } from "@/lib/api/libraries";
 import {
   createSubscription,
@@ -62,6 +63,8 @@ export function SubscribeDialog({
   const [selectedSeasons, setSelectedSeasons] = useState<Set<number>>(new Set());
   const [followFuture, setFollowFuture] = useState(false);
   const [ruleSetId, setRuleSetId] = useState<number | null>(null);
+  // 快捷新建规则组（编辑器叠在本弹窗之上，保存后自动选中新组）
+  const [creatingRuleSet, setCreatingRuleSet] = useState(false);
   const [libraryId, setLibraryId] = useState<number | null>(null);
   const [busy, setBusy] = useState(false);
   // 投递路由预检：选库即预演"下载会落到哪、能否自动入库"，配置问题当场亮出
@@ -346,7 +349,16 @@ export function SubscribeDialog({
 
               {ruleSets.length > 0 && (
                 <section>
-                  <h3 className="mb-2 text-ui font-semibold text-white/85">资源规则</h3>
+                  <div className="mb-2 flex items-center justify-between">
+                    <h3 className="text-ui font-semibold text-white/85">资源规则</h3>
+                    <button
+                      type="button"
+                      onClick={() => setCreatingRuleSet(true)}
+                      className="text-sub font-medium text-[var(--accent)] hover:underline"
+                    >
+                      + 新建规则组
+                    </button>
+                  </div>
                   <select
                     value={ruleSetId ?? undefined}
                     onChange={(e) => setRuleSetId(Number(e.target.value))}
@@ -359,6 +371,30 @@ export function SubscribeDialog({
                       </option>
                     ))}
                   </select>
+                  {/* 所选组的条件摘要：选规则不再是「盲选」 */}
+                  {(() => {
+                    const picked = ruleSets.find((r) => r.id === ruleSetId);
+                    if (!picked) return null;
+                    const chips = specSummary(picked.spec);
+                    return (
+                      <p className="mt-1.5 flex flex-wrap gap-1.5">
+                        {chips.length === 0 ? (
+                          <span className="text-caption text-[var(--text-faint)]">
+                            全不限：任何识别为本条目的资源都可接受
+                          </span>
+                        ) : (
+                          chips.map((chip) => (
+                            <span
+                              key={chip}
+                              className="rounded-md bg-white/[0.07] px-1.5 py-0.5 text-caption text-white/75"
+                            >
+                              {chip}
+                            </span>
+                          ))
+                        )}
+                      </p>
+                    );
+                  })()}
                 </section>
               )}
 
@@ -441,6 +477,18 @@ export function SubscribeDialog({
             </div>
           )}
       </div>
+      {creatingRuleSet && (
+        <RuleSetEditorDialog
+          ruleSet={null}
+          raised
+          onClose={() => setCreatingRuleSet(false)}
+          onSaved={(saved) => {
+            setCreatingRuleSet(false);
+            setRuleSets((prev) => [...prev, saved]);
+            setRuleSetId(saved.id);
+          }}
+        />
+      )}
     </Modal>
   );
 }
