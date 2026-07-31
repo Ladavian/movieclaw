@@ -32,7 +32,6 @@ import {
   updateLibrary,
 } from "@/lib/api/libraries";
 import type { Subscription } from "@/lib/api/subscriptions";
-import { formatBytes } from "@/lib/format";
 import { imageUrl } from "@/lib/image-proxy";
 import type { MediaItem, MediaType } from "@/lib/media-types";
 import { useVisiblePolling } from "@/lib/use-visible-polling";
@@ -92,7 +91,7 @@ function buildMatchRules(genres: number[], regions: string[]): MatchRule[] {
 }
 
 /** 把区域国家码折叠成展示名：整组命中的折叠成预设组名（如「日韩」），
- *  折不进组的逐个显示中文名。库卡片摘要与表单弹窗底栏共用。 */
+ *  折不进组的逐个显示中文名。用于表单弹窗底栏的当前声明摘要。 */
 function regionLabels(regions: string[], options: RoutingOptions): string[] {
   const parts: string[] = [];
   let rest = [...regions];
@@ -104,24 +103,6 @@ function regionLabels(regions: string[], options: RoutingOptions): string[] {
   }
   parts.push(...rest.map((c) => options.country_names[c] ?? c));
   return parts;
-}
-
-/**
- * 收藏范围摘要（库卡片小字，如「动画 · 日韩」）：genre 用 ID→名映射，
- * 区域优先折叠成预设组名（全含即折叠），折不进组的国家码逐个显示中文名。
- */
-function matchRulesSummary(library: MediaLibrary, options: RoutingOptions | null): string | null {
-  if (library.match_rules.length === 0 || options === null) return null;
-  const { genres, regions } = parseMatchRules(library.match_rules);
-  const genreNames = new Map(
-    (library.kind === "movie" ? options.movie_genres : options.tv_genres).map((g) => [
-      g.id,
-      g.label,
-    ]),
-  );
-  const parts: string[] = genres.map((id) => genreNames.get(id) ?? String(id));
-  parts.push(...regionLabels(regions, options));
-  return parts.length > 0 ? parts.join(" · ") : null;
 }
 
 /**
@@ -480,7 +461,8 @@ export function LibraryView() {
 
 /**
  * 库存条目 → 发现页海报卡的数据形态。点击走 /media/{type}/{tmdb_id} 详情
- * （与单库页库存格同一目标）；副行放规模/大小。海报保持干净，不打清晰度徽章。
+ * （与单库页库存格同一目标）；副行只放剧集规模——文件大小对浏览海报墙
+ * 没有决策价值，不展示（点进条目详情能看到）。海报保持干净，不打清晰度徽章。
  */
 function libraryItemToMediaItem(item: LibraryItem): MediaItem {
   let extent = "";
@@ -489,8 +471,6 @@ function libraryItemToMediaItem(item: LibraryItem): MediaItem {
       item.seasons.length === 1
         ? `第 ${item.seasons[0]} 季 · ${item.episode_count} 集`
         : `${item.seasons.length} 季 · ${item.episode_count} 集`;
-  } else if (item.kind === "movie" && item.total_size_bytes > 0) {
-    extent = formatBytes(item.total_size_bytes);
   }
   return {
     id: String(item.tmdb_id),
@@ -528,9 +508,6 @@ function LibraryCard({
   onError: (message: string) => void;
 }) {
   const meta = LIBRARY_KIND_META[library.kind];
-  const routingOptions = useRoutingOptions();
-  // 收藏范围摘要（"收：动画 · 日韩"）：声明了才显示，一眼看清各库分工
-  const collectSummary = matchRulesSummary(library, routingOptions);
   // 封面海报取最近入库的 4 部（items 已是服务端按最近入账排好的那批）
   const posters = items
     .map((s) => s.poster_url)
@@ -615,15 +592,6 @@ function LibraryCard({
           </span>
         )}
       </div>
-      {collectSummary && (
-        <p
-          className="mt-0.5 truncate px-2 text-center text-caption text-[var(--text-faint)]"
-          title={`收藏范围：${collectSummary}（订阅与监听导入按它自动选库）`}
-        >
-          收：{collectSummary}
-        </p>
-      )}
-
       {/* 管理操作：悬停浮现在右上角（Link 外层，避免点菜单触发跳转） */}
       <LibraryCardMenu
         library={library}
@@ -974,8 +942,8 @@ export function LibraryFormDialog({
   const labelClass = "mb-1.5 block text-sub font-medium text-[var(--text-muted)]";
 
   // 收藏范围的当前声明摘要（底栏常显）：切到基本信息页签也能看到已设了什么。
-  // 区域折叠复用卡片摘要的 regionLabels（整组折叠 + 零散国家码兜底），
-  // 两处口径一致；genre 只算当前库类型下有效的（另一类型独有的提交时会被过滤）
+  // 区域走 regionLabels 折叠（整组折叠 + 零散国家码兜底）；genre 只算当前
+  // 库类型下有效的（另一类型独有的提交时会被过滤）
   const activeRegionLabels = routingOptions === null ? [] : regionLabels(matchRegions, routingOptions);
   const activeGenreLabels = genreOptions.filter((g) => matchGenres.includes(g.id)).map((g) => g.label);
   const scopeParts = [activeRegionLabels.join(" / "), activeGenreLabels.join(" / ")].filter(Boolean);

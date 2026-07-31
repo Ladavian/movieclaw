@@ -872,7 +872,8 @@ const InventoryCell = memo(function InventoryCell({
     // 海报可能是本地刮削资产的相对路径（断网可用），也可能是 TMDB 图床地址
     posterUrl: imageUrl(item.poster_url),
   };
-  // 格下只说规模与规格；单部占多大盘在这里没有决策价值，总大小看库头部
+  // 格下只说剧集规模与异常；单部的大小/清晰度规格对浏览海报墙没有决策
+  // 价值，不展示（点进条目详情能看到），总大小看库头部
   const parts: string[] = [];
   if (item.kind === "tv" && item.seasons.length > 0) {
     parts.push(
@@ -881,7 +882,6 @@ const InventoryCell = memo(function InventoryCell({
         : `${item.seasons.length} 季 · ${item.episode_count} 集`,
     );
   }
-  if (item.resolutions.length > 0) parts.push(item.resolutions.join("/"));
   // 文件全部缺失的"死条目"：海报置灰，一眼与在位内容区分
   const dead = item.file_count > 0 && item.missing_count >= item.file_count;
   // 库存墙里的东西本来就都在库里，「已入库」不值一行；只有缺失这类异常才点灯
@@ -978,12 +978,26 @@ function WallLoadMore({
 /** A-Z 索引条的完整档位（与后端 sort_key.INITIALS 同序）：# 收尾。 */
 const WALL_INITIALS = [...Array.from({ length: 26 }, (_, i) => String.fromCharCode(65 + i)), "#"];
 
+/** 索引条整高的上限（px）：27 档 × 18px。视口更矮时按视口等比压缩每格。 */
+const WALL_INDEX_MAX_HEIGHT = WALL_INITIALS.length * 18;
+/** 索引条最多占视口高度的比例：留出上下呼吸空间，也保证吸附居中有余量 */
+const WALL_INDEX_HEIGHT = `min(${WALL_INDEX_MAX_HEIGHT}px, 72dvh)`;
+
 /**
  * 海报墙右侧的 A-Z 快速定位条。
  *
- * 中文按拼音首字母分档（后端算好，见 sort_key 模块）。点一下把窗口整体换到
+ * 中文按拼音首字母分档（后端算好，见 sort_key 模块）。选中一档把窗口整体换到
  * 该档起点——墙是分页的，"跳到 S"意味着重新取一页，而不是在已加载的几屏里找。
- * 空档（该字母下没有作品）保留位置但不可点：字母位置固定，肌肉记忆才成立。
+ * 空档（该字母下没有作品）保留位置但不可选：字母位置固定，肌肉记忆才成立。
+ *
+ * 两个关键设计（都为触屏体验）：
+ * 1. **高度自适应 + 吸附居中**：整条高度压到视口内（每格 flex 等分），sticky 的
+ *    top 取"视口高减条高的一半"——滚动时恒定悬在视口右侧垂直居中处。原先固定
+ *    486px + 吸顶，在手机上比屏幕还高，底部字母永远够不着。
+ * 2. **滑动选中**：不再逐字母摆按钮，整条用 Pointer 事件统一接管（touch-none
+ *    阻掉页面滚动、setPointerCapture 保证滑出条外不丢）：按下/滑动时按指尖纵向
+ *    位置换算档位并浮出气泡预览，**松手才跳转**——跳转要重新取一页，滑动过程中
+ *    连发请求既浪费也让墙抖动。鼠标点击等价于"按下即松手"，行为不变。
  */
 function WallIndexBar({
   index,
@@ -1001,31 +1015,96 @@ function WallIndexBar({
     () => index.findLast((e) => e.offset <= start)?.initial ?? null,
     [index, start],
   );
+  const barRef = useRef<HTMLDivElement>(null);
+  // 正在滑选的字母（气泡预览 + 高亮）；null = 没在按压
+  const [preview, setPreview] = useState<string | null>(null);
+  // 是否处于按压/滑动中：pointermove 在鼠标悬停时也会触发，得靠它区分
+  const dragging = useRef(false);
+
+  /** 指尖纵坐标 → 档位字母：格子是 flex 等分的，按比例换算即可 */
+  const letterAtY = useCallback((clientY: number) => {
+    const rect = barRef.current?.getBoundingClientRect();
+    if (!rect || rect.height === 0) return null;
+    const ratio = (clientY - rect.top) / rect.height;
+    const idx = Math.min(
+      WALL_INITIALS.length - 1,
+      Math.max(0, Math.floor(ratio * WALL_INITIALS.length)),
+    );
+    return WALL_INITIALS[idx];
+  }, []);
+
   if (index.length === 0) return null;
 
+  const previewEntry = preview ? byInitial.get(preview) : undefined;
+  const previewIdx = preview ? WALL_INITIALS.indexOf(preview) : -1;
+
   return (
-    <div className="sticky top-4 flex shrink-0 flex-col items-center gap-px py-1 text-micro font-semibold leading-none text-[var(--text-faint)]">
+    <div
+      ref={barRef}
+      role="navigation"
+      aria-label="按首字母跳转"
+      className="sticky flex shrink-0 touch-none select-none flex-col items-stretch text-micro font-semibold leading-none text-[var(--text-faint)]"
+      style={{
+        height: WALL_INDEX_HEIGHT,
+        // 吸附点 = 视口垂直居中；视口过矮时保底离顶 16px
+        top: `max(16px, calc((100dvh - ${WALL_INDEX_HEIGHT}) / 2))`,
+      }}
+      onPointerDown={(e) => {
+        // 阻掉按下的默认行为（文字选择/图片拖拽），并捕获指针：
+        // 手指滑出条外仍持续收到 move/up，选择不中断
+        e.preventDefault();
+        e.currentTarget.setPointerCapture(e.pointerId);
+        dragging.current = true;
+        setPreview(letterAtY(e.clientY));
+      }}
+      onPointerMove={(e) => {
+        if (dragging.current) setPreview(letterAtY(e.clientY));
+      }}
+      onPointerUp={(e) => {
+        if (!dragging.current) return;
+        dragging.current = false;
+        const entry = byInitial.get(letterAtY(e.clientY) ?? "");
+        if (entry) onJump(entry.offset);
+        setPreview(null);
+      }}
+      onPointerCancel={() => {
+        dragging.current = false;
+        setPreview(null);
+      }}
+    >
       {WALL_INITIALS.map((initial) => {
         const entry = byInitial.get(initial);
         return (
-          <button
+          <span
             key={initial}
-            type="button"
-            disabled={!entry}
-            onClick={() => entry && onJump(entry.offset)}
             title={entry ? `${initial} · ${entry.count} 部` : undefined}
-            className={`flex size-[18px] items-center justify-center rounded transition-colors ${
+            className={`flex min-h-0 w-[18px] flex-1 items-center justify-center rounded transition-colors max-md:w-5 ${
               !entry
-                ? "cursor-default text-white/15"
-                : initial === active
-                  ? "bg-[var(--accent)]/25 text-white"
-                  : "text-white/55 hover:bg-white/10 hover:text-white"
+                ? "text-white/15"
+                : initial === preview
+                  ? "bg-[var(--accent)]/40 text-white"
+                  : initial === active
+                    ? "bg-[var(--accent)]/25 text-white"
+                    : "text-white/55 hover:bg-white/10 hover:text-white"
             }`}
           >
             {initial}
-          </button>
+          </span>
         );
       })}
+      {/* 滑选气泡：跟着指尖所在档位浮在条左侧，大字预览 + 该档作品数。
+          指尖压着的字母本身被手指挡住，没有它滑选等于盲选 */}
+      {preview && previewIdx >= 0 && (
+        <div
+          className="pointer-events-none absolute right-full mr-3 flex -translate-y-1/2 items-center gap-2 rounded-xl border border-white/[0.14] bg-[rgba(16,18,26,0.92)] px-3.5 py-2 shadow-[0_8px_28px_rgba(0,0,0,0.5)]"
+          style={{ top: `${((previewIdx + 0.5) / WALL_INITIALS.length) * 100}%` }}
+        >
+          <span className="text-title-lg font-bold text-white">{preview}</span>
+          <span className="whitespace-nowrap text-caption text-[var(--text-muted)]">
+            {previewEntry ? `${previewEntry.count} 部` : "无作品"}
+          </span>
+        </div>
+      )}
     </div>
   );
 }
