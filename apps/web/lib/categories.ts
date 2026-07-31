@@ -69,9 +69,10 @@ export type SearchTab = CategoryTab | PresetTab;
  * 搜索的垂直类别（Google 式「综合/图片」的对应物）：
  *   media   影视条目（当前只搜豆瓣，轻量元数据，毫秒级）
  *   torrent 站点资源（跨 PT 站并发搜种子，秒级，惰性触发）
- * 搜索弹窗的「搜媒体/搜资源」模式与结果页顶部选项卡共用该类型。
+ *   library 媒体库（已入库的本地条目，回答「这部片我有没有」，毫秒级）
+ * 搜索弹窗的「影视/资源/媒体库」模式与结果页顶部选项卡共用该类型。
  */
-export type SearchVertical = "media" | "torrent";
+export type SearchVertical = "media" | "torrent" | "library";
 
 /**
  * 一次搜索的范围：选中某个标签后传给搜索接口的参数组合。

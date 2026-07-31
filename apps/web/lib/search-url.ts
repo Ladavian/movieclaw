@@ -11,7 +11,8 @@ import {
  *
  * 参数表：
  *   q        关键词（必填，缺失视为无效搜索）
- *   tab      垂直类别："media" = 影视条目（豆瓣）；缺失 = 站点资源（老链接兼容）
+ *   tab      垂直类别："media" = 影视条目（豆瓣）/ "library" = 媒体库；
+ *            缺失 = 站点资源（老链接兼容）
  *   label    范围的展示名（分类中文名 / 预设名；缺失 = 「全部」）
  *   cats     逗号分隔的一级分类；缺失 = 不限分类
  *   sites    逗号分隔的站点 id；缺失 = 全部站点
@@ -26,7 +27,7 @@ import {
 export function buildSearchPath(query: SearchQuery, vertical?: SearchVertical): string {
   const params = new URLSearchParams();
   params.set("q", query.keyword);
-  if (vertical === "media") params.set("tab", "media");
+  if (vertical === "media" || vertical === "library") params.set("tab", vertical);
   const { scope } = query;
   if (scope.label) params.set("label", scope.label);
   if (scope.categories.length > 0) params.set("cats", scope.categories.join(","));

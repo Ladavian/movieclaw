@@ -27,6 +27,7 @@ from movieclaw_api.schemas.library import (
     LibraryItemDetailView,
     LibraryItemView,
     LibraryPayload,
+    LibrarySearchGroupView,
     LibraryStats,
     LibraryView,
     LocalMetaView,
@@ -74,6 +75,7 @@ from movieclaw_api.services.library.items import (
     delete_item_files,
     find_episode_thumb,
     find_local_artwork,
+    search_library_items,
 )
 from movieclaw_api.services.library.layout import entry_dir_of
 from movieclaw_api.services.library.organize import (
@@ -498,6 +500,41 @@ async def resolve_identity_review(
         else f"{resolved} 个文件维持现有身份，不再提醒"
     )
     return ok({"resolved": resolved}, message=message)
+
+
+@router.get(
+    "/search",
+    response_model=ApiResponse[list[LibrarySearchGroupView]],
+    summary="按关键词搜索已入库条目（跨全部媒体库，标题/原名匹配，按库分组）",
+    operation_id="lib.search",
+)
+async def search_libraries(
+    keyword: str = Query(
+        ..., min_length=1, max_length=100, description="搜索关键词（标题或原名的子串，忽略大小写）"
+    ),
+    session: AsyncSession = Depends(get_session),
+) -> ApiResponse[list[LibrarySearchGroupView]]:
+    """搜索页「媒体库」垂直的数据源：回答「这部片我有没有」。
+
+    只搜已识别入库的条目（待识别文件没有可靠标题，去待识别清单处理）；
+    本地查询毫秒级返回。刻意不写入搜索历史——搜自己的库是翻家底，
+    不是一次对外搜索，历史里混进它只会淹没真正要回放的记录。
+    """
+    matched = await search_library_items(session, keyword)
+    libraries = await LibraryConfigService(session).list_all()
+    # 分组顺序沿用库列表的顺序（与媒体库首页一致），空组不出现
+    return ok(
+        [
+            LibrarySearchGroupView(
+                library_id=lib.id,  # type: ignore[arg-type]
+                library_name=lib.name,
+                kind=MediaKind(lib.kind),
+                items=matched[lib.id],
+            )
+            for lib in libraries
+            if lib.id in matched
+        ]
+    )
 
 
 @router.get(

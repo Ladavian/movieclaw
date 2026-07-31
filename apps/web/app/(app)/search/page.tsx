@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import type { Route } from "next";
 
+import { LibrarySearchResults } from "@/components/library-search-results";
 import { MediaSearchResults } from "@/components/media-search-results";
 import { SearchResults, type SearchQuery } from "@/components/search-results";
 import {
@@ -22,8 +23,8 @@ import { usePageTitle } from "@/lib/use-page-title";
  * 搜索结果页（/search?q=…）：查询全部输入都在 URL 里，可刷新 / 分享 / 前进后退。
  * q 缺失或为空时（如手改地址删掉 q）重定向回首页，不渲染空结果。
  *
- * Google 式垂直选项卡：顶部「影视 | 站点资源」，关键词跟着选项卡走（URL 的
- * tab 参数，见 lib/search-url）。两个垂直惰性挂载 + 切换保活：
+ * Google 式垂直选项卡：顶部「影视 | 站点资源 | 媒体库」，关键词跟着选项卡走
+ * （URL 的 tab 参数，见 lib/search-url）。各垂直惰性挂载 + 切换保活：
  *   - 惰性：站点资源的跨站搜索是秒级重操作，只有用户真正切到该选项卡才发起，
  *     媒体优先的默认落地不会打扰任何 PT 站点；
  *   - 保活：切走的垂直用 display 隐藏而非卸载，PT 流式搜索照常进行、
@@ -36,7 +37,9 @@ export default function SearchPage() {
   const params = useSearchParams();
   // useSearchParams 返回的对象每次渲染同引用变化，这里以序列化串为依赖稳定 query
   const key = params.toString();
-  const vertical: SearchVertical = params.get("tab") === "media" ? "media" : "torrent";
+  const tabParam = params.get("tab");
+  const vertical: SearchVertical =
+    tabParam === "media" ? "media" : tabParam === "library" ? "library" : "torrent";
   // 种子搜索的身份串：剥掉 tab，切换选项卡时保持不变
   const torrentKey = useMemo(() => {
     const p = new URLSearchParams(key);
@@ -60,8 +63,8 @@ export default function SearchPage() {
    *  replaceState 写回地址栏的（不触发路由），只有前者能拿到它们的最新值。 */
   const switchVertical = (target: SearchVertical) => {
     const p = new URLSearchParams(window.location.search);
-    if (target === "media") p.set("tab", "media");
-    else p.delete("tab");
+    if (target === "torrent") p.delete("tab");
+    else p.set("tab", target);
     p.delete("snapshot");
     router.push(`/search?${p.toString()}` as Route);
   };
@@ -96,6 +99,7 @@ export default function SearchPage() {
 const VERTICAL_TABS: { id: SearchVertical; label: string }[] = [
   { id: "media", label: "影视" },
   { id: "torrent", label: "站点资源" },
+  { id: "library", label: "媒体库" },
 ];
 
 /** 垂直选项卡 + 两个结果视图的挂载/显隐调度（惰性挂载、切换保活，见页头注释）。 */
@@ -117,6 +121,7 @@ function SearchVerticals({
   const [visited, setVisited] = useState<Record<SearchVertical, boolean>>(() => ({
     media: vertical === "media",
     torrent: vertical === "torrent",
+    library: vertical === "library",
   }));
   useEffect(() => {
     setVisited((prev) => (prev[vertical] ? prev : { ...prev, [vertical]: true }));
@@ -196,6 +201,14 @@ function SearchVerticals({
       {visited.torrent && (
         <div className={vertical === "torrent" ? "min-h-0 flex-1" : "hidden"}>
           <SearchResults query={query} onResearch={onResearch} />
+        </div>
+      )}
+      {visited.library && (
+        <div className={vertical === "library" ? "min-h-0 flex-1" : "hidden"}>
+          <LibrarySearchResults
+            keyword={query.keyword}
+            onSwitchToMedia={() => onSwitch("media")}
+          />
         </div>
       )}
     </div>

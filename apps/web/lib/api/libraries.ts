@@ -387,6 +387,20 @@ export function listLibraryItemIds(id: number): Promise<number[]> {
   return unwrap(request<ApiEnvelope<number[]>>(`/libraries/${id}/item-ids`));
 }
 
+/** 媒体库搜索结果的一组：一个库内命中关键词的条目（组内按标题拼音排序）。 */
+export interface LibrarySearchGroup {
+  library_id: number;
+  library_name: string;
+  kind: MediaType;
+  items: LibraryItem[];
+}
+
+/** 跨全部媒体库按关键词搜索已入库条目（标题/原名子串匹配，忽略大小写）。 */
+export function searchLibraryItems(keyword: string): Promise<LibrarySearchGroup[]> {
+  const query = new URLSearchParams({ keyword });
+  return unwrap(request<ApiEnvelope<LibrarySearchGroup[]>>(`/libraries/search?${query}`));
+}
+
 /** 海报墙 A-Z 索引条的一档（按标题排序下的首字母分组）。 */
 export interface LibraryIndexEntry {
   /** 首字母档：A-Z；数字/符号/假名等落不进的归 # */
