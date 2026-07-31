@@ -9,6 +9,7 @@ export type AgentEventType =
   | "tool_call_delta"
   | "tool_call"
   | "tool_result"
+  | "context_compacted"
   | "agent_done"
   | "agent_error"
   | "agent_cancelled";
@@ -27,6 +28,13 @@ export interface AgentToolResult {
   output: string;
   is_error: boolean;
   elapsed_ms: number;
+}
+
+/** 上下文压缩回执（context_compacted 事件的载荷；token 数为估算值）。 */
+export interface AgentCompaction {
+  summary: string;
+  tokens_before: number;
+  tokens_after: number;
 }
 
 /** agent_done 的终态载荷（text/thinking 为最后一步产出，usage 为全程累计）。 */
@@ -52,6 +60,8 @@ export interface AgentEvent {
   /** tool_call_delta：增量所属的工具调用 id */
   tool_call_id?: string;
   tool_result?: AgentToolResult;
+  /** context_compacted：压缩回执 */
+  compaction?: AgentCompaction;
   /** agent_start：实际路由到的供应商与模型 */
   provider?: string;
   model?: string;
@@ -89,6 +99,8 @@ export interface AgentTranscriptMessage {
 
 /** 会话详情里的一条消息 entry（信封 + API 格式消息）。 */
 export interface AgentSessionEntry {
+  /** v1 历史文件的行没有 type 字段，缺省即消息行 */
+  type?: "message";
   uuid: string;
   timestamp: string;
   message: AgentTranscriptMessage;
@@ -98,6 +110,18 @@ export interface AgentSessionEntry {
   /** 约定含 "aborted"：该步产出时运行被取消 */
   finish_reason?: string | null;
 }
+
+/** 会话详情里的一条压缩行（服务端投影已剔除 replacement_history）。 */
+export interface AgentSessionCompactionEntry {
+  type: "compaction";
+  uuid: string;
+  timestamp: string;
+  summary: string;
+  tokens_before?: number;
+  tokens_after?: number;
+}
+
+export type AgentSessionAnyEntry = AgentSessionEntry | AgentSessionCompactionEntry;
 
 /** 会话列表项（running 由 active_run_id + 心跳窗派生）。 */
 export interface AgentSessionSummary {
@@ -114,7 +138,7 @@ export interface AgentSessionSummary {
 
 export interface AgentSessionDetail {
   session: AgentSessionSummary;
-  entries: AgentSessionEntry[];
+  entries: AgentSessionAnyEntry[];
 }
 
 interface ApiEnvelope<T> {

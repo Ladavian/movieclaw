@@ -1,15 +1,17 @@
-"""AgentRunner loop：工具执行循环、兼容怪癖判据、错误回喂、步数上限。"""
+"""AgentRunner loop：工具执行循环、兼容怪癖判据、错误回喂、步数上限、自动压缩。"""
 
 from __future__ import annotations
 
 import json
 
-from movieclaw_agent import AgentRunner, AgentStartParams, AgentTool
+from movieclaw_agent import SUMMARY_PREFIX, AgentRunner, AgentStartParams, AgentTool
+from movieclaw_agent.prompts import COMPACT_PROMPT
 from movieclaw_llm import (
     ChatMessage,
     ChatResponse,
     LlmProviderConfig,
     LlmRouter,
+    ModelInfo,
     TokenUsage,
     ToolCall,
     ToolDefinition,
@@ -268,6 +270,173 @@ async def test_routing_failure_yields_agent_error_without_start():
     ]
     assert [e.type for e in events] == ["agent_error"]
     assert "没有任何已启用" in events[0].error
+
+
+# ---------------------------------------------------------------------------
+# 自动压缩（触发判定的纯函数见 test_compaction.py，这里测 loop 集成）
+# ---------------------------------------------------------------------------
+
+
+def make_compact_runner(protocol_cls, monkeypatch, *, model_info: ModelInfo) -> AgentRunner:
+    """带小上下文窗口自定义模型的 runner；压缩产物记入 _probe["compactions"]。"""
+    monkeypatch.setitem(PROTOCOLS, "openai_chat", protocol_cls)
+    _probe.clear()
+    _probe["requests"] = []
+    _probe["compactions"] = []
+
+    async def handler(args: dict) -> str:
+        # 大体积工具输出：压缩后被丢弃，tokens_before 因此显著大于 tokens_after
+        return "找到 3 条资源：" + "A" * 4000
+
+    async def on_compaction(result) -> None:
+        _probe["compactions"].append(result)
+
+    router = LlmRouter(
+        [
+            LlmProviderConfig(
+                name="测试百炼",
+                provider_type="bailian",
+                api_key="sk-x",
+                default_model=model_info.id,
+                extra_models=[model_info],
+                is_default=True,
+            )
+        ]
+    )
+    tools = [AgentTool(definition=SEARCH_TOOL_DEF, handler=handler)]
+    return AgentRunner(router, tools=tools, on_compaction=on_compaction)
+
+
+class CompactionProtocol(ToolLoopProtocol):
+    """三段流：首步高用量的工具调用 → 压缩请求回摘要 → 见到摘要给终答。"""
+
+    #: 首步上报的 prompt 用量（窗口 1000、阈值 900：默认触发 mid-run 压缩）
+    first_prompt_tokens = 950
+
+    async def chat_stream(self, request, model_id):
+        _probe["requests"].append(request)
+        snap = ChatResponse(model=model_id, provider=self.config.name)
+        yield ChatStreamEvent(type="start", partial=snap)
+        if request.tools is None:
+            # 压缩请求（无工具定义）：回一份交接摘要
+            yield ChatStreamEvent(
+                type="done",
+                partial=ChatResponse(
+                    content="这是交接摘要",
+                    finish_reason="stop",
+                    model=model_id,
+                    provider=self.config.name,
+                ),
+            )
+            return
+        has_summary = any(
+            m.role == "user" and m.text().startswith(SUMMARY_PREFIX) for m in request.messages
+        )
+        has_tool_msg = any(m.role == "tool" for m in request.messages)
+        if has_summary or has_tool_msg:
+            yield ChatStreamEvent(type="text_delta", delta="最终答复", partial=snap)
+            yield ChatStreamEvent(
+                type="done",
+                partial=ChatResponse(
+                    content="最终答复",
+                    finish_reason="stop",
+                    usage=TokenUsage(prompt_tokens=20, completion_tokens=7, total_tokens=27),
+                    model=model_id,
+                    provider=self.config.name,
+                ),
+            )
+            return
+        tc = ToolCall(id="c1", name="search", arguments={"q": "沙丘"})
+        yield ChatStreamEvent(type="toolcall_end", tool_call=tc, partial=snap)
+        yield ChatStreamEvent(
+            type="done",
+            partial=ChatResponse(
+                tool_calls=[tc],
+                finish_reason="tool_calls",
+                usage=TokenUsage(
+                    prompt_tokens=self.first_prompt_tokens,
+                    completion_tokens=5,
+                    total_tokens=self.first_prompt_tokens + 5,
+                ),
+                model=model_id,
+                provider=self.config.name,
+            ),
+        )
+
+
+async def test_mid_run_auto_compact(monkeypatch):
+    """mid-run 压缩：工具结果回喂后超水位 → 压缩 → 用重建历史继续循环。"""
+    runner = make_compact_runner(
+        CompactionProtocol, monkeypatch, model_info=ModelInfo(id="tiny", context_window=1000)
+    )
+    events = await collect(runner, AgentStartParams(input="找沙丘"))
+    types = [e.type for e in events]
+    # 压缩事件出现在工具回执之后、终态之前
+    assert types.index("tool_result") < types.index("context_compacted") < types.index("agent_done")
+    compacted = next(e for e in events if e.type == "context_compacted")
+    assert compacted.compaction.summary == "这是交接摘要"
+    assert compacted.compaction.tokens_before > compacted.compaction.tokens_after
+
+    # 请求序列：步 1（带工具）→ 压缩（无工具、末尾是压缩指令、含完整现场）→ 步 2
+    step1, compact_req, step2 = _probe["requests"]
+    assert compact_req.tools is None
+    assert compact_req.messages[-1].text() == COMPACT_PROMPT
+    assert any(m.role == "tool" for m in compact_req.messages)
+    # 步 2 的上下文已重建：system + 保留的用户原话 + 摘要，零 assistant/tool
+    assert [m.role for m in step2.messages] == ["system", "user", "user"]
+    assert step2.messages[1].text() == "找沙丘"
+    assert step2.messages[2].text() == f"{SUMMARY_PREFIX}\n这是交接摘要"
+    # 压缩回调收到的替换历史与步 2 的上下文（去掉 system）一致
+    assert len(_probe["compactions"]) == 1
+    assert _probe["compactions"][0].replacement_history == step2.messages[1:]
+
+
+async def test_pre_run_compact_on_oversized_history(monkeypatch):
+    """pre-run 压缩：续聊历史冷启动即超水位（字节估算）→ 首个请求就是压缩。"""
+    runner = make_compact_runner(
+        CompactionProtocol, monkeypatch, model_info=ModelInfo(id="tiny", context_window=1000)
+    )
+    huge = ChatMessage(role="user", content="x" * 4000)  # ≈1000 token ≥ 900 水位
+    events = await collect(runner, AgentStartParams(input="继续", history=[huge]))
+    assert [e.type for e in events][:2] == ["agent_start", "context_compacted"]
+    assert _probe["requests"][0].tools is None
+    # 压缩后模型看到摘要，直接给出终答
+    assert events[-1].type == "agent_done"
+
+
+async def test_compact_failure_degrades_and_run_continues(monkeypatch):
+    """压缩请求失败 → 跳过压缩继续运行，任务照常完成。"""
+
+    class FailingCompactProtocol(CompactionProtocol):
+        async def chat_stream(self, request, model_id):
+            if request.tools is None:
+                _probe["requests"].append(request)
+                yield ChatStreamEvent(
+                    type="error",
+                    partial=ChatResponse(finish_reason="error", error="模型服务不可用"),
+                )
+                return
+            async for event in super().chat_stream(request, model_id):
+                yield event
+
+    runner = make_compact_runner(
+        FailingCompactProtocol, monkeypatch, model_info=ModelInfo(id="tiny", context_window=1000)
+    )
+    events = await collect(runner, AgentStartParams(input="找沙丘"))
+    assert all(e.type != "context_compacted" for e in events)
+    assert events[-1].type == "agent_done"
+    assert _probe["compactions"] == []
+
+
+async def test_no_context_window_disables_auto_compact(monkeypatch):
+    """模型未声明窗口：高用量也不发压缩请求（宁可放行到供应商报错）。"""
+    runner = make_compact_runner(
+        CompactionProtocol, monkeypatch, model_info=ModelInfo(id="nowin")
+    )
+    events = await collect(runner, AgentStartParams(input="找沙丘"))
+    assert all(e.type != "context_compacted" for e in events)
+    assert all(request.tools is not None for request in _probe["requests"])
+    assert events[-1].type == "agent_done"
 
 
 async def test_system_prompt_override_and_history(monkeypatch):

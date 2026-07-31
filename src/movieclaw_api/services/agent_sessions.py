@@ -15,6 +15,10 @@
    幽灵会话。
 5. **读取容错**：进程崩溃可能留下半行，逐行解析时静默跳过坏行并计数，
    绝不让整个会话打不开。
+6. **v2 新增压缩行**（``type: "compaction"``）：上下文压缩时追加一条含摘要与
+   完整替换历史的记录，``build_history`` 从最后一条压缩行起重建（codex 的
+   Compacted 记录同款思路）。老版本读端会把压缩行当坏行跳过，重建出未压缩的
+   全量历史——更大但仍是合法上下文，属可接受的降级。
 """
 
 from __future__ import annotations
@@ -24,17 +28,19 @@ import logging
 import uuid as uuid_mod
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Literal
+from typing import Annotated, Literal
 
-from pydantic import BaseModel, ValidationError
+from pydantic import BaseModel, Field, TypeAdapter, ValidationError
 
+from movieclaw_agent import CompactionResult
 from movieclaw_api.exceptions import NotFoundException
 from movieclaw_llm import ChatMessage, TokenUsage
 
 logger = logging.getLogger("movieclaw_api.agent_sessions")
 
 #: 文件格式版本；未来结构变化时 +1，读取端按版本做迁移
-SESSION_FORMAT_VERSION = 1
+#: v2：新增 type="compaction" 的压缩行（读端向后兼容 v1，无需迁移）
+SESSION_FORMAT_VERSION = 2
 
 #: 会话标题 / 最后提示预览的截断长度（DB 索引列用，全文始终在文件里）
 PREVIEW_MAX_CHARS = 80
@@ -76,6 +82,30 @@ class SessionEntry(BaseModel):
     finish_reason: str | None = None
 
 
+class CompactionEntry(BaseModel):
+    """JSONL 压缩行：摘要 + 完整替换历史（codex Compacted 记录同款）。
+
+    ``replacement_history`` 是压缩后模型上下文的精确内容（不含 system——
+    system 从不入库，每次运行重拼）。resume 时以它为起点、追加其后的增量
+    消息即可精确重建，不存在「按摘要重算」的歧义。
+    """
+
+    type: Literal["compaction"] = "compaction"
+    uuid: str
+    parent_uuid: str | None = None
+    timestamp: str
+    summary: str
+    replacement_history: list[ChatMessage]
+    #: 压缩前后的估算 token 数（展示与观测用，非精确值）
+    tokens_before: int | None = None
+    tokens_after: int | None = None
+
+
+#: 消息行与压缩行的联合类型；_read 逐行按 type 判别解析
+AnyEntry = Annotated[SessionEntry | CompactionEntry, Field(discriminator="type")]
+_entry_adapter: TypeAdapter[SessionEntry | CompactionEntry] = TypeAdapter(AnyEntry)
+
+
 class SessionSummary(BaseModel):
     """扫描一个会话文件得到的索引摘要（rebuild 与列表回填用）。"""
 
@@ -89,6 +119,22 @@ class SessionSummary(BaseModel):
     last_prompt: str | None
     #: 最后一条 entry 的时间戳（文件为空时取头的 created_at）
     last_timestamp: str
+
+
+def _last_compaction_index(entries: list[SessionEntry | CompactionEntry]) -> int:
+    """最后一条压缩行的下标；没有压缩行时返回 -1。"""
+    for i in range(len(entries) - 1, -1, -1):
+        if isinstance(entries[i], CompactionEntry):
+            return i
+    return -1
+
+
+def _messages_after_last_compaction(
+    entries: list[SessionEntry | CompactionEntry],
+) -> list[ChatMessage]:
+    """最后一条压缩行之后的消息（无压缩行时即全部消息）。"""
+    last = _last_compaction_index(entries)
+    return [e.message for e in entries[last + 1 :] if isinstance(e, SessionEntry)]
 
 
 class AgentSessionStore:
@@ -154,18 +200,44 @@ class AgentSessionStore:
         self._leaf_cache[session_id] = entry.uuid
         return entry
 
+    def append_compaction(self, session_id: str, result: CompactionResult) -> CompactionEntry:
+        """追加一条压缩行，与 append 同款接到当前链尾（parent 链线性穿过压缩行）。"""
+        path = self.path(session_id)
+        if not path.is_file():
+            raise NotFoundException("Agent 会话不存在或转录文件已被删除")
+        if session_id not in self._leaf_cache:
+            _, entries, _ = self._read(path)
+            self._leaf_cache[session_id] = entries[-1].uuid if entries else None
+        entry = CompactionEntry(
+            uuid=uuid_mod.uuid4().hex[:12],
+            parent_uuid=self._leaf_cache[session_id],
+            timestamp=_now_iso(),
+            summary=result.summary,
+            replacement_history=result.replacement_history,
+            tokens_before=result.tokens_before,
+            tokens_after=result.tokens_after,
+        )
+        with path.open("a", encoding="utf-8") as f:
+            f.write(entry.model_dump_json(exclude_none=True) + "\n")
+        self._leaf_cache[session_id] = entry.uuid
+        return entry
+
     def seal_pending_tool_calls(self, session_id: str) -> int:
         """中断收尾：给没有结果的 tool_call 补写错误回执，返回补写条数。
 
         保证文件里 assistant 的 tool_calls 与 tool 消息任何时刻都配对完整，
         resume 直接回喂 API 不需要修复逻辑（Claude Code 是吃到 400 再反应式
         修复，我们在写入侧一次做对更省事）。
+
+        只检查最后一条压缩行之后的消息：更早的往返已被压缩挡在上下文之外，
+        给死上下文补回执毫无意义。
         """
         _, entries, _ = self._read(self.path(session_id))
-        answered = {e.message.tool_call_id for e in entries if e.message.role == "tool"}
+        messages = _messages_after_last_compaction(entries)
+        answered = {m.tool_call_id for m in messages if m.role == "tool"}
         sealed = 0
-        for e in entries:
-            for tc in e.message.tool_calls or []:
+        for message in messages:
+            for tc in message.tool_calls or []:
                 if tc.id in answered:
                     continue
                 self.append(
@@ -188,8 +260,8 @@ class AgentSessionStore:
     # ------------------------------------------------------------------
     # 读取
     # ------------------------------------------------------------------
-    def read(self, session_id: str) -> tuple[SessionHeader, list[SessionEntry]]:
-        """读取整个会话（头 + 全部消息 entry），坏行静默跳过。"""
+    def read(self, session_id: str) -> tuple[SessionHeader, list[SessionEntry | CompactionEntry]]:
+        """读取整个会话（头 + 全部 entry，含压缩行），坏行静默跳过。"""
         path = self.path(session_id)
         if not path.is_file():
             raise NotFoundException("Agent 会话不存在或转录文件已被删除")
@@ -207,17 +279,28 @@ class AgentSessionStore:
 
         文件里存的就是 API 原样消息，这里只做投影不做转换；system 提示词
         不入库（随代码版本演进），由 runner 每次运行时重新拼装。
+
+        有压缩行时，从**最后一条**压缩行的替换历史起步、只追加其后的增量
+        消息——压缩前的原始消息仍完整留在文件里（回放展示用），但不再进入
+        模型上下文。
         """
         _, entries = self.read(session_id)
-        return [e.message for e in entries]
+        last = _last_compaction_index(entries)
+        if last < 0:
+            return [e.message for e in entries if isinstance(e, SessionEntry)]
+        return [
+            *entries[last].replacement_history,
+            *(e.message for e in entries[last + 1 :] if isinstance(e, SessionEntry)),
+        ]
 
     def summarize(self, session_id: str) -> SessionSummary:
         """扫描单个会话文件生成索引摘要。"""
         header, entries = self.read(session_id)
+        # 标题/预览只看消息行；压缩行计入 entry_count 与链尾但不产生文本
         user_texts = [
             e.message.text().strip()
             for e in entries
-            if e.message.role == "user" and e.message.text().strip()
+            if isinstance(e, SessionEntry) and e.message.role == "user" and e.message.text().strip()
         ]
         return SessionSummary(
             session_id=header.session_id,
@@ -244,12 +327,12 @@ class AgentSessionStore:
                 logger.warning("会话文件无法解析，重建索引时已跳过：%s", path.name)
         return summaries
 
-    def _read(self, path: Path) -> tuple[SessionHeader, list[SessionEntry], int]:
-        """逐行解析文件；返回（头、消息列表、坏行数）。
+    def _read(self, path: Path) -> tuple[SessionHeader, list[SessionEntry | CompactionEntry], int]:
+        """逐行解析文件；返回（头、entry 列表、坏行数）。
 
         首行必须是合法会话头（否则整个文件视为损坏抛错）；其余行坏了只跳过。
         """
-        entries: list[SessionEntry] = []
+        entries: list[SessionEntry | CompactionEntry] = []
         bad = 0
         header: SessionHeader | None = None
         with path.open("r", encoding="utf-8") as f:
@@ -261,7 +344,7 @@ class AgentSessionStore:
                     header = SessionHeader.model_validate_json(line)
                     continue
                 try:
-                    entries.append(SessionEntry.model_validate_json(line))
+                    entries.append(_entry_adapter.validate_json(line))
                 except (ValidationError, json.JSONDecodeError):
                     bad += 1
         if header is None:

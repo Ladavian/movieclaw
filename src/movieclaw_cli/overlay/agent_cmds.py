@@ -42,6 +42,13 @@ def _render_event(event: str, payload: dict) -> None:
         result = payload.get("tool_result") or {}
         mark = "✗" if result.get("is_error") else "✓"
         print(f"  {mark} 完成（{result.get('elapsed_ms')}ms）", file=sys.stderr)
+    elif event == "context_compacted":
+        compaction = payload.get("compaction") or {}
+        print(
+            f"\n[上下文已压缩] {compaction.get('tokens_before')} → "
+            f"{compaction.get('tokens_after')} tokens",
+            file=sys.stderr,
+        )
 
 
 def _stream_run(api: Api, run_id: str, from_id: int | None) -> tuple[str, dict]:

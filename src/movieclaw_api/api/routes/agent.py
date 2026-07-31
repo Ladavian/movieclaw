@@ -6,12 +6,17 @@ from fastapi import APIRouter, Depends, Header, Query
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from movieclaw_agent import AgentRunner, AgentStartParams, AgentTool
+from movieclaw_agent import AgentRunner, AgentStartParams, AgentTool, build_system_prompt, compact
 from movieclaw_agent.tools import builtin_tools, make_mclaw_tool
 from movieclaw_api.api.deps import require_login
 from movieclaw_api.core.config import get_settings
-from movieclaw_api.exceptions import BadRequestException, NotFoundException
+from movieclaw_api.exceptions import (
+    BadRequestException,
+    NotFoundException,
+    UpstreamServiceException,
+)
 from movieclaw_api.schemas.agent import (
+    AgentCompactView,
     AgentSessionDetailView,
     AgentSessionListItem,
     AgentSessionRenamePayload,
@@ -22,7 +27,11 @@ from movieclaw_api.schemas.response import ApiResponse, ok
 from movieclaw_api.services import auth as auth_service
 from movieclaw_api.services.agent_runs import get_agent_run_registry
 from movieclaw_api.services.agent_session_recorder import AgentSessionRecorder
-from movieclaw_api.services.agent_sessions import get_agent_session_store
+from movieclaw_api.services.agent_sessions import (
+    CompactionEntry,
+    SessionEntry,
+    get_agent_session_store,
+)
 from movieclaw_api.services.llm_config import acquire_llm_router
 from movieclaw_api.services.mclaw_tool import render_service_map
 from movieclaw_db.engine import get_session
@@ -30,7 +39,7 @@ from movieclaw_db.repositories.agent_session_repo import (
     AgentSessionRepository,
     is_running,
 )
-from movieclaw_llm import ChatMessage
+from movieclaw_llm import ChatMessage, ModelSettings
 
 router = APIRouter(prefix="/agent", tags=["agent"])
 
@@ -129,6 +138,7 @@ async def start_agent(
         llm_router,
         tools=get_agent_tools(await _cli_env(session_id)),
         on_message=recorder.on_message,
+        on_compaction=recorder.on_compaction,
     )
     params = AgentStartParams(input=payload.input, history=history, model=payload.model)
     run_id = get_agent_run_registry().start(runner, params, on_terminal=recorder.on_terminal)
@@ -176,9 +186,20 @@ async def get_agent_session(
     return ok(
         AgentSessionDetailView(
             session=AgentSessionListItem.from_model(row),
-            entries=[e.model_dump(exclude_none=True) for e in entries],
+            entries=[_entry_view(e) for e in entries],
         )
     )
+
+
+def _entry_view(entry: SessionEntry | CompactionEntry) -> dict:
+    """entry → 详情接口的渲染投影。
+
+    压缩行不含 replacement_history：那是 resume 重建数据（可达几十 KB），
+    渲染只需要摘要与前后 token 数。
+    """
+    if isinstance(entry, CompactionEntry):
+        return entry.model_dump(exclude_none=True, exclude={"replacement_history"})
+    return entry.model_dump(exclude_none=True)
 
 
 @router.patch(
@@ -197,6 +218,66 @@ async def rename_agent_session(
     if row is None:
         raise NotFoundException("Agent 会话不存在")
     return ok(AgentSessionListItem.from_model(row), message="会话已重命名")
+
+
+@router.post(
+    "/sessions/{session_id}/compact",
+    response_model=ApiResponse[AgentCompactView],
+    summary="手动压缩会话上下文",
+    operation_id="agent.sessions.compact",
+)
+async def compact_agent_session(
+    session_id: str,
+    identity: str = Depends(require_login),
+    session: AsyncSession = Depends(get_session),
+) -> ApiResponse[AgentCompactView]:
+    """把会话历史压缩成「保留的用户原话 + 交接摘要」，压缩行写入转录。
+
+    与运行中的自动压缩共用同一套领域逻辑（movieclaw_agent.compact），只是
+    触发与持久化路径不同：这里同步执行、直接落盘。会话正在运行时拒绝——
+    运行内自有 mid-run 自动压缩，双方并发写转录会破坏链尾一致性。
+    模型沿用会话最近一次使用的模型（无记录时走默认路由）。
+    """
+    store = get_agent_session_store()
+    repo = AgentSessionRepository(session)
+    row = await repo.get(session_id)
+    if row is None:
+        raise NotFoundException("Agent 会话不存在")
+    if is_running(row):
+        raise BadRequestException("该会话正在运行中，请等待完成后再压缩")
+
+    llm_router = await acquire_llm_router(session)
+    history = store.build_history(session_id)
+    if not history:
+        raise BadRequestException("会话没有可压缩的内容")
+
+    # 沿用会话最近一次运行的模型（转录里 assistant 行带 model 元数据）
+    _, entries = store.read(session_id)
+    model = next(
+        (e.model for e in reversed(entries) if isinstance(e, SessionEntry) and e.model),
+        "",
+    )
+
+    messages = [ChatMessage(role="system", content=build_system_prompt()), *history]
+    result = await compact(llm_router, model, messages, ModelSettings())
+    if result is None:
+        raise UpstreamServiceException("压缩失败：模型未能生成摘要，请稍后重试")
+
+    entry = store.append_compaction(session_id, result)
+    await repo.touch_after_append(
+        session_id,
+        leaf_uuid=entry.uuid,
+        entry_count=len(entries) + 1,
+    )
+    return ok(
+        AgentCompactView(
+            summary=result.summary,
+            tokens_before=result.tokens_before,
+            tokens_after=result.tokens_after,
+            entry_uuid=entry.uuid,
+        ),
+        message="会话上下文已压缩",
+    )
 
 
 @router.delete(

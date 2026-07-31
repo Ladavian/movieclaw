@@ -27,8 +27,8 @@ import {
 import {
   type AgentDone,
   type AgentEvent,
+  type AgentSessionAnyEntry,
   type AgentSessionDetail,
-  type AgentSessionEntry,
   type AgentSessionSummary,
   type AgentTranscriptMessage,
   cancelAgentRun,
@@ -66,12 +66,14 @@ export type AgentProcessItem =
 /**
  * 时间线段（仿 Claude 的呈现模型）：
  * - process：连续的思考/工具活动折叠为一个「处理过程」块；
- * - text：模型的正文输出。
- * agent loop 中两者交替出现（每步：思考/调工具 → 可能穿插正文 → 下一步）。
+ * - text：模型的正文输出；
+ * - compaction：一次上下文压缩（分隔卡片，摘要可展开）。
+ * agent loop 中 process/text 交替出现（每步：思考/调工具 → 可能穿插正文 → 下一步）。
  */
 export type AgentTurnSegment =
   | { kind: "process"; items: AgentProcessItem[] }
-  | { kind: "text"; text: string };
+  | { kind: "text"; text: string }
+  | { kind: "compaction"; summary: string; tokensBefore?: number; tokensAfter?: number };
 
 /** 一轮对话：用户输入 + Agent 的完整产出。 */
 export interface AgentTurn {
@@ -153,9 +155,29 @@ function messageThinking(message: AgentTranscriptMessage): string {
  * 正文、tool_calls 按「thinking → text → 工具」的顺序并入时间线（与流式
  * 时的事件顺序一致）；tool 消息按 tool_call_id 合并进对应调用卡片。
  */
-function entriesToTurns(entries: AgentSessionEntry[]): AgentTurn[] {
+function entriesToTurns(entries: AgentSessionAnyEntry[]): AgentTurn[] {
   const turns: AgentTurn[] = [];
   for (const entry of entries) {
+    if (entry.type === "compaction") {
+      // 压缩行没有 message：作为分隔卡片并入上一轮时间线（会话首条必是
+      // user 消息，正常不会出现无归属的压缩行；万一有也直接跳过）
+      const turn = turns[turns.length - 1];
+      if (!turn) continue;
+      turns[turns.length - 1] = {
+        ...turn,
+        segments: [
+          ...turn.segments,
+          {
+            kind: "compaction",
+            summary: entry.summary,
+            tokensBefore: entry.tokens_before,
+            tokensAfter: entry.tokens_after,
+          },
+        ],
+        endedAt: Date.parse(entry.timestamp),
+      };
+      continue;
+    }
     const message = entry.message;
     if (message.role === "user") {
       turns.push({
@@ -378,6 +400,22 @@ function applyAgentEvent(turn: AgentTurn, event: AgentEvent): AgentTurn {
         ) ?? turn
       );
     }
+    case "context_compacted":
+      // 压缩卡片自成一段：其后的思考/正文会另开新块，时间线保持交替结构
+      return event.compaction
+        ? {
+            ...turn,
+            segments: [
+              ...turn.segments,
+              {
+                kind: "compaction",
+                summary: event.compaction.summary,
+                tokensBefore: event.compaction.tokens_before,
+                tokensAfter: event.compaction.tokens_after,
+              },
+            ],
+          }
+        : turn;
     case "agent_done":
       return { ...turn, status: "done", result: event.result };
     case "agent_error":

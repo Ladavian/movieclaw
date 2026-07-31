@@ -17,6 +17,7 @@ from __future__ import annotations
 import asyncio
 import logging
 
+from movieclaw_agent import CompactionResult
 from movieclaw_agent.events import AgentEvent
 from movieclaw_api.services.agent_sessions import (
     PREVIEW_MAX_CHARS,
@@ -102,6 +103,17 @@ class AgentSessionRecorder:
             usage=response.usage if response else None,
             finish_reason=response.finish_reason if response else None,
         )
+        self._entry_count += 1
+        async with get_database().session() as session:
+            await AgentSessionRepository(session).touch_after_append(
+                self._session_id,
+                leaf_uuid=entry.uuid,
+                entry_count=self._entry_count,
+            )
+
+    async def on_compaction(self, result: CompactionResult) -> None:
+        """runner 压缩定稿回调：压缩行落盘并刷新索引（与 on_message 同一节奏）。"""
+        entry = self._store.append_compaction(self._session_id, result)
         self._entry_count += 1
         async with get_database().session() as session:
             await AgentSessionRepository(session).touch_after_append(

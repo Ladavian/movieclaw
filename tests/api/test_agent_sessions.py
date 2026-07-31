@@ -15,9 +15,11 @@ import pytest
 import pytest_asyncio
 from fastapi.testclient import TestClient
 
+from movieclaw_agent import SUMMARY_PREFIX, CompactionResult
 from movieclaw_agent.events import AgentEvent
 from movieclaw_api.core.config import get_settings
 from movieclaw_api.services.agent_sessions import (
+    SESSION_FORMAT_VERSION,
     AgentSessionStore,
     reset_agent_session_store,
 )
@@ -58,7 +60,7 @@ def test_store_roundtrip_linear_chain(tmp_path) -> None:
 
     header_read, entries = store.read(sid)
     assert header_read.session_id == sid
-    assert header_read.version == 1
+    assert header_read.version == SESSION_FORMAT_VERSION
     assert [e.uuid for e in entries] == [e1.uuid, e2.uuid]
     # 线性链：首条 parent 为空，之后逐条回指
     assert entries[0].parent_uuid is None
@@ -128,6 +130,92 @@ def test_summarize_and_scan_all(tmp_path) -> None:
     (tmp_path / "broken.jsonl").write_text("", encoding="utf-8")
     summaries = store.scan_all()
     assert [s.session_id for s in summaries] == [sid]
+
+
+def _compaction_result() -> CompactionResult:
+    return CompactionResult(
+        summary="交接摘要",
+        replacement_history=[
+            ChatMessage(role="user", content="执行任务"),
+            ChatMessage(role="user", content=f"{SUMMARY_PREFIX}\n交接摘要"),
+        ],
+        tokens_before=100,
+        tokens_after=10,
+    )
+
+
+def test_compaction_entry_chains_and_rebuilds_history(tmp_path) -> None:
+    store = AgentSessionStore(tmp_path)
+    sid = store.create().session_id
+    store.append(sid, ChatMessage(role="user", content="执行任务"))
+    store.append(sid, _assistant_with_tools())
+    store.append(
+        sid, ChatMessage(role="tool", content="文件内容", tool_call_id="call_1", name="read")
+    )
+    store.append(
+        sid, ChatMessage(role="tool", content="目录清单", tool_call_id="call_2", name="bash")
+    )
+
+    result = _compaction_result()
+    entry = store.append_compaction(sid, result)
+    store.append(sid, ChatMessage(role="user", content="继续下一步"))
+
+    # parent 链线性穿过压缩行
+    _, entries = store.read(sid)
+    assert [e.parent_uuid for e in entries] == [None, *[e.uuid for e in entries[:-1]]]
+    assert entries[-2].uuid == entry.uuid
+    assert entries[-2].summary == "交接摘要"
+
+    # resume 上下文 = 替换历史 + 压缩行之后的增量消息；压缩前的原始消息不再进入
+    history = store.build_history(sid)
+    assert [m.text() for m in history] == [
+        "执行任务",
+        f"{SUMMARY_PREFIX}\n交接摘要",
+        "继续下一步",
+    ]
+    assert all(m.role == "user" for m in history)
+
+
+def test_seal_ignores_calls_before_compaction(tmp_path) -> None:
+    """压缩行之前的未配对调用是死上下文，中断收尾不再给它们补回执。"""
+    store = AgentSessionStore(tmp_path)
+    sid = store.create().session_id
+    store.append(sid, ChatMessage(role="user", content="执行任务"))
+    store.append(sid, _assistant_with_tools())  # call_1 / call_2 均无回执
+    store.append_compaction(sid, _compaction_result())
+
+    assert store.seal_pending_tool_calls(sid) == 0
+
+    # 压缩行之后的新调用仍正常补配对
+    store.append(sid, _assistant_with_tools())
+    assert store.seal_pending_tool_calls(sid) == 2
+
+
+def test_compaction_entry_counts_in_summary_but_not_text(tmp_path) -> None:
+    store = AgentSessionStore(tmp_path)
+    sid = store.create().session_id
+    store.append(sid, ChatMessage(role="user", content="执行任务"))
+    entry = store.append_compaction(sid, _compaction_result())
+
+    summary = store.summarize(sid)
+    assert summary.entry_count == 2
+    assert summary.leaf_uuid == entry.uuid
+    # 标题/预览只看消息行：压缩摘要不会污染它们
+    assert summary.title == "执行任务"
+    assert summary.last_prompt == "执行任务"
+
+
+def test_unknown_entry_type_skipped_as_bad_line(tmp_path) -> None:
+    """未来格式（未知 type）按坏行跳过：老读者拿到未压缩全量，会话仍可打开。"""
+    store = AgentSessionStore(tmp_path)
+    sid = store.create().session_id
+    store.append(sid, ChatMessage(role="user", content="执行任务"))
+    with store.path(sid).open("a", encoding="utf-8") as f:
+        f.write('{"type": "future_thing", "uuid": "x"}\n')
+
+    _, entries = store.read(sid)
+    assert len(entries) == 1
+    assert store.build_history(sid)[0].text() == "执行任务"
 
 
 # ---------------------------------------------------------------------------

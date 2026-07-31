@@ -6,19 +6,23 @@
 →再调用）在 AgentRunner 内扩展，事件协议保持不变。
 """
 
+from movieclaw_agent.compaction import CompactionResult, compact
 from movieclaw_agent.events import (
+    AgentCompaction,
     AgentDone,
     AgentEvent,
     AgentEventType,
     AgentStartParams,
     AgentToolResult,
 )
-from movieclaw_agent.prompts import SYSTEM_PROMPT, build_system_prompt
+from movieclaw_agent.prompts import SUMMARY_PREFIX, SYSTEM_PROMPT, build_system_prompt
 from movieclaw_agent.runner import AgentRunner
 from movieclaw_agent.toolkit import AgentTool
 
 __all__ = [
+    "SUMMARY_PREFIX",
     "SYSTEM_PROMPT",
+    "AgentCompaction",
     "AgentDone",
     "AgentEvent",
     "AgentEventType",
@@ -26,5 +30,7 @@ __all__ = [
     "AgentStartParams",
     "AgentTool",
     "AgentToolResult",
+    "CompactionResult",
     "build_system_prompt",
+    "compact",
 ]

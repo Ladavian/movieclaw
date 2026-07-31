@@ -18,7 +18,19 @@ import time
 import uuid
 from collections.abc import AsyncIterator, Awaitable, Callable
 
-from movieclaw_agent.events import AgentDone, AgentEvent, AgentStartParams, AgentToolResult
+from movieclaw_agent.compaction import (
+    CompactionResult,
+    compact,
+    estimate_tokens,
+    should_compact,
+)
+from movieclaw_agent.events import (
+    AgentCompaction,
+    AgentDone,
+    AgentEvent,
+    AgentStartParams,
+    AgentToolResult,
+)
 from movieclaw_agent.prompts import build_system_prompt
 from movieclaw_agent.toolkit import AgentTool
 from movieclaw_llm import (
@@ -47,13 +59,16 @@ class AgentRunner:
         tools: list[AgentTool] | None = None,
         *,
         max_steps: int = 200,
-        on_message: Callable[[ChatMessage, ChatResponse | None], Awaitable[None]]
-        | None = None,
+        on_message: Callable[[ChatMessage, ChatResponse | None], Awaitable[None]] | None = None,
+        on_compaction: Callable[[CompactionResult], Awaitable[None]] | None = None,
     ) -> None:
         self._router = router
         self._tools = tools or []
         self._tools_by_name = {t.name: t for t in self._tools}
         self._max_steps = max_steps
+        # 压缩定稿回调（转录落盘的挂点）：每次上下文压缩成功后调用一次，
+        # 载荷含摘要与完整替换历史。与 on_message 同款降级：失败只告警。
+        self._on_compaction = on_compaction
         # 定稿消息回调（会话持久化的挂点）：每当一条消息内容完全确定——
         # 中间步的 assistant（含 tool_calls）、每条 tool 结果、以及终答
         # assistant——各调用一次。流式 delta 不经过这里（只落定稿不落增量）。
@@ -90,9 +105,21 @@ class AgentRunner:
         messages.append(ChatMessage(role="user", content=params.input))
         definitions = [t.definition for t in self._tools]
 
-        yield AgentEvent(
-            type="agent_start", run_id=run_id, provider=provider.name, model=model_id
+        # 自动压缩的窗口来源：模型目录声明的 context_window。未声明（目录外
+        # 模型）时停用自动压缩——宁可放行到供应商报错，也不做瞎猜的预算
+        context_window = self._router.get_model_info(params.model).context_window
+        if not context_window:
+            logger.info("模型未声明上下文窗口，自动压缩停用 model=%s", model_id)
+
+        yield AgentEvent(type="agent_start", run_id=run_id, provider=provider.name, model=model_id)
+
+        # pre-run 检查：续聊重建的历史可能已经逼近窗口（此时还没有服务端
+        # usage 可用，用字节启发式估算），先压缩再进入循环
+        compact_event = await self._maybe_compact(
+            run_id, messages, estimate_tokens(messages), context_window, params
         )
+        if compact_event is not None:
+            yield compact_event
 
         usage = TokenUsage()
         for step in range(1, self._max_steps + 1):
@@ -166,6 +193,7 @@ class AgentRunner:
             # assistant 消息（含 tool_calls）入上下文，随后逐个执行工具
             messages.append(final.to_message())
             await self._notify(final.to_message(), final)
+            step_tool_messages: list[ChatMessage] = []
             for tc in final.tool_calls:
                 result = await self._execute_tool(tc, definitions)
                 yield AgentEvent(
@@ -186,7 +214,24 @@ class AgentRunner:
                     name=tc.name,
                 )
                 messages.append(tool_message)
+                step_tool_messages.append(tool_message)
                 await self._notify(tool_message, None)
+
+            # mid-run 检查：本步全部工具结果已回喂、call/output 配对完整，
+            # 此刻丢弃历史不会产生孤儿调用，是压缩的安全点。用量以服务端
+            # 上报为准（模型实际看到的部分），仅对尚未发送的新工具结果补估
+            step_usage = final.usage.prompt_tokens + final.usage.completion_tokens
+            context_tokens = (
+                step_usage + estimate_tokens(step_tool_messages)
+                if step_usage > 0
+                # 供应商不回用量时退化为全量字节估算
+                else estimate_tokens(messages)
+            )
+            compact_event = await self._maybe_compact(
+                run_id, messages, context_tokens, context_window, params
+            )
+            if compact_event is not None:
+                yield compact_event
 
         logger.warning("Agent 达到最大步数上限 run=%s steps=%d", run_id, self._max_steps)
         yield AgentEvent(
@@ -195,6 +240,55 @@ class AgentRunner:
             error=f"已达到最大执行步数上限（{self._max_steps} 步）仍未完成，运行终止。"
             "请把任务拆小后重试，或检查是否陷入了循环。",
         )
+
+    async def _maybe_compact(
+        self,
+        run_id: str,
+        messages: list[ChatMessage],
+        context_tokens: int,
+        context_window: int | None,
+        params: AgentStartParams,
+    ) -> AgentEvent | None:
+        """达到水位线时压缩上下文并原地替换 messages，返回压缩事件。
+
+        任何失败（compact 返回 None、意外异常）都降级为「本次不压缩」：
+        记日志后照常返回 None，运行继续——靠工具层截断撑到下一个检查点，
+        绝不因压缩失败中断任务。
+        """
+        if not should_compact(context_tokens, context_window):
+            return None
+        try:
+            result = await compact(self._router, params.model, messages, params.settings)
+        except Exception:  # noqa: BLE001 - 压缩是优化路径，任何故障都不应拖垮运行
+            logger.exception("上下文压缩发生意外错误，本次跳过压缩 run=%s", run_id)
+            return None
+        if result is None:
+            # 具体原因 compact() 已记日志
+            return None
+        # 原地替换：system 保留在首位，其后是重建历史（保留的用户原话 + 摘要）
+        messages[:] = [messages[0], *result.replacement_history]
+        await self._notify_compaction(result)
+        logger.info(
+            "上下文已压缩 run=%s tokens=%d→%d", run_id, result.tokens_before, result.tokens_after
+        )
+        return AgentEvent(
+            type="context_compacted",
+            run_id=run_id,
+            compaction=AgentCompaction(
+                summary=result.summary,
+                tokens_before=result.tokens_before,
+                tokens_after=result.tokens_after,
+            ),
+        )
+
+    async def _notify_compaction(self, result: CompactionResult) -> None:
+        """调用压缩定稿回调；持久化失败只告警，不中断正在进行的运行。"""
+        if self._on_compaction is None:
+            return
+        try:
+            await self._on_compaction(result)
+        except Exception:  # noqa: BLE001 - 落盘故障不应打断模型循环
+            logger.exception("压缩记录持久化回调失败（本次压缩可能未落盘）")
 
     async def _notify(self, message: ChatMessage, response: ChatResponse | None) -> None:
         """调用定稿消息回调；持久化失败只告警，不中断正在进行的运行。"""

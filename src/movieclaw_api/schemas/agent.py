@@ -121,10 +121,23 @@ class AgentSessionListItem(BaseModel):
 class AgentSessionDetailView(BaseModel):
     """会话详情：列表项字段 + 完整消息 entry 回放。
 
-    entries 是转录文件里 SessionEntry 的原样 JSON（信封 + API 格式消息），
-    前端按 message.role 分发渲染组件，tool 结果用 tool_call_id 合并进
+    entries 是转录文件里各 entry 的原样 JSON（信封 + API 格式消息），
+    前端按 type/message.role 分发渲染组件，tool 结果用 tool_call_id 合并进
     对应调用卡片；缺回执的调用显示为进行中/已中断。
+
+    压缩行（type="compaction"）投影时**不含 replacement_history**——那是
+    resume 重建用的数据（可达几十 KB），渲染只需要摘要与前后 token 数。
     """
 
     session: AgentSessionListItem
     entries: list[dict]
+
+
+class AgentCompactView(BaseModel):
+    """手动压缩的回执：摘要与前后 token 估算（bytes/4 启发式，非精确值）。"""
+
+    summary: str
+    tokens_before: int
+    tokens_after: int
+    #: 写入转录的压缩行 uuid（前端可据此定位时间线上的压缩卡片）
+    entry_uuid: str
