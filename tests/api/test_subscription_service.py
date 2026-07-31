@@ -363,6 +363,7 @@ async def test_rule_set_lazy_default_and_delete_guards(db) -> None:
         sub = await sub_service.create(MediaKind.MOVIE, 100, rule_set_id=extra.id)
         with pytest.raises(ConflictException):
             await rule_service.delete(extra.id)
+        assert await rule_service.reference_counts() == {extra.id: 1}
 
         await sub_service.delete(sub.id)
         await rule_service.delete(extra.id)  # 引用解除后可删

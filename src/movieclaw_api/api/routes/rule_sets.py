@@ -22,7 +22,10 @@ async def list_rule_sets(
 ) -> ApiResponse[list[RuleSetView]]:
     service = RuleSetService(session)
     rows = await service.list_all()
-    return ok([RuleSetView.from_model(r) for r in rows])
+    references = await service.reference_counts()
+    return ok(
+        [RuleSetView.from_model(r, reference_count=references.get(r.id, 0)) for r in rows]
+    )
 
 
 @router.post(
@@ -53,7 +56,10 @@ async def update_rule_set(
 ) -> ApiResponse[RuleSetView]:
     service = RuleSetService(session)
     row = await service.update(rule_set_id, name=payload.name, spec=payload.spec)
-    return ok(RuleSetView.from_model(row), message="规则组已更新")
+    references = await service.count_references(rule_set_id)
+    return ok(
+        RuleSetView.from_model(row, reference_count=references), message="规则组已更新"
+    )
 
 
 @router.delete(

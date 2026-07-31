@@ -46,6 +46,13 @@ class RuleSetService:
         await self.ensure_default()
         return await self._repo.list_all()
 
+    async def reference_counts(self) -> dict[int, int]:
+        """{rule_set_id: 引用它的订阅数}，未被引用的组不在结果里。"""
+        return await self._repo.reference_counts()
+
+    async def count_references(self, rule_set_id: int) -> int:
+        return await self._repo.count_references(rule_set_id)
+
     async def get(self, rule_set_id: int) -> RuleSet:
         row = await self._repo.get(rule_set_id)
         if row is None:

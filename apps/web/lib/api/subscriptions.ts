@@ -107,11 +107,30 @@ export interface SubscriptionDetail extends Subscription {
   wanted: WantedItem[];
 }
 
+/** 规则组过滤条件（见 movieclaw_matcher.RuleSetSpec）：全部键可缺省=不限。 */
+export interface RuleSetSpec {
+  /** 允许的分辨率；列表顺序即偏好顺序（排前面的评分更高） */
+  resolutions?: string[];
+  video_codecs?: string[];
+  release_groups_allow?: string[];
+  release_groups_block?: string[];
+  hdr?: "any" | "require" | "forbid";
+  free_only?: boolean;
+  min_seeders?: number | null;
+  /** 体积区间按「每集均摊」评估：整季包用总体积 ÷ 集数比较 */
+  size_min_mb?: number | null;
+  size_max_mb?: number | null;
+  exclude_hr?: boolean;
+  hr_unknown_policy?: "lenient" | "strict";
+}
+
 export interface RuleSet {
   id: number;
   name: string;
   is_default: boolean;
-  spec: Record<string, unknown>;
+  spec: RuleSetSpec;
+  /** 正在引用本组的订阅数；>0 时后端禁删 */
+  reference_count: number;
 }
 
 export interface PreparePayload {
@@ -365,4 +384,28 @@ export function listSubscriptionActivities(
 /** 规则组列表（首次访问后端自动创建默认组）。 */
 export function listRuleSets(init?: RequestInit): Promise<RuleSet[]> {
   return unwrap(request<ApiEnvelope<RuleSet[]>>("/rule-sets", init));
+}
+
+export function createRuleSet(name: string, spec: RuleSetSpec): Promise<RuleSet> {
+  return unwrap(
+    request<ApiEnvelope<RuleSet>>("/rule-sets", {
+      method: "POST",
+      body: JSON.stringify({ name, spec }),
+    }),
+  );
+}
+
+/** 更新规则组（只影响之后的匹配评估，不追溯已投递的工单）。 */
+export function updateRuleSet(id: number, name: string, spec: RuleSetSpec): Promise<RuleSet> {
+  return unwrap(
+    request<ApiEnvelope<RuleSet>>(`/rule-sets/${id}`, {
+      method: "PUT",
+      body: JSON.stringify({ name, spec }),
+    }),
+  );
+}
+
+/** 删除规则组（默认组与被订阅引用的组后端会拒绝，错误信息可直接展示）。 */
+export function deleteRuleSet(id: number): Promise<void> {
+  return unwrap(request<ApiEnvelope<void>>(`/rule-sets/${id}`, { method: "DELETE" }));
 }

@@ -463,12 +463,16 @@ class RuleSetView(BaseModel):
     name: str
     is_default: bool
     spec: dict
+    reference_count: int = Field(
+        default=0, description="正在引用本规则组的订阅数；>0 时不可删除"
+    )
 
     @classmethod
-    def from_model(cls, row: RuleSet) -> RuleSetView:
+    def from_model(cls, row: RuleSet, *, reference_count: int = 0) -> RuleSetView:
         return cls(
             id=row.id,  # type: ignore[arg-type]
             name=row.name,
             is_default=row.is_default,
             spec=dict(row.spec),
+            reference_count=reference_count,
         )

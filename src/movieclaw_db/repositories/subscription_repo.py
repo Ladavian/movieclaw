@@ -38,6 +38,13 @@ class RuleSetRepository:
         )
         return int(result.scalar_one())
 
+    async def reference_counts(self) -> dict[int, int]:
+        """{rule_set_id: 引用它的订阅数}。列表页展示与前端禁删提示用。"""
+        result = await self._session.execute(
+            select(Subscription.rule_set_id, func.count()).group_by(Subscription.rule_set_id)
+        )
+        return {rule_set_id: int(count) for rule_set_id, count in result.all()}
+
     async def save(self, row: RuleSet) -> RuleSet:
         row.updated_at = utcnow()
         self._session.add(row)

@@ -5,17 +5,16 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 
 import { searchTmdbMedia, type MediaSearchItem } from "@/lib/api/discover";
+import { RuleSetsPanel } from "@/components/rule-sets-panel";
 import {
   getDispatchPreview,
   getPipelineHealth,
-  listRuleSets,
   type DispatchPreview,
   type FixOption,
   type LibraryPipeline,
   type PipelineCheck,
   type PipelineHealth,
   type PipelineIssue,
-  type RuleSet,
 } from "@/lib/api/subscriptions";
 
 /**
@@ -27,7 +26,7 @@ import {
  *   读法——开局清单（缺什么、下一步做什么）；
  * - 模拟一单：搜一部片，把路由选库/投递落点/入库方式完整预演一遍，
  *   不真正订阅——让用户主动验证自己对系统的理解；
- * - 规则组：只读清单（在订阅弹窗中选用；编辑器待独立设计，不做半成品）。
+ * - 规则组：完整管理入口（新建/编辑/删除，见 rule-sets-panel.tsx）。
  *
  * 体检只读、绝不成为第三个配置入口：修复动作全部跳回原配置页。
  */
@@ -670,52 +669,3 @@ function SimStep({ n, text }: { n: number; text: string }) {
   );
 }
 
-// ---------------------------------------------------------------------------
-// 规则组（只读清单）
-// ---------------------------------------------------------------------------
-
-function RuleSetsPanel() {
-  const [ruleSets, setRuleSets] = useState<RuleSet[] | null>(null);
-
-  useEffect(() => {
-    void listRuleSets()
-      .then(setRuleSets)
-      .catch(() => setRuleSets([]));
-  }, []);
-
-  return (
-    <section>
-      <h3 className="mb-2 text-body font-semibold text-white/90">规则组</h3>
-      <p className="mb-4 text-sub leading-6 text-[var(--text-muted)]">
-        规则组定义「什么样的资源可接受」（分辨率、来源等硬条件与偏好排序），
-        在订阅弹窗中按订阅选用；标「默认」的组是新订阅的初始选择。
-      </p>
-      {ruleSets === null ? (
-        <p className="rounded-xl bg-white/[0.03] px-4 py-4 text-ui text-[var(--text-muted)]">
-          正在加载…
-        </p>
-      ) : (
-        <div className="space-y-1.5">
-          {ruleSets.map((rs) => (
-            <div
-              key={rs.id}
-              className="flex items-center gap-3 rounded-xl border border-white/[0.08] bg-white/[0.04] px-4 py-2.5"
-            >
-              <span className="min-w-0 flex-1 truncate text-ui font-medium text-white/90">
-                {rs.name}
-              </span>
-              {rs.is_default && (
-                <span className="shrink-0 rounded-full border border-white/[0.14] bg-white/[0.1] px-2 py-0.5 text-micro font-semibold text-white/80">
-                  默认
-                </span>
-              )}
-              <span className="shrink-0 text-caption text-[var(--text-faint)]">
-                {Object.keys(rs.spec ?? {}).length === 0 ? "全不限" : "已配置条件"}
-              </span>
-            </div>
-          ))}
-        </div>
-      )}
-    </section>
-  );
-}
