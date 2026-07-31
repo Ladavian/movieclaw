@@ -156,10 +156,18 @@
 html,
 body {
   height: 100%;
-  /* 文档整体撑到屏幕物理高度（视口 + --vp-overshoot），铺底层向下超出视口的
-     那一截才在文档的绘制范围内。页面本身不会因此变得可滚动：body 的
-     overflow: hidden 会传导给视口（HTML 规范的背景/溢出传播规则）。 */
-  min-height: calc(100% + var(--vp-overshoot));
+  /*
+   * 注意：这里**不要**为了补偿 --vp-overshoot 去加 min-height。
+   *
+   * 曾经写过 min-height: calc(100% + var(--vp-overshoot)) 想把文档撑到屏幕物理
+   * 高度，结果是文档凭空多出这一截可滚动区域。overflow: hidden 只挡得住用户
+   * 主动滚动，挡不住 iOS 自己滚：软键盘弹出时系统会滚动页面去露出聚焦的输入框，
+   * 键盘收起后这段滚动偏移**不会还原**——整页就此上移一个 --vp-overshoot，
+   * 顶栏叠进状态栏里（实测：点输入框弹出键盘再收起，页面即错位）。
+   *
+   * 铺底层用的是 position: fixed + 负 bottom，fixed 元素不参与文档的滚动溢出，
+   * 因此不会制造这段偏移，也无需文档配合撑高。
+   */
 }
 
 html {
