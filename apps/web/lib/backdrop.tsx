@@ -199,7 +199,9 @@ export function BackdropProvider({ children }: { children: React.ReactNode }) {
           （opacity 由 state 驱动，不是 CSS 变量驱动，可以安全做 transition） */}
       <div
         aria-hidden="true"
-        className="pointer-events-none fixed inset-0 z-[1] transition-opacity duration-700 ease-out"
+        /* bottom 向下超出视口 --vp-overshoot：与 body::before 同样铺到屏幕物理
+           底边，否则 iOS 独立 App 下底部会漏出一条底色（见 globals.css 的说明） */
+        className="pointer-events-none fixed inset-0 z-[1] [bottom:calc(-1*var(--vp-overshoot))] transition-opacity duration-700 ease-out"
         style={{
           opacity: overrideVisible ? 1 : 0,
           backgroundImage: overrideReady ? `url("${overrideReady}")` : undefined,

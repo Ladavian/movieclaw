@@ -374,7 +374,9 @@ function SearchPalette({
   return (
     // 遮罩：mousedown 落在遮罩本身（而非面板内）即关闭
     <div
-      className="search-palette-overlay fixed inset-0 z-[80] flex items-start justify-center px-4 pt-[13vh] max-md:px-2 max-md:pt-[calc(var(--safe-top)+10px)]"
+      // bottom 超出视口 --vp-overshoot：遮罩铺到屏幕物理底边（见 globals.css 的说明）。
+      // 面板 items-start 顶部对齐，加高遮罩不会挪动它。
+      className="search-palette-overlay fixed inset-0 z-[80] flex items-start justify-center px-4 pt-[13vh] [bottom:calc(-1*var(--vp-overshoot))] max-md:px-2 max-md:pt-[calc(var(--safe-top)+10px)]"
       onMouseDown={(event) => event.target === event.currentTarget && onClose()}
     >
       <div

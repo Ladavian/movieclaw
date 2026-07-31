@@ -120,6 +120,33 @@
 
   /* 移动端顶栏高度：抽屉、页面吸顶元素都以它为基准让位 */
   --mobile-topbar-h: 52px;
+
+  /* —— iOS 独立 App 的「视口比屏幕矮一截」补偿量 ——
+     iOS 在 apple-mobile-web-app-status-bar-style=black-translucent 下，
+     把整个文档**整体上移**到状态栏底下（这正是顶部沉浸的实现方式），但视口
+     高度并不随之增加：视口顶边贴住屏幕物理顶边，底边却比屏幕物理底边高出
+     整整一个 safe-top。那一截不属于视口，页面里任何 position: fixed; inset: 0
+     的铺底层都够不着，于是露出 <body> 背景色（--bg），看上去就是屏幕底部
+     一条与状态栏等高的黑条——iPhone 全面屏 PWA 实测：黑条高度 == safe-top。
+
+     解决办法不是「让内容避开它」（上一版按底部安全区处理，方向就错了：
+     这一截在视口之外，safe-area-inset-bottom 在此模式下恒为 0，怎么让位都没用），
+     而是让铺底层**向下超出视口** var(--vp-overshoot)，一直铺到屏幕物理底边。
+     UI 本身仍留在视口内，天然就在 Home 指示条上方，无需再额外让位。
+
+     只在 iOS 的独立 App 形态下补偿，见下方媒体查询；其余场景恒为 0。 */
+  --vp-overshoot: 0px;
+}
+
+/* display-mode: standalone 限定「加到主屏后独立打开」（浏览器内访问不受影响）；
+   -webkit-touch-callout 是 iOS WebKit 独有特性（macOS Safari 不支持），
+   两者相与即「iOS PWA」。Android PWA、桌面端与浏览器标签页一律不补偿。 */
+@media (display-mode: standalone) {
+  @supports (-webkit-touch-callout: none) {
+    :root {
+      --vp-overshoot: var(--safe-top);
+    }
+  }
 }
 
 * {
@@ -129,6 +156,10 @@
 html,
 body {
   height: 100%;
+  /* 文档整体撑到屏幕物理高度（视口 + --vp-overshoot），铺底层向下超出视口的
+     那一截才在文档的绘制范围内。页面本身不会因此变得可滚动：body 的
+     overflow: hidden 会传导给视口（HTML 规范的背景/溢出传播规则）。 */
+  min-height: calc(100% + var(--vp-overshoot));
 }
 
 html {
@@ -234,7 +265,8 @@ body {
 body::before {
   content: "";
   position: fixed;
-  inset: 0;
+  /* 底边向下超出视口 --vp-overshoot，铺到屏幕物理底边（见变量处的说明） */
+  inset: 0 0 calc(-1 * var(--vp-overshoot)) 0;
   z-index: 0;
   pointer-events: none;
   background:
@@ -277,7 +309,8 @@ body::before {
 }
 .page-scrim {
   position: fixed;
-  inset: 0;
+  /* 与背景大图同样铺到屏幕物理底边，否则底部会漏出一条未压暗的原图 */
+  inset: 0 0 calc(-1 * var(--vp-overshoot)) 0;
   z-index: 5;
   pointer-events: none;
   animation: page-scrim-in 240ms ease both;
@@ -302,7 +335,7 @@ body::before {
  */
 .page-solid {
   position: fixed;
-  inset: 0;
+  inset: 0 0 calc(-1 * var(--vp-overshoot)) 0;
   z-index: 5;
   pointer-events: none;
   background: #0f0f10;
@@ -992,11 +1025,15 @@ body.cmdk-open .app-shell {
   position: fixed;
   z-index: 60;
   top: 0;
-  bottom: 0;
+  /* 抽屉是通栏浮层，底边同样铺到屏幕物理底边 */
+  bottom: calc(-1 * var(--vp-overshoot));
   left: 0;
   width: 86vw;
   max-width: 320px;
-  padding: calc(var(--safe-top) + 10px) 0 calc(var(--safe-bottom) + 10px) calc(var(--safe-left) + 10px);
+  /* 底部内边距把 --vp-overshoot 一并算进去：抽屉的面板铺到了屏幕物理底边，
+     但内容仍要停在视口内，否则最后一项会被 Home 指示条压住 */
+  padding: calc(var(--safe-top) + 10px) 0
+    calc(var(--safe-bottom) + var(--vp-overshoot) + 10px) calc(var(--safe-left) + 10px);
   transition: transform 280ms cubic-bezier(0.2, 0.8, 0.2, 1);
   will-change: transform;
 }
@@ -1010,7 +1047,7 @@ body.cmdk-open .app-shell {
 }
 .mobile-drawer-scrim {
   position: fixed;
-  inset: 0;
+  inset: 0 0 calc(-1 * var(--vp-overshoot)) 0;
   z-index: 55;
   background: rgba(4, 6, 10, 0.55);
   backdrop-filter: blur(2px);
