@@ -95,6 +95,15 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     setTopBarActionsState(node);
     return () => setTopBarActionsState((current) => (current === node ? null : current));
   }, []);
+  // 页面标题顶替顶栏字标（如会话页），见 lib/page-chrome.tsx 的 setTopBarTitle。
+  // 存 token 对象而非裸字符串：撤销时按引用比对，新旧页面短暂共存且标题恰好
+  // 相同时，先卸载那个的清理不会误清新页面刚挂上的标题。
+  const [topBarTitle, setTopBarTitleState] = useState<{ text: string } | null>(null);
+  const setTopBarTitle = useCallback((text: string) => {
+    const token = { text };
+    setTopBarTitleState(token);
+    return () => setTopBarTitleState((current) => (current === token ? null : current));
+  }, []);
 
   const isSettings = pathname.startsWith("/settings");
   const activeNav = navIdFromPath(pathname);
@@ -197,8 +206,8 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const showMobileTopBar = isMobile && pageNavCount === 0;
   const openDrawer = useCallback(() => setDrawerOpen(true), []);
   const pageChrome = useMemo(
-    () => ({ registerPageNav, onSearch: handleSearch, openDrawer, setTopBarActions }),
-    [registerPageNav, handleSearch, openDrawer, setTopBarActions],
+    () => ({ registerPageNav, onSearch: handleSearch, openDrawer, setTopBarActions, setTopBarTitle }),
+    [registerPageNav, handleSearch, openDrawer, setTopBarActions, setTopBarTitle],
   );
 
   // 移动端抽屉：切换路由即自动收起（点导航项跳走后抽屉不该还盖着新页面），
@@ -272,7 +281,12 @@ export function AppShell({ children }: { children: React.ReactNode }) {
          页面自己的 PageNav 认领（对应 globals.css 的 .app-shell[data-topbar] 规则）。 */
       <div className="app-shell relative z-10 h-[100dvh] w-full" data-topbar={showMobileTopBar}>
         {showMobileTopBar && (
-          <MobileTopBar onMenu={openDrawer} onSearch={handleSearch} actions={topBarActions} />
+          <MobileTopBar
+            onMenu={openDrawer}
+            onSearch={handleSearch}
+            actions={topBarActions}
+            title={topBarTitle?.text}
+          />
         )}
         {/* 主区铺满外壳（absolute 而非 flex 子项）：全站页面清一色是
             「外层 h-full + 内层 overflow-y-auto」，h-full 要能解析就必须有一个
@@ -351,11 +365,14 @@ function MobileTopBar({
   onMenu,
   onSearch,
   actions,
+  title,
 }: {
   onMenu: () => void;
   onSearch: (keyword: string, scope: SearchScope, options?: SearchSubmitOptions) => void;
   /** 当前页面挂上来的页面级控件（见 lib/page-chrome.tsx 的 setTopBarActions） */
   actions?: React.ReactNode;
+  /** 当前页面挂上来的标题：有则顶替品牌字标（见 setTopBarTitle） */
+  title?: string;
 }) {
   const router = useRouter();
   return (
@@ -375,23 +392,31 @@ function MobileTopBar({
         >
           <MenuIcon className="size-[22px]" />
         </button>
-        {/* 字标可点区拉到 44px 高（与图标键同标准）——图片本身保持 h-7 的视觉
-            大小，命中区靠按钮撑起，否则 28px 高的字标在触屏上很难点中 */}
-        <button
-          type="button"
-          onClick={() => router.push("/")}
-          aria-label="回到首页"
-          className="flex h-11 shrink-0 items-center transition-opacity active:opacity-60"
-        >
-          <Image
-            src="/movieclaw-logo-rotor.png"
-            alt="MovieClaw"
-            width={1920}
-            height={525}
-            priority
-            className="h-7 w-auto max-w-[104px] object-contain"
-          />
-        </button>
+        {title ? (
+          // 页面标题顶替字标：min-w-0 + truncate 让超长标题在汉堡与右侧控件
+          // 之间安全截断成省略号，绝不把搜索键挤出屏幕或撑破顶栏
+          <h1 className="min-w-0 flex-1 truncate text-body font-semibold tracking-[-0.01em] text-[var(--text)]">
+            {title}
+          </h1>
+        ) : (
+          /* 字标可点区拉到 44px 高（与图标键同标准）——图片本身保持 h-7 的视觉
+             大小，命中区靠按钮撑起，否则 28px 高的字标在触屏上很难点中 */
+          <button
+            type="button"
+            onClick={() => router.push("/")}
+            aria-label="回到首页"
+            className="flex h-11 shrink-0 items-center transition-opacity active:opacity-60"
+          >
+            <Image
+              src="/movieclaw-logo-rotor.png"
+              alt="MovieClaw"
+              width={1920}
+              height={525}
+              priority
+              className="h-7 w-auto max-w-[104px] object-contain"
+            />
+          </button>
+        )}
         {/* 页面级控件塞在字标与搜索之间——那段本来就空着，够放一个分段控件；
             min-w-0 让它在窄屏上自己收缩，而不是把搜索挤出屏幕 */}
         <div className="ml-auto flex min-w-0 shrink items-center gap-2">

@@ -15,6 +15,7 @@ import {
   type AgentTurnToolCall,
   useAgentConversations,
 } from "@/lib/agent-conversations";
+import { usePageChrome } from "@/lib/page-chrome";
 import { usePageTitle } from "@/lib/use-page-title";
 
 /**
@@ -34,6 +35,15 @@ export function AgentConversationView({ conversationId }: { conversationId: stri
   const { get, open, send, stop } = useAgentConversations();
   const conversation = get(conversationId);
   usePageTitle(conversation?.title);
+  // 移动端全局顶栏：把会话标题挂上去顶替品牌字标（见 lib/page-chrome.tsx），
+  // 页面自己的标题行随之只在桌面端保留——窄屏上不再吃「顶栏 + 标题」两行高度。
+  // 标题可能先于详情就绪（侧栏最近会话已带），也会随自动命名更新，跟着值重挂即可。
+  const chrome = usePageChrome();
+  const title = conversation?.title;
+  useEffect(() => {
+    if (!chrome || !title) return;
+    return chrome.setTopBarTitle(title);
+  }, [chrome, title]);
   const [input, setInput] = useState("");
   // 服务端详情加载失败的提示（404 = 会话不存在；其余为网络/服务错误）
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -89,9 +99,11 @@ export function AgentConversationView({ conversationId }: { conversationId: stri
     // 沉浸页：内容直接铺在页面纯色底（.page-solid）上，不再包阅读面板卡片；
     // immersive-theme 在容器内切换为中性灰阶 + 系统字体的阅读配色
     <div className="immersive-theme flex h-full flex-col">
-      {/* 顶部条：只留会话标题。「生成中 / 就绪」的全局状态点已由每轮页脚的
-          进度环取代——状态属于那一轮，放在正文旁边比钉在标题上更有指向性 */}
-      <header className="flex h-14 shrink-0 items-center px-5 max-md:h-11 max-md:px-4">
+      {/* 顶部条：只留会话标题，且仅桌面端渲染——移动端标题已挂进全局顶栏
+          （见上方 setTopBarTitle），这里再画一行就是重复信息。「生成中 / 就绪」
+          的全局状态点已由每轮页脚的进度环取代——状态属于那一轮，放在正文旁边
+          比钉在标题上更有指向性 */}
+      <header className="flex h-14 shrink-0 items-center px-5 max-md:hidden">
         <h1 className="truncate text-body font-semibold tracking-[-0.01em]">
           {conversation.title}
         </h1>
@@ -108,7 +120,9 @@ export function AgentConversationView({ conversationId }: { conversationId: stri
             // 只在跨越阈值时落 state，滚动过程中不做无谓的重渲染
             setAtBottom((previous) => (previous === near ? previous : near));
           }}
-          className="scroll-thin min-h-0 flex-1 overflow-y-auto px-6 py-6 max-md:px-4 max-md:py-4"
+          // overflow-x-hidden 兜底：任何子元素意外超宽（如未换行的长 token）都不许
+          // 把消息列撑出横向滚动——移动端一旦横滚，整列内容会被推出屏幕左侧
+          className="scroll-thin min-h-0 flex-1 overflow-y-auto overflow-x-hidden px-6 py-6 max-md:px-4 max-md:py-4"
         >
           <div className="mx-auto max-w-3xl space-y-8">
             {conversation.turns.map((turn) => (
@@ -164,7 +178,7 @@ const TurnView = memo(function TurnView({ turn }: { turn: AgentTurn }) {
     <div className="group/turn space-y-3">
       {/* 用户消息：右侧玻璃气泡 */}
       <div className="flex justify-end">
-        <div className="max-w-[80%] whitespace-pre-wrap rounded-2xl bg-[var(--glass-fill-active)] px-4 py-3 text-body leading-6 text-[var(--text)]">
+        <div className="max-w-[80%] whitespace-pre-wrap break-words rounded-2xl bg-[var(--glass-fill-active)] px-4 py-3 text-body leading-6 text-[var(--text)]">
           {turn.input}
         </div>
       </div>
@@ -190,7 +204,7 @@ const TurnView = memo(function TurnView({ turn }: { turn: AgentTurn }) {
         })}
 
         {turn.status === "error" && (
-          <div className="rounded-xl border border-[#ff6b6b]/30 bg-[#ff6b6b]/10 px-3.5 py-2.5 text-ui leading-5 text-[#ff6b6b]">
+          <div className="rounded-xl border border-[#ff6b6b]/30 bg-[#ff6b6b]/10 px-3.5 py-2.5 text-ui leading-5 break-words text-[#ff6b6b]">
             {turn.error}
           </div>
         )}
@@ -347,6 +361,8 @@ function processSummary(items: AgentProcessItem[]): string {
 /**
  * 处理过程折叠块（仿 Claude）：头部进行中显示实时状态、完成后显示一句话
  * 总结；点击展开思考与工具调用的混合列表（按实际发生顺序）。
+ * 展开后是第二级折叠：工具调用只呈现单行摘要清单，点击某一行才展开
+ * 该次调用的参数与输出——一轮动辄十几次调用，全量平铺等于没有排版。
  */
 const ProcessBlock = memo(function ProcessBlock({ segment, active }: { segment: AgentTurnSegment & { kind: "process" }; active: boolean }) {
   const [open, setOpen] = useState(false);
@@ -366,9 +382,11 @@ const ProcessBlock = memo(function ProcessBlock({ segment, active }: { segment: 
         <div className="mt-1.5 space-y-2 border-l-2 border-white/[0.08] pl-3">
           {segment.items.map((item, index) =>
             item.kind === "thinking" ? (
+              // break-words 必须有：思考文本常出现资源名这种几十字符无空格的长
+              // token（点号不是换行机会点），不断词会把整个消息列撑出横向溢出
               <p
                 key={index}
-                className="whitespace-pre-wrap text-sub leading-5 text-[var(--text-faint)]"
+                className="whitespace-pre-wrap break-words text-sub leading-5 text-[var(--text-faint)]"
               >
                 {item.text}
               </p>
@@ -401,47 +419,87 @@ function toolInput(tool: AgentTurnToolCall): { lang: CodeLang; code: string } | 
   }
 }
 
-/** 单次工具调用卡片：参数完整展示（shiki 高亮）+ 生成/执行中/回执三种状态。
- *  memo：store 对工具条目也是不可变更新，未被触碰的卡片整卡跳过；
- *  参数明细的 JSON.parse/stringify（大参数可达几 KB）按 tool 缓存，
+/**
+ * 单行参数摘要（清单态用）：bash 把命令压成一行，其余工具压成
+ * 「键: 值」串。只求一眼认出这次调用在干什么，超出部分由 CSS 截断。
+ */
+function toolSummary(tool: AgentTurnToolCall): string {
+  const raw = tool.label.slice(tool.name.length + 1, -1);
+  if (!raw || raw === "{}") return "";
+  try {
+    const args = JSON.parse(raw) as Record<string, unknown>;
+    if (tool.name === "bash" && typeof args.command === "string") {
+      return args.command.replace(/\s+/g, " ").trim();
+    }
+    return Object.entries(args)
+      .map(([key, value]) => `${key}: ${typeof value === "string" ? value : JSON.stringify(value)}`)
+      .join(", ");
+  } catch {
+    return raw;
+  }
+}
+
+/** 单次工具调用（对齐 Claude/Codex 的两级呈现）：默认只占一行——
+ *  工具名 + 参数摘要 + 状态尾标（✓/✗/进度环），点击行内任意处才展开
+ *  参数（shiki 高亮）与输出详情。
+ *  memo：store 对工具条目也是不可变更新，未被触碰的行整行跳过；
+ *  摘要与参数明细的 JSON.parse/stringify（大参数可达几 KB）按 tool 缓存，
  *  不再在每次渲染中内联执行。 */
 const ToolCallCard = memo(function ToolCallCard({ tool }: { tool: AgentTurnToolCall }) {
-  const input = useMemo(
-    () => (tool.argsDone === false ? null : toolInput(tool)),
-    [tool],
-  );
+  const [open, setOpen] = useState(false);
+  const streaming = tool.argsDone === false;
+  const input = useMemo(() => (streaming ? null : toolInput(tool)), [tool, streaming]);
+  const summary = useMemo(() => (streaming ? "" : toolSummary(tool)), [tool, streaming]);
+
   return (
-    <div className="rounded-lg border border-white/[0.05] bg-white/[0.02] px-2.5 py-1.5">
-      {tool.argsDone === false ? (
-        // 参数生成中：工具名固定，参数区右锚定滚动显示最新生成的尾部——
-        // 长参数溢出时新字符持续从右侧推入，肉眼可见任务仍在进行
-        <p className="flex font-mono text-caption text-[var(--accent-2)]">
-          <span className="shrink-0">⚙ {tool.name}(</span>
+    <div className="min-w-0">
+      <button
+        type="button"
+        // 参数生成中没有可展开的定稿详情，此时行只作进度展示、不可点击
+        disabled={streaming}
+        onClick={() => setOpen((v) => !v)}
+        className="flex w-full min-w-0 items-center gap-1.5 py-0.5 text-left font-mono text-caption disabled:cursor-default"
+      >
+        <ChevronRightIcon
+          className={`size-3 shrink-0 text-[var(--text-faint)] transition-transform ${open ? "rotate-90" : ""}`}
+        />
+        <span className="shrink-0 text-[var(--accent-2)]">{tool.name}</span>
+        {streaming ? (
+          // 参数生成中：右锚定滚动显示最新生成的尾部——长参数溢出时新字符
+          // 持续从右侧推入，肉眼可见任务仍在进行
           <span className="flex min-w-0 flex-1 justify-end overflow-hidden [mask-image:linear-gradient(to_right,transparent,black_24px)]">
-            <span className="whitespace-nowrap">
+            <span className="whitespace-nowrap text-[var(--text-faint)]">
               {tool.label.slice(tool.name.length + 1).slice(-300)}
             </span>
           </span>
-        </p>
-      ) : (
-        <>
-          <p className="font-mono text-caption text-[var(--accent-2)]">⚙ {tool.name}</p>
+        ) : (
+          <span className="min-w-0 flex-1 truncate text-[var(--text-faint)]">{summary}</span>
+        )}
+        {streaming || tool.output === undefined ? (
+          <span className="shrink-0">
+            <ProgressRing />
+          </span>
+        ) : (
+          <span className={`shrink-0 ${tool.isError ? "text-[#ff6b6b]" : "text-[var(--text-faint)]"}`}>
+            {tool.isError ? "✗" : "✓"}
+          </span>
+        )}
+      </button>
+      {open && !streaming && (
+        <div className="mt-1 min-w-0 rounded-lg border border-white/[0.05] bg-white/[0.02] px-2.5 py-1.5">
           {input && <HighlightedCode code={input.code} lang={input.lang} />}
-        </>
-      )}
-      {tool.argsDone === false ? (
-        <p className="mt-0.5 animate-pulse text-caption text-[var(--text-faint)]">生成参数中…</p>
-      ) : tool.output === undefined ? (
-        <p className="mt-0.5 text-caption text-[var(--text-faint)]">执行中…</p>
-      ) : (
-        <div
-          // 行高用相对值：字号随语义 token 在移动端换档（11→13px），固定 16px 行高会挤死多行日志
-          className={`scroll-thin mt-1 max-h-44 overflow-y-auto whitespace-pre-wrap break-words font-mono text-caption leading-[1.45] ${
-            tool.isError ? "text-[#ff6b6b]" : "text-[var(--text-muted)]"
-          }`}
-        >
-          {tool.isError ? "✗ " : "✓ "}
-          {tool.output}
+          {tool.output === undefined ? (
+            <p className="mt-0.5 text-caption text-[var(--text-faint)]">执行中…</p>
+          ) : (
+            <div
+              // 行高用相对值：字号随语义 token 在移动端换档（11→13px），固定 16px 行高会挤死多行日志
+              className={`scroll-thin mt-1 max-h-44 overflow-y-auto whitespace-pre-wrap break-words font-mono text-caption leading-[1.45] ${
+                tool.isError ? "text-[#ff6b6b]" : "text-[var(--text-muted)]"
+              }`}
+            >
+              {tool.output}
+            </div>
+          )}
         </div>
       )}
     </div>
@@ -476,7 +534,7 @@ const CompactionCard = memo(function CompactionCard({
       </button>
       {open && (
         <div className="mt-1.5 space-y-1.5 border-l-2 border-white/[0.08] pl-3">
-          <p className="whitespace-pre-wrap text-sub leading-5 text-[var(--text-faint)]">
+          <p className="whitespace-pre-wrap break-words text-sub leading-5 text-[var(--text-faint)]">
             {segment.summary}
           </p>
           <p className="text-caption text-[var(--text-faint)]">
