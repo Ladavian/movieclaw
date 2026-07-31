@@ -133,7 +133,7 @@ function routingOverlapWarnings(libraries: MediaLibrary[]): string[] {
       });
       if (compatible) {
         const [first, later] = (a.id ?? 0) < (b.id ?? 0) ? [a, b] : [b, a];
-        const laterFields = new Set(later.match_rules.map((r) => r.field));
+        const laterFields = new Set<string>(later.match_rules.map((r) => r.field));
         const missing = Object.entries(RULE_FIELD_LABELS)
           .filter(([field]) => !laterFields.has(field))
           .map(([, label]) => label);
