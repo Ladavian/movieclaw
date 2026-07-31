@@ -172,12 +172,16 @@ const TurnView = memo(function TurnView({ turn }: { turn: AgentTurn }) {
       {/* Agent 回应：整栏正文，不挂头像、不套气泡（ChatGPT / Claude 同款版式） */}
       <div className="min-w-0 space-y-2.5">
         {turn.segments.map((segment, index) => {
-          // 时间线按序渲染：process 折叠块与正文交替出现
+          // 时间线按序渲染：process 折叠块与正文交替出现，压缩卡片作分隔
           const isLast = index === turn.segments.length - 1;
           const active = turn.status === "running" && isLast;
-          return segment.kind === "process" ? (
-            <ProcessBlock key={index} segment={segment} active={active} />
-          ) : (
+          if (segment.kind === "process") {
+            return <ProcessBlock key={index} segment={segment} active={active} />;
+          }
+          if (segment.kind === "compaction") {
+            return <CompactionCard key={index} segment={segment} />;
+          }
+          return (
             <div key={index}>
               <Markdown text={segment.text} />
               {active && <StreamingCursor />}
@@ -438,6 +442,46 @@ const ToolCallCard = memo(function ToolCallCard({ tool }: { tool: AgentTurnToolC
         >
           {tool.isError ? "✗ " : "✓ "}
           {tool.output}
+        </div>
+      )}
+    </div>
+  );
+});
+
+/**
+ * 上下文压缩分隔卡片：横线分隔 + 居中标签，点击展开交接摘要。
+ * 它同时是「多次压缩会降低准确性」的可见信号——卡片越多，会话越该另起。
+ */
+const CompactionCard = memo(function CompactionCard({
+  segment,
+}: {
+  segment: AgentTurnSegment & { kind: "compaction" };
+}) {
+  const [open, setOpen] = useState(false);
+  const tokens =
+    segment.tokensBefore != null && segment.tokensAfter != null
+      ? `${segment.tokensBefore} → ${segment.tokensAfter} tokens`
+      : null;
+  return (
+    <div>
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        className="flex w-full items-center gap-2 text-caption text-[var(--text-faint)] transition-colors hover:text-[var(--text-muted)]"
+      >
+        <span className="h-px flex-1 bg-white/[0.08]" />
+        <ChevronRightIcon className={`size-3 transition-transform ${open ? "rotate-90" : ""}`} />
+        <span>已压缩上下文{tokens ? `（${tokens}）` : ""}</span>
+        <span className="h-px flex-1 bg-white/[0.08]" />
+      </button>
+      {open && (
+        <div className="mt-1.5 space-y-1.5 border-l-2 border-white/[0.08] pl-3">
+          <p className="whitespace-pre-wrap text-sub leading-5 text-[var(--text-faint)]">
+            {segment.summary}
+          </p>
+          <p className="text-caption text-[var(--text-faint)]">
+            此前的对话已由交接摘要替代。多次压缩可能降低模型准确性，建议适时开启新会话。
+          </p>
         </div>
       )}
     </div>

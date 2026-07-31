@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import time
 
 import pytest
 from fastapi.testclient import TestClient
@@ -214,6 +215,90 @@ def test_stream_unknown_run_and_invalid_cursor(client) -> None:
     )
     assert invalid.status_code == 400
     assert "游标" in invalid.json()["message"]
+
+
+def _wait_run_settled(client, session_id: str) -> None:
+    """等待终态收尾落库（on_terminal 与 SSE 收流并发，留一个短轮询窗）。"""
+    for _ in range(50):
+        item = client.get(f"/api/v1/agent/sessions/{session_id}").json()["data"]["session"]
+        if not item["running"]:
+            return
+        time.sleep(0.1)
+    pytest.fail("会话运行状态未在期限内清空")
+
+
+def test_manual_compact_endpoint(client, monkeypatch) -> None:
+    """手动压缩：压缩行落盘（详情不含替换历史），续聊用压缩后的上下文。"""
+    from movieclaw_agent.prompts import COMPACT_PROMPT
+
+    captured: dict = {"turns": []}
+
+    class _CompactAwareProtocol(_StreamProtocol):
+        async def chat_stream(self, request, model_id):
+            if request.tools is None:
+                # 压缩请求（无工具定义）：记录现场并返回摘要
+                captured["compact_roles"] = [m.role for m in request.messages]
+                captured["compact_last"] = request.messages[-1].text()
+                yield ChatStreamEvent(
+                    type="done",
+                    partial=ChatResponse(
+                        content="交接摘要",
+                        finish_reason="stop",
+                        model=model_id,
+                        provider=self.config.name,
+                    ),
+                )
+                return
+            captured["turns"].append([m.role for m in request.messages])
+            async for e in super().chat_stream(request, model_id):
+                yield e
+
+    monkeypatch.setitem(PROTOCOLS, "openai_chat", _CompactAwareProtocol)
+    client.put(
+        "/api/v1/llm/provider",
+        json={
+            "provider_type": "bailian",
+            "api_key": "sk-manual-compact",
+            "default_model": "qwen3.7-max",
+        },
+    )
+
+    # 第一轮运行落下 user + assistant 两条消息
+    started = client.post("/api/v1/agent/start", json={"input": "找沙丘 4K"})
+    session_id = started.json()["data"]["session_id"]
+    client.get(f"/api/v1/agent/runs/{started.json()['data']['run_id']}/stream")
+    _wait_run_settled(client, session_id)
+
+    compacted = client.post(f"/api/v1/agent/sessions/{session_id}/compact")
+    assert compacted.status_code == 200
+    data = compacted.json()["data"]
+    assert data["summary"] == "交接摘要"
+    assert data["entry_uuid"]
+    # 压缩请求带完整现场（system + 全部消息），末尾是压缩指令
+    assert captured["compact_roles"] == ["system", "user", "assistant", "user"]
+    assert captured["compact_last"] == COMPACT_PROMPT
+
+    # 详情：压缩行在时间线末尾，且不含 replacement_history（重建数据不外发）
+    detail = client.get(f"/api/v1/agent/sessions/{session_id}").json()["data"]
+    tail = detail["entries"][-1]
+    assert tail["type"] == "compaction"
+    assert tail["summary"] == "交接摘要"
+    assert "replacement_history" not in tail
+    assert tail["uuid"] == data["entry_uuid"]
+
+    # 续聊：上下文从压缩行重建 = 保留的用户原话 + 摘要 + 本轮输入
+    resumed = client.post(
+        "/api/v1/agent/start", json={"input": "继续", "session_id": session_id}
+    )
+    client.get(f"/api/v1/agent/runs/{resumed.json()['data']['run_id']}/stream")
+    assert captured["turns"][-1] == ["system", "user", "user", "user"]
+    # 转录回放的历史不受影响：压缩前的 assistant 行仍在详情里
+    replay = client.get(f"/api/v1/agent/sessions/{session_id}").json()["data"]
+    roles = [e["message"]["role"] for e in replay["entries"] if e.get("type") != "compaction"]
+    assert "assistant" in roles
+
+    missing = client.post("/api/v1/agent/sessions/not-exist/compact")
+    assert missing.status_code == 404
 
 
 def test_cancel_run_ends_with_cancelled_event(client, monkeypatch) -> None:

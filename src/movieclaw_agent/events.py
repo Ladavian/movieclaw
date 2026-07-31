@@ -36,6 +36,7 @@ AgentEventType = Literal[
     "tool_call_delta",  # 工具参数 JSON 增量（delta 字段；tool_call_id 标识归属）
     "tool_call",  # 模型发起一次工具调用（参数已解析完整）
     "tool_result",  # 一次工具执行完成（tool_result 字段：结果/是否失败/耗时）
+    "context_compacted",  # 上下文已压缩（compaction 字段：摘要与前后 token 数）
     "agent_done",  # 正常结束：完整结果与用量（result 字段）
     "agent_error",  # 出错结束：中文错误说明（error 字段）
     "agent_cancelled",  # 用户主动取消：运行已停止，但不视为执行失败
@@ -72,6 +73,18 @@ class AgentToolResult(BaseModel):
     elapsed_ms: int = 0
 
 
+class AgentCompaction(BaseModel):
+    """context_compacted 事件载荷。
+
+    只带展示所需的摘要与前后 token 估算；重建历史本体不进事件流
+    （可达几十 KB，且属于转录持久化的职责，不是渲染数据）。
+    """
+
+    summary: str
+    tokens_before: int
+    tokens_after: int
+
+
 class AgentDone(BaseModel):
     """一次运行的终态汇总（agent_done 事件的载荷）。
 
@@ -106,6 +119,8 @@ class AgentEvent(BaseModel):
     tool_call_id: str | None = None
     #: tool_result 事件：工具执行回执
     tool_result: AgentToolResult | None = None
+    #: context_compacted 事件：压缩回执（摘要与前后 token 数）
+    compaction: AgentCompaction | None = None
     #: agent_start 事件：实际路由到的供应商实例名与模型 id
     provider: str | None = None
     model: str | None = None
