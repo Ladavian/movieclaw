@@ -43,13 +43,12 @@ interface MediaCardDto {
 interface MediaRowDto {
   id: string;
   title: string;
-  ranked: boolean;
   items: MediaCardDto[];
 }
 
 interface DiscoverLayoutDto {
   has_hero: boolean;
-  rows: { id: string; title: string; ranked: boolean }[];
+  rows: { id: string; title: string }[];
 }
 
 interface MediaSearchItemDto {
@@ -125,7 +124,7 @@ function toItem(dto: MediaCardDto): MediaItem {
 }
 
 function toRow(dto: MediaRowDto): MediaRowData {
-  return { id: dto.id, title: dto.title, ranked: dto.ranked, items: dto.items.map(toItem) };
+  return { id: dto.id, title: dto.title, items: dto.items.map(toItem) };
 }
 
 // ---------------------------------------------------------------------------
