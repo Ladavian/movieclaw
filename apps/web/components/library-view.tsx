@@ -1179,6 +1179,24 @@ export function LibraryFormDialog({
                 {/* 预设组保留为快捷键：一键选中/取消整组，避免「欧美」要点十下 */}
                 <div className="mt-2 flex flex-wrap items-center gap-1.5">
                   <span className="text-caption text-[var(--text-faint)]">快捷组合</span>
+                  {/* 全选/清空：如「纪录片库收全部区域」这类声明逐个点太费劲；
+                      全选后条件数 +1，还能顺带压过单条件区域库消除重叠歧义 */}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const all = Object.keys(routingOptions.country_names);
+                      setMatchRegions((prev) =>
+                        all.every((c) => prev.includes(c)) ? [] : [...new Set([...prev, ...all])],
+                      );
+                    }}
+                    className="glass-row nav-item !w-auto px-2.5 py-1 text-caption font-medium"
+                  >
+                    {Object.keys(routingOptions.country_names).every((c) =>
+                      matchRegions.includes(c),
+                    )
+                      ? "清空"
+                      : "全选"}
+                  </button>
                   {routingOptions.region_presets.map((preset) => {
                     const active = preset.countries.every((c) => matchRegions.includes(c));
                     return (
@@ -1206,7 +1224,21 @@ export function LibraryFormDialog({
               </div>
               <div>
                 <label className={labelClass}>类型（勾选任一即匹配）</label>
-                <div className="flex flex-wrap gap-1.5">
+                <div className="flex flex-wrap items-center gap-1.5">
+                  {/* 与区域侧同款的全选/清空快捷键（类型没有预设组，只此一个） */}
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setMatchGenres((prev) =>
+                        genreOptions.every((g) => prev.includes(g.id))
+                          ? []
+                          : [...new Set([...prev, ...genreOptions.map((g) => g.id)])],
+                      )
+                    }
+                    className="glass-row nav-item !w-auto px-2.5 py-1 text-caption font-medium"
+                  >
+                    {genreOptions.every((g) => matchGenres.includes(g.id)) ? "清空" : "全选"}
+                  </button>
                   {genreOptions.map((g) => (
                     <button
                       key={g.id}
