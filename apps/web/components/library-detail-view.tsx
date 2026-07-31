@@ -872,7 +872,8 @@ const InventoryCell = memo(function InventoryCell({
     // 海报可能是本地刮削资产的相对路径（断网可用），也可能是 TMDB 图床地址
     posterUrl: imageUrl(item.poster_url),
   };
-  // 格下只说规模与规格；单部占多大盘在这里没有决策价值，总大小看库头部
+  // 格下只说剧集规模与异常；单部的大小/清晰度规格对浏览海报墙没有决策
+  // 价值，不展示（点进条目详情能看到），总大小看库头部
   const parts: string[] = [];
   if (item.kind === "tv" && item.seasons.length > 0) {
     parts.push(
@@ -881,7 +882,6 @@ const InventoryCell = memo(function InventoryCell({
         : `${item.seasons.length} 季 · ${item.episode_count} 集`,
     );
   }
-  if (item.resolutions.length > 0) parts.push(item.resolutions.join("/"));
   // 文件全部缺失的"死条目"：海报置灰，一眼与在位内容区分
   const dead = item.file_count > 0 && item.missing_count >= item.file_count;
   // 库存墙里的东西本来就都在库里，「已入库」不值一行；只有缺失这类异常才点灯

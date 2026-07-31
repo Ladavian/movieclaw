@@ -32,7 +32,6 @@ import {
   updateLibrary,
 } from "@/lib/api/libraries";
 import type { Subscription } from "@/lib/api/subscriptions";
-import { formatBytes } from "@/lib/format";
 import { imageUrl } from "@/lib/image-proxy";
 import type { MediaItem, MediaType } from "@/lib/media-types";
 import { useVisiblePolling } from "@/lib/use-visible-polling";
@@ -480,7 +479,8 @@ export function LibraryView() {
 
 /**
  * 库存条目 → 发现页海报卡的数据形态。点击走 /media/{type}/{tmdb_id} 详情
- * （与单库页库存格同一目标）；副行放规模/大小。海报保持干净，不打清晰度徽章。
+ * （与单库页库存格同一目标）；副行只放剧集规模——文件大小对浏览海报墙
+ * 没有决策价值，不展示（点进条目详情能看到）。海报保持干净，不打清晰度徽章。
  */
 function libraryItemToMediaItem(item: LibraryItem): MediaItem {
   let extent = "";
@@ -489,8 +489,6 @@ function libraryItemToMediaItem(item: LibraryItem): MediaItem {
       item.seasons.length === 1
         ? `第 ${item.seasons[0]} 季 · ${item.episode_count} 集`
         : `${item.seasons.length} 季 · ${item.episode_count} 集`;
-  } else if (item.kind === "movie" && item.total_size_bytes > 0) {
-    extent = formatBytes(item.total_size_bytes);
   }
   return {
     id: String(item.tmdb_id),
