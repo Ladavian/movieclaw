@@ -103,7 +103,9 @@ export function NoticeCenter({ collapsed }: { collapsed: boolean }) {
         onClose={() => setOpen(false)}
         label="待处理事项"
         width="lg"
-        panelClassName="flex max-h-[76vh] flex-col"
+        // dvh 而非 vh：iOS 浏览器里 vh 按「地址栏收起后」的大视口算，76vh 的
+        // 弹层会超出实际可视高度（subscribe-dialog 同款约定）
+        panelClassName="flex max-h-[76dvh] flex-col"
       >
         <div className="flex items-center gap-2 px-5 pb-3 pt-5">
           <BellIcon className="size-[18px] text-[var(--danger)]" />

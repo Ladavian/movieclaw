@@ -69,8 +69,11 @@ export function Modal({
     // 只有上方两角圆。这是手机上模态的既定语言——出现位置靠近拇指、
     // 内容宽度不被 max-w 白白挤掉，长表单也不会被吊在屏幕正中上下都留空。
     // 底部内边距吃安全区，最后一颗按钮不会压在 Home 指示条上。
+    // bottom 越出视口 --vp-overshoot：iOS 独立 App 的视口比屏幕矮一截（见
+    // globals.css），不越出的话遮罩在屏幕底部留一条没压暗的缝、移动端 bottom
+    // sheet 也会悬在物理底边上方。面板内容用加大的 pb 留在视口内（见下方）。
     <div
-      className={`fixed inset-0 ${raised ? "z-[60]" : "z-50"} flex items-center justify-center p-6 max-md:items-end max-md:p-0`}
+      className={`fixed inset-0 [bottom:calc(-1*var(--vp-overshoot))] ${raised ? "z-[60]" : "z-50"} flex items-center justify-center p-6 max-md:items-end max-md:p-0`}
       role="dialog"
       aria-modal="true"
       aria-label={label}
@@ -85,7 +88,7 @@ export function Modal({
         className="absolute inset-0 cursor-default bg-black/60 backdrop-blur-sm"
       />
       <div
-        className={`relative w-full ${WIDTH_CLS[width]} overflow-hidden rounded-2xl border border-white/10 bg-[rgba(16,18,26,0.92)] shadow-[0_32px_90px_rgba(0,0,0,0.7)] backdrop-blur-2xl max-md:!max-w-none max-md:rounded-b-none max-md:border-x-0 max-md:border-b-0 max-md:pb-[var(--safe-bottom)] ${panelClassName}`}
+        className={`relative w-full ${WIDTH_CLS[width]} overflow-hidden rounded-2xl border border-white/10 bg-[rgba(16,18,26,0.92)] shadow-[0_32px_90px_rgba(0,0,0,0.7)] backdrop-blur-2xl max-md:!max-w-none max-md:rounded-b-none max-md:border-x-0 max-md:border-b-0 max-md:pb-[calc(var(--safe-bottom)+var(--vp-overshoot))] ${panelClassName}`}
       >
         {children}
       </div>

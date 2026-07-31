@@ -131,13 +131,15 @@ export function ImageLightbox({
   if (images.length === 0) return null;
 
   return createPortal(
-    // 点击空白处关闭；内容区各元素自行 stopPropagation
+    // 点击空白处关闭；内容区各元素自行 stopPropagation。
+    // bottom 越出视口 --vp-overshoot：黑底铺到屏幕物理底边（iOS 独立 App
+    // 的视口矮一截，见 globals.css）；底部缩略图条用加大的 pb 留在视口内
     <div
       role="dialog"
       aria-modal="true"
       aria-label={title ? `图片浏览：${title}` : "图片浏览"}
       onClick={onClose}
-      className="fixed inset-0 z-[70] flex flex-col bg-black/85 backdrop-blur-md"
+      className="fixed inset-0 z-[70] flex flex-col bg-black/85 backdrop-blur-md [bottom:calc(-1*var(--vp-overshoot))]"
     >
       {/* 顶栏：计数 + 标题 + 关闭 */}
       <div className="flex shrink-0 flex-wrap items-center gap-3 px-4 py-3 text-white/85 [padding-top:calc(0.75rem+var(--safe-top))] max-md:gap-2 max-md:px-3">
@@ -262,7 +264,7 @@ export function ImageLightbox({
       {images.length > 1 && (
         <div
           onClick={(e) => e.stopPropagation()}
-          className="scroll-none shrink-0 overflow-x-auto px-4 py-3 [padding-bottom:calc(0.75rem+var(--safe-bottom))] max-md:px-3"
+          className="scroll-none shrink-0 overflow-x-auto px-4 py-3 [padding-bottom:calc(0.75rem+var(--safe-bottom)+var(--vp-overshoot))] max-md:px-3"
         >
           <div className="mx-auto flex w-max gap-2">
             {images.map((url, i) => (
