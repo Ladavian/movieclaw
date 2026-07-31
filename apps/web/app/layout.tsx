@@ -1,6 +1,7 @@
 import type { Metadata, Viewport } from "next";
 import { Inter } from "next/font/google";
 
+import { ViewportScrollReset } from "@/components/viewport-scroll-reset";
 import { appleStartupImages } from "@/lib/apple-splash";
 import { publicEnv } from "@/lib/env";
 
@@ -101,6 +102,8 @@ export default function RootLayout({
       <body>
         {/* 必须是 body 最前的同步内联脚本：解析即执行，赶在首帧绘制之前 */}
         <script dangerouslySetInnerHTML={{ __html: RESTORE_BACKDROP_SCRIPT }} />
+        {/* 挂在根布局：登录页等 AppShell 之外的页面也有输入框，同样需要键盘归位 */}
+        <ViewportScrollReset />
         {children}
       </body>
     </html>
