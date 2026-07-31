@@ -1228,7 +1228,14 @@ function IssueDrawer({
     }`;
 
   return createPortal(
-    <div className="fixed inset-0 z-50" role="dialog" aria-modal="true" aria-label="库工单">
+    // bottom 越出视口 --vp-overshoot：遮罩与右侧全高面板铺到屏幕物理底边
+    // （iOS 独立 App 的视口矮一截，见 globals.css）；列表内容用加大的 pb 留在视口内
+    <div
+      className="fixed inset-0 z-50 [bottom:calc(-1*var(--vp-overshoot))]"
+      role="dialog"
+      aria-modal="true"
+      aria-label="库工单"
+    >
       <button
         type="button"
         aria-label="关闭"
@@ -1357,8 +1364,9 @@ function IssueDrawer({
           </p>
         )}
 
-        {/* 列表区：独立滚动 */}
-        <div className="scroll-thin min-h-0 flex-1 space-y-2 overflow-y-auto px-5 py-4">
+        {/* 列表区：独立滚动。面板底边已铺到物理底边，滚动到底时最后一行
+            要停在安全区与视口截差之上，不被 Home 指示条压住 */}
+        <div className="scroll-thin min-h-0 flex-1 space-y-2 overflow-y-auto px-5 pt-4 pb-[calc(1rem+var(--safe-bottom)+var(--vp-overshoot))]">
           {open === "missing" &&
             missingShown.map((item) => (
               <MissingRow

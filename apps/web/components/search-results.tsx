@@ -1331,7 +1331,7 @@ function FacetDropdown<T extends string | number>({
         </span>
       </button>
       {open && (
-        <div className="absolute left-0 top-full z-30 mt-2 max-h-[46vh] w-max max-w-[420px] overflow-y-auto rounded-2xl border border-white/[0.12] bg-[rgba(14,16,22,0.96)] p-3 shadow-2xl backdrop-blur-2xl max-md:max-w-[calc(100vw-2rem)]">
+        <div className="absolute left-0 top-full z-30 mt-2 max-h-[46dvh] w-max max-w-[420px] overflow-y-auto rounded-2xl border border-white/[0.12] bg-[rgba(14,16,22,0.96)] p-3 shadow-2xl backdrop-blur-2xl max-md:max-w-[calc(100vw-2rem)]">
           <div className="flex flex-wrap gap-1.5">
             {options.map((o) => (
               <FacetChip
@@ -1460,7 +1460,7 @@ function FilterSheet({
     <>
       {/* 点外/Esc 关闭由 FilterToolbar 的 useDismiss 承担（触发器与弹层同容器） */}
       {/* 宽度收着点：右侧浮层少遮结果列表，让「选择即生效」的变化被看见 */}
-      <div className="absolute right-0 top-full z-30 mt-2 max-h-[60vh] w-[480px] max-w-[82vw] overflow-y-auto rounded-2xl border border-white/[0.12] bg-[rgba(14,16,22,0.96)] p-4 shadow-2xl backdrop-blur-2xl">
+      <div className="absolute right-0 top-full z-30 mt-2 max-h-[60dvh] w-[480px] max-w-[82vw] overflow-y-auto rounded-2xl border border-white/[0.12] bg-[rgba(14,16,22,0.96)] p-4 shadow-2xl backdrop-blur-2xl">
         <div className="mb-4 flex items-center justify-between">
           <div>
             <p className="text-ui font-medium text-[var(--text)]">筛选结果</p>
