@@ -314,7 +314,7 @@ function HeroSkeleton() {
  * 标题栏与横滚区的留白复刻 MediaRow 的布局，数据到达后原位替换不跳版；
  * 这一行行「亮着名字等数据」的骨架就是页面的分区加载进度。
  */
-function RowSkeleton({ stub }: { stub: { title: string; ranked?: boolean } }) {
+function RowSkeleton({ stub }: { stub: { title: string } }) {
   return (
     <section aria-busy="true" aria-label={`「${stub.title}」加载中`}>
       <div className="mb-3 px-6 max-md:mb-2 max-md:px-4">
@@ -323,22 +323,20 @@ function RowSkeleton({ stub }: { stub: { title: string; ranked?: boolean } }) {
         </h3>
       </div>
       <div className="flex gap-4 overflow-hidden px-6 pb-1 pt-1 max-md:gap-3 max-md:px-4">
-        <RowItemsSkeleton ranked={stub.ranked} />
+        <RowItemsSkeleton />
       </div>
     </section>
   );
 }
 
-/** 一排海报占位卡；ranked 行的卡片更宽，与真实 Top 10 行对齐。 */
-function RowItemsSkeleton({ ranked }: { ranked?: boolean }) {
+/** 一排海报占位卡，与真实海报行同一规格。 */
+function RowItemsSkeleton() {
   return (
     <>
       {Array.from({ length: 8 }, (_, i) => (
         <div
           key={i}
-          className={`aspect-[2/3] shrink-0 animate-pulse rounded-2xl bg-white/[0.05] ${
-            ranked ? "w-[188px] max-md:w-[156px]" : "w-[152px] max-md:w-[126px] xl:w-[164px]"
-          }`}
+          className="aspect-[2/3] w-[152px] shrink-0 animate-pulse rounded-2xl bg-white/[0.05] max-md:w-[126px] xl:w-[164px]"
         />
       ))}
     </>

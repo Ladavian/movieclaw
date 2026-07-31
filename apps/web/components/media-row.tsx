@@ -9,7 +9,7 @@ import type { MediaItem, MediaRowData } from "@/lib/media-types";
 
 /**
  * 横滚海报行（Netflix 式分类行）：标题栏 + 横滚容器（HScroller 提供隐藏
- * 滚动条与左右翻页钮）。ranked 行（Top 10）的卡片更宽，为左侧描边大数字留空间。
+ * 滚动条与左右翻页钮）。所有行的卡片同一规格——榜单行不再有加宽的排名变体。
  */
 export function MediaRow({
   row,
@@ -52,14 +52,13 @@ export function MediaRow({
       </div>
 
       <HScroller className="gap-4 px-6 pb-1 pt-1 max-md:gap-3 max-md:px-4">
-        {row.items.map((item, i) => (
+        {row.items.map((item) => (
           <div
             key={`${row.id}-${item.id}`}
-            className={`shrink-0 ${row.ranked ? "w-[188px] max-md:w-[156px]" : "w-[152px] max-md:w-[126px] xl:w-[164px]"}`}
+            className="w-[152px] shrink-0 max-md:w-[126px] xl:w-[164px]"
           >
             <PosterCard
               item={item}
-              rank={row.ranked ? i + 1 : undefined}
               action={typeof cardAction === "function" ? cardAction(item) : cardAction}
               href={cardHref?.(item)}
             />

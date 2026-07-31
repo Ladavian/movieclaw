@@ -39,8 +39,6 @@ export interface MediaItem {
 export interface MediaRowData {
   id: string;
   title: string;
-  /** Netflix 式大数字排名行（Top 10） */
-  ranked?: boolean;
   items: MediaItem[];
 }
 
@@ -48,8 +46,6 @@ export interface MediaRowData {
 export interface DiscoverRowStub {
   id: string;
   title: string;
-  /** Netflix 式大数字排名行（Top 10） */
-  ranked?: boolean;
 }
 
 /** 发现页布局：Hero 有无 + 行清单。纯配置毫秒级返回，用于先撑起整页骨架 */

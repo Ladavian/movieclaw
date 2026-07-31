@@ -21,13 +21,12 @@ import { useTapGuard } from "@/lib/use-tap-guard";
  *     hover 时整卡上浮、海报放大，底部升起渐变信息层（类型 / 简介 / 订阅影片按钮）。
  *   - 文字区：海报下方常显标题与「年份 · 规模」，保证不 hover 也能扫读海报墙。
  *
- * ranked 模式（Top 10 行）：海报左侧叠一个 Netflix 式描边大数字，
- * 数字与海报轻微重叠，靠 z-index 压在海报之下，形成「探出头」的层次。
+ * 全站海报卡只有这一种形态：曾经给榜单行做过「左侧描边大数字」的排名变体，
+ * 但发现页里排名行有好几条（豆瓣实时热门/口碑榜/Top 250 …），满屏大数字过于
+ * 抢眼、也把行与行的节奏打乱，已整体去掉——榜单的名次由行标题表达即可。
  */
 export interface PosterCardProps {
   item: MediaItem;
-  /** Top 10 排名（1 起）；传入即渲染描边大数字变体 */
-  rank?: number;
   /** 悬浮层的操作区变体，默认「订阅影片」 */
   action?: PosterCardAction;
   /** 点击目标覆盖：传入即直接链接到该地址（媒体库「最近添加」行跳
@@ -78,32 +77,23 @@ export interface PosterVisualItem {
   overview?: string;
 }
 
-export function PosterCard({ item, rank, action, href }: PosterCardProps) {
+export function PosterCard({ item, action, href }: PosterCardProps) {
   // 点击整卡（含 hover 信息层）进入该影片的详情页
   const { open } = useMediaDetail();
   if (href) {
-    return <PosterCardVisual item={item} rank={rank} action={action} href={href} />;
+    return <PosterCardVisual item={item} action={action} href={href} />;
   }
-  return (
-    <PosterCardVisual
-      item={item}
-      rank={rank}
-      action={action}
-      onClick={() => open(item)}
-    />
-  );
+  return <PosterCardVisual item={item} action={action} onClick={() => open(item)} />;
 }
 
 /** 统一海报视觉组件；传入 onClick 时才渲染为可点击按钮。 */
 export function PosterCardVisual({
   item,
-  rank,
   onClick,
   href,
   action = "subscribe",
 }: {
   item: PosterVisualItem;
-  rank?: number;
   onClick?: () => void;
   href?: Route;
   action?: PosterCardAction;
@@ -148,7 +138,7 @@ export function PosterCardVisual({
       setRevealed(true);
     }
   };
-  const content = <PosterCardContent item={item} rank={rank} action={action} />;
+  const content = <PosterCardContent item={item} action={action} />;
   const interactiveClass =
     "group/card block w-full cursor-pointer rounded-2xl text-left outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-ring)]";
   if (href) {
@@ -182,11 +172,9 @@ export function PosterCardVisual({
 
 function PosterCardContent({
   item,
-  rank,
   action = "subscribe",
 }: {
   item: PosterVisualItem;
-  rank?: number;
   action?: PosterCardAction;
 }) {
   const badges = item.badges ?? [];
@@ -194,75 +182,54 @@ function PosterCardContent({
   const overview = item.overview ?? "";
   return (
     <>
-      <div className="relative">
-        {/* Top 10 描边大数字：绝对定位在左下、贴齐海报底边，右缘塞进海报之下。
-            位置与位数无关，两位数「10」也不会把布局撑开（多出的部分自然被海报盖住）。 */}
-        {rank !== undefined && (
-          <span
-            aria-hidden="true"
-            className="absolute bottom-0 left-0 z-0 select-none text-[108px] font-black leading-[0.78] tracking-[-0.08em] max-md:text-[86px]"
-            style={{
-              WebkitTextStroke: "2.5px rgba(205, 214, 230, 0.42)",
-              color: "rgba(10, 11, 16, 0.55)",
-            }}
-          >
-            {rank}
+      {/* 海报区（自身 relative：徽章与 hover 信息层都绝对定位在它内部） */}
+      <div className="relative aspect-[2/3] w-full overflow-hidden rounded-2xl bg-[#141824] shadow-[0_10px_28px_rgba(0,0,0,0.4)] ring-1 ring-white/[0.08] transition-all duration-300 ease-out group-hover/card:-translate-y-1.5 group-hover/card:shadow-[0_22px_50px_rgba(0,0,0,0.6)] group-hover/card:ring-white/25">
+        <PosterImage
+          src={item.posterUrl}
+          alt={`${item.title} 海报`}
+          className="absolute inset-0 size-full transition-transform duration-500 ease-out group-hover/card:scale-[1.06]"
+        />
+
+        {/* 左上：资源最高清晰度徽章（无资源信息时不渲染）。
+            徽章不用 backdrop-blur：海报墙每张卡 2~3 个模糊合成层会显著放大
+            滚动时的 GPU 压力（几百张卡叠加），加实底色观感几乎无差 */}
+        {badges[0] && (
+          <span className="absolute left-2 top-2 rounded-md bg-black/70 px-1.5 py-0.5 text-micro font-bold tracking-wide text-[var(--accent)]">
+            {badges[0]}
+          </span>
+        )}
+        {/* 右上：评分徽章（暂无评分时不渲染，避免展示 0.0） */}
+        {item.rating > 0 && (
+          <span className="tnum absolute right-2 top-2 flex items-center gap-1 rounded-md bg-black/70 px-1.5 py-0.5 text-caption font-semibold text-white">
+            <StarIcon className="size-3 text-[#f5c451]" />
+            {item.rating.toFixed(1)}
           </span>
         )}
 
-        {/* 海报区：ranked 模式固定宽度并整体右移，把左侧空间留给探出的大数字 */}
-        <div
-          className={`relative z-[1] aspect-[2/3] overflow-hidden rounded-2xl bg-[#141824] shadow-[0_10px_28px_rgba(0,0,0,0.4)] ring-1 ring-white/[0.08] transition-all duration-300 ease-out group-hover/card:-translate-y-1.5 group-hover/card:shadow-[0_22px_50px_rgba(0,0,0,0.6)] group-hover/card:ring-white/25 ${
-            rank !== undefined ? "ml-11 w-[144px] max-md:ml-9 max-md:w-[118px]" : "w-full"
-          }`}
-        >
-          <PosterImage
-            src={item.posterUrl}
-            alt={`${item.title} 海报`}
-            className="absolute inset-0 size-full transition-transform duration-500 ease-out group-hover/card:scale-[1.06]"
-          />
-
-          {/* 左上：资源最高清晰度徽章（无资源信息时不渲染）。
-              徽章不用 backdrop-blur：海报墙每张卡 2~3 个模糊合成层会显著放大
-              滚动时的 GPU 压力（几百张卡叠加），加实底色观感几乎无差 */}
-          {badges[0] && (
-            <span className="absolute left-2 top-2 rounded-md bg-black/70 px-1.5 py-0.5 text-micro font-bold tracking-wide text-[var(--accent)]">
-              {badges[0]}
-            </span>
+        {/* hover 信息层：底部渐变升起，展示类型 / 简介 / 快捷操作。
+            触摸端由「首次点按」触发（根节点的 data-revealed，见 PosterCardVisual），
+            与桌面 hover 是同一层——手机上不再另设常驻的角落圆键。 */}
+        <div className="absolute inset-x-0 bottom-0 translate-y-3 bg-gradient-to-t from-black/90 via-black/60 to-transparent px-3 pb-3 pt-10 opacity-0 transition-all duration-300 ease-out group-hover/card:translate-y-0 group-hover/card:opacity-100 group-data-[revealed=true]/card:translate-y-0 group-data-[revealed=true]/card:opacity-100">
+          {genres.length > 0 && (
+            <p className="text-caption font-medium text-[var(--accent-2)]">
+              {genres.join(" · ")}
+            </p>
           )}
-          {/* 右上：评分徽章（暂无评分时不渲染，避免展示 0.0） */}
-          {item.rating > 0 && (
-            <span className="tnum absolute right-2 top-2 flex items-center gap-1 rounded-md bg-black/70 px-1.5 py-0.5 text-caption font-semibold text-white">
-              <StarIcon className="size-3 text-[#f5c451]" />
-              {item.rating.toFixed(1)}
-            </span>
+          {overview && (
+            <p className="mt-1 line-clamp-3 text-caption leading-4 text-white/75">
+              {overview}
+            </p>
           )}
-
-          {/* hover 信息层：底部渐变升起，展示类型 / 简介 / 快捷操作。
-              触摸端由「首次点按」触发（根节点的 data-revealed，见 PosterCardVisual），
-              与桌面 hover 是同一层——手机上不再另设常驻的角落圆键。 */}
-          <div className="absolute inset-x-0 bottom-0 translate-y-3 bg-gradient-to-t from-black/90 via-black/60 to-transparent px-3 pb-3 pt-10 opacity-0 transition-all duration-300 ease-out group-hover/card:translate-y-0 group-hover/card:opacity-100 group-data-[revealed=true]/card:translate-y-0 group-data-[revealed=true]/card:opacity-100">
-            {genres.length > 0 && (
-              <p className="text-caption font-medium text-[var(--accent-2)]">
-                {genres.join(" · ")}
-              </p>
-            )}
-            {overview && (
-              <p className="mt-1 line-clamp-3 text-caption leading-4 text-white/75">
-                {overview}
-              </p>
-            )}
-            {action !== "none" && (
-              <div className="mt-2.5 flex items-center gap-2">
-                <PosterCardActionButton item={item} action={action} />
-              </div>
-            )}
-          </div>
+          {action !== "none" && (
+            <div className="mt-2.5 flex items-center gap-2">
+              <PosterCardActionButton item={item} action={action} />
+            </div>
+          )}
         </div>
       </div>
 
       {/* 文字区：常显标题 + 元信息（压在背景大图上，需 text-on-image 投影保证可读） */}
-      <div className={`mt-2 ${rank ? "pl-11 max-md:pl-9" : ""}`}>
+      <div className="mt-2">
         <p className="text-on-image truncate text-ui font-semibold text-[var(--text)]">
           {item.title}
         </p>
