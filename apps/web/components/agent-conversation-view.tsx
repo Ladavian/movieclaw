@@ -108,7 +108,9 @@ export function AgentConversationView({ conversationId }: { conversationId: stri
             // 只在跨越阈值时落 state，滚动过程中不做无谓的重渲染
             setAtBottom((previous) => (previous === near ? previous : near));
           }}
-          className="scroll-thin min-h-0 flex-1 overflow-y-auto px-6 py-6 max-md:px-4 max-md:py-4"
+          // overflow-x-hidden 兜底：任何子元素意外超宽（如未换行的长 token）都不许
+          // 把消息列撑出横向滚动——移动端一旦横滚，整列内容会被推出屏幕左侧
+          className="scroll-thin min-h-0 flex-1 overflow-y-auto overflow-x-hidden px-6 py-6 max-md:px-4 max-md:py-4"
         >
           <div className="mx-auto max-w-3xl space-y-8">
             {conversation.turns.map((turn) => (
@@ -164,7 +166,7 @@ const TurnView = memo(function TurnView({ turn }: { turn: AgentTurn }) {
     <div className="group/turn space-y-3">
       {/* 用户消息：右侧玻璃气泡 */}
       <div className="flex justify-end">
-        <div className="max-w-[80%] whitespace-pre-wrap rounded-2xl bg-[var(--glass-fill-active)] px-4 py-3 text-body leading-6 text-[var(--text)]">
+        <div className="max-w-[80%] whitespace-pre-wrap break-words rounded-2xl bg-[var(--glass-fill-active)] px-4 py-3 text-body leading-6 text-[var(--text)]">
           {turn.input}
         </div>
       </div>
@@ -190,7 +192,7 @@ const TurnView = memo(function TurnView({ turn }: { turn: AgentTurn }) {
         })}
 
         {turn.status === "error" && (
-          <div className="rounded-xl border border-[#ff6b6b]/30 bg-[#ff6b6b]/10 px-3.5 py-2.5 text-ui leading-5 text-[#ff6b6b]">
+          <div className="rounded-xl border border-[#ff6b6b]/30 bg-[#ff6b6b]/10 px-3.5 py-2.5 text-ui leading-5 break-words text-[#ff6b6b]">
             {turn.error}
           </div>
         )}
@@ -366,9 +368,11 @@ const ProcessBlock = memo(function ProcessBlock({ segment, active }: { segment: 
         <div className="mt-1.5 space-y-2 border-l-2 border-white/[0.08] pl-3">
           {segment.items.map((item, index) =>
             item.kind === "thinking" ? (
+              // break-words 必须有：思考文本常出现资源名这种几十字符无空格的长
+              // token（点号不是换行机会点），不断词会把整个消息列撑出横向溢出
               <p
                 key={index}
-                className="whitespace-pre-wrap text-sub leading-5 text-[var(--text-faint)]"
+                className="whitespace-pre-wrap break-words text-sub leading-5 text-[var(--text-faint)]"
               >
                 {item.text}
               </p>
@@ -476,7 +480,7 @@ const CompactionCard = memo(function CompactionCard({
       </button>
       {open && (
         <div className="mt-1.5 space-y-1.5 border-l-2 border-white/[0.08] pl-3">
-          <p className="whitespace-pre-wrap text-sub leading-5 text-[var(--text-faint)]">
+          <p className="whitespace-pre-wrap break-words text-sub leading-5 text-[var(--text-faint)]">
             {segment.summary}
           </p>
           <p className="text-caption text-[var(--text-faint)]">
