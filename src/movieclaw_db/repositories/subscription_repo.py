@@ -52,6 +52,9 @@ class RuleSetRepository:
         await self._session.refresh(row)
         return row
 
+    async def rollback(self) -> None:
+        await self._session.rollback()
+
     async def delete(self, row: RuleSet) -> None:
         await self._session.delete(row)
         await self._session.commit()

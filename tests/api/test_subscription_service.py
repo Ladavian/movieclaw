@@ -382,6 +382,19 @@ async def test_rule_set_spec_validation(db) -> None:
         assert row.spec == {"resolutions": ["2160p", "1080p"], "free_only": True}
 
 
+async def test_rule_set_duplicate_name_conflict(db) -> None:
+    """名称唯一：创建/改名撞已有名给 409 可读中文，而不是 500。"""
+    async with db.session() as session:
+        rule_service = RuleSetService(session)
+        await rule_service.create("首发", {"free_only": True})
+        with pytest.raises(ConflictException):
+            await rule_service.create("首发", {})
+
+        other = await rule_service.create("次发", {})
+        with pytest.raises(ConflictException):
+            await rule_service.update(other.id, name="首发", spec={})
+
+
 async def test_redownload_missing_units_creates_and_resets(db) -> None:
     """媒体库缺失找回（P0）：无订阅按缺失季创建；已 imported 的工单显式
     重置回 wanted 并立即排队——与 update 的"终态保留"铁律刻意相反。"""

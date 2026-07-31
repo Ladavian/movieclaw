@@ -21,12 +21,24 @@ import {
  *   选中的芯片上标序号，先选的优先；
  * - **摘要芯片**：清单里把 spec 翻译成人话（"2160p > 1080p · 仅免费"），
  *   看一眼就知道每个组在过滤什么；
+ * - **复制微调**：订阅不做 per-订阅 override，"想微调就复制一个规则组"是
+ *   既定产品哲学——复制按钮预填原组条件，改名保存即成新组；
  * - **删除保护前置**：默认组与被订阅引用的组直接禁用删除按钮并说明原因，
  *   不让用户点了再吃后端 409。
+ *
+ * specSummary 与 RuleSetEditorDialog 导出复用：订阅弹窗（选组时看清内容、
+ * 快捷新建）与订阅详情页（换组）共用同一套摘要与编辑器。
  */
+
+/** 编辑器打开参数：ruleSet 有值=编辑；null=新建，template 提供预填（复制场景）。 */
+interface EditorTarget {
+  ruleSet: RuleSet | null;
+  template: { name: string; spec: RuleSetSpec } | null;
+}
+
 export function RuleSetsPanel() {
   const [ruleSets, setRuleSets] = useState<RuleSet[] | null>(null);
-  const [editing, setEditing] = useState<RuleSet | "new" | null>(null);
+  const [editing, setEditing] = useState<EditorTarget | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const reload = () => {
@@ -56,7 +68,7 @@ export function RuleSetsPanel() {
         <h3 className="text-body font-semibold text-white/90">规则组</h3>
         <button
           type="button"
-          onClick={() => setEditing("new")}
+          onClick={() => setEditing({ ruleSet: null, template: null })}
           className="btn-glass px-3 py-1.5 text-sub font-medium"
         >
           + 新建规则组
@@ -125,10 +137,23 @@ export function RuleSetsPanel() {
                 </div>
                 <button
                   type="button"
-                  onClick={() => setEditing(rs)}
+                  onClick={() => setEditing({ ruleSet: rs, template: null })}
                   className="btn-glass shrink-0 px-3 py-1.5 text-sub font-medium"
                 >
                   编辑
+                </button>
+                <button
+                  type="button"
+                  title="以本组条件为底新建一个规则组"
+                  onClick={() =>
+                    setEditing({
+                      ruleSet: null,
+                      template: { name: `${rs.name} 副本`, spec: rs.spec },
+                    })
+                  }
+                  className="btn-glass shrink-0 px-3 py-1.5 text-sub font-medium"
+                >
+                  复制
                 </button>
                 <button
                   type="button"
@@ -147,7 +172,8 @@ export function RuleSetsPanel() {
 
       {editing !== null && (
         <RuleSetEditorDialog
-          ruleSet={editing === "new" ? null : editing}
+          ruleSet={editing.ruleSet}
+          template={editing.template ?? undefined}
           onClose={() => setEditing(null)}
           onSaved={() => {
             setEditing(null);
@@ -177,8 +203,8 @@ const CODEC_FAMILIES: { label: string; values: string[] }[] = [
   { label: "AV1", values: ["AV1"] },
 ];
 
-/** spec → 人话芯片列表（清单页摘要；空数组=全不限）。 */
-function specSummary(spec: RuleSetSpec): string[] {
+/** spec → 人话芯片列表（清单摘要 / 订阅弹窗与详情页复用；空数组=全不限）。 */
+export function specSummary(spec: RuleSetSpec): string[] {
   const chips: string[] = [];
   if (spec.resolutions?.length) chips.push(spec.resolutions.join(" > "));
   if (spec.video_codecs?.length) {
@@ -215,19 +241,29 @@ function specSummary(spec: RuleSetSpec): string[] {
 // 编辑器弹窗
 // ---------------------------------------------------------------------------
 
-function RuleSetEditorDialog({
+export function RuleSetEditorDialog({
   ruleSet,
+  template,
+  raised = false,
   onClose,
   onSaved,
 }: {
   /** null = 新建 */
   ruleSet: RuleSet | null;
+  /** 新建时的预填内容（复制场景）；编辑时忽略 */
+  template?: { name: string; spec: RuleSetSpec };
+  /** 叠在其他弹窗之上时置 true（如订阅弹窗里快捷新建） */
+  raised?: boolean;
   onClose: () => void;
-  onSaved: () => void;
+  /** 保存成功回调，参数是后端返回的最新规则组（快捷新建场景要选中它） */
+  onSaved: (saved: RuleSet) => void;
 }) {
-  const spec = useMemo<RuleSetSpec>(() => ruleSet?.spec ?? {}, [ruleSet]);
+  const spec = useMemo<RuleSetSpec>(
+    () => ruleSet?.spec ?? template?.spec ?? {},
+    [ruleSet, template],
+  );
 
-  const [name, setName] = useState(ruleSet?.name ?? "");
+  const [name, setName] = useState(ruleSet?.name ?? template?.name ?? "");
   const [resolutions, setResolutions] = useState<string[]>(spec.resolutions ?? []);
   const [codecFamilies, setCodecFamilies] = useState<Set<string>>(
     () =>
@@ -313,9 +349,11 @@ function RuleSetEditorDialog({
     setBusy(true);
     setError(null);
     try {
-      if (ruleSet === null) await createRuleSet(name.trim(), next);
-      else await updateRuleSet(ruleSet.id, name.trim(), next);
-      onSaved();
+      const saved =
+        ruleSet === null
+          ? await createRuleSet(name.trim(), next)
+          : await updateRuleSet(ruleSet.id, name.trim(), next);
+      onSaved(saved);
     } catch (e) {
       setError(e instanceof Error ? e.message : "保存失败，请稍后重试");
     } finally {
@@ -329,6 +367,7 @@ function RuleSetEditorDialog({
       onClose={onClose}
       label={ruleSet ? `编辑规则组「${ruleSet.name}」` : "新建规则组"}
       width="lg"
+      raised={raised}
     >
       <div className="scroll-thin max-h-[76dvh] overflow-y-auto p-6 max-md:p-5">
         <h2 className="text-title font-bold text-white">
@@ -337,6 +376,12 @@ function RuleSetEditorDialog({
         <p className="mt-1 text-sub text-[var(--text-muted)]">
           所有条件都可以留空 = 不限该维度；条件之间是「且」的关系。
         </p>
+        {ruleSet !== null && ruleSet.reference_count > 0 && (
+          <p className="mt-2 rounded-lg border border-amber-400/25 bg-amber-500/10 px-3.5 py-2.5 text-sub leading-6 text-amber-200">
+            此组正被 {ruleSet.reference_count} 个订阅使用，保存后对它们之后的资源评估立即生效
+            （已下载的内容不受影响）。
+          </p>
+        )}
 
         <div className="mt-4 space-y-5">
           <Field label="名称">

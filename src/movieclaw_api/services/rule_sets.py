@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import logging
 
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from movieclaw_api.exceptions import (
@@ -61,13 +62,24 @@ class RuleSetService:
 
     async def create(self, name: str, spec: dict) -> RuleSet:
         cleaned = self._validate(name, spec)
-        return await self._repo.save(RuleSet(name=name.strip(), spec=cleaned))
+        try:
+            return await self._repo.save(RuleSet(name=name.strip(), spec=cleaned))
+        except IntegrityError as exc:
+            # 名称撞唯一约束：给可读中文错误，而不是让 500 裸奔到前端
+            await self._repo.rollback()
+            raise ConflictException(f"规则组「{name.strip()}」已存在，请换一个名称") from exc
 
     async def update(self, rule_set_id: int, *, name: str, spec: dict) -> RuleSet:
         row = await self.get(rule_set_id)
-        row.name = name.strip() or row.name
-        row.spec = self._validate(row.name, spec)
-        return await self._repo.save(row)
+        # rollback 会使 ORM 对象过期，异常分支不能再读 row.name——先落到局部变量
+        new_name = name.strip() or row.name
+        row.name = new_name
+        row.spec = self._validate(new_name, spec)
+        try:
+            return await self._repo.save(row)
+        except IntegrityError as exc:
+            await self._repo.rollback()
+            raise ConflictException(f"规则组「{new_name}」已存在，请换一个名称") from exc
 
     async def delete(self, rule_set_id: int) -> None:
         """删除规则组。默认组与被订阅引用的组禁删（显式报错优于隐式改挂靠）。"""
