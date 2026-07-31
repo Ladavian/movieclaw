@@ -349,6 +349,8 @@ function processSummary(items: AgentProcessItem[]): string {
 /**
  * 处理过程折叠块（仿 Claude）：头部进行中显示实时状态、完成后显示一句话
  * 总结；点击展开思考与工具调用的混合列表（按实际发生顺序）。
+ * 展开后是第二级折叠：工具调用只呈现单行摘要清单，点击某一行才展开
+ * 该次调用的参数与输出——一轮动辄十几次调用，全量平铺等于没有排版。
  */
 const ProcessBlock = memo(function ProcessBlock({ segment, active }: { segment: AgentTurnSegment & { kind: "process" }; active: boolean }) {
   const [open, setOpen] = useState(false);
@@ -405,47 +407,87 @@ function toolInput(tool: AgentTurnToolCall): { lang: CodeLang; code: string } | 
   }
 }
 
-/** 单次工具调用卡片：参数完整展示（shiki 高亮）+ 生成/执行中/回执三种状态。
- *  memo：store 对工具条目也是不可变更新，未被触碰的卡片整卡跳过；
- *  参数明细的 JSON.parse/stringify（大参数可达几 KB）按 tool 缓存，
+/**
+ * 单行参数摘要（清单态用）：bash 把命令压成一行，其余工具压成
+ * 「键: 值」串。只求一眼认出这次调用在干什么，超出部分由 CSS 截断。
+ */
+function toolSummary(tool: AgentTurnToolCall): string {
+  const raw = tool.label.slice(tool.name.length + 1, -1);
+  if (!raw || raw === "{}") return "";
+  try {
+    const args = JSON.parse(raw) as Record<string, unknown>;
+    if (tool.name === "bash" && typeof args.command === "string") {
+      return args.command.replace(/\s+/g, " ").trim();
+    }
+    return Object.entries(args)
+      .map(([key, value]) => `${key}: ${typeof value === "string" ? value : JSON.stringify(value)}`)
+      .join(", ");
+  } catch {
+    return raw;
+  }
+}
+
+/** 单次工具调用（对齐 Claude/Codex 的两级呈现）：默认只占一行——
+ *  工具名 + 参数摘要 + 状态尾标（✓/✗/进度环），点击行内任意处才展开
+ *  参数（shiki 高亮）与输出详情。
+ *  memo：store 对工具条目也是不可变更新，未被触碰的行整行跳过；
+ *  摘要与参数明细的 JSON.parse/stringify（大参数可达几 KB）按 tool 缓存，
  *  不再在每次渲染中内联执行。 */
 const ToolCallCard = memo(function ToolCallCard({ tool }: { tool: AgentTurnToolCall }) {
-  const input = useMemo(
-    () => (tool.argsDone === false ? null : toolInput(tool)),
-    [tool],
-  );
+  const [open, setOpen] = useState(false);
+  const streaming = tool.argsDone === false;
+  const input = useMemo(() => (streaming ? null : toolInput(tool)), [tool, streaming]);
+  const summary = useMemo(() => (streaming ? "" : toolSummary(tool)), [tool, streaming]);
+
   return (
-    <div className="rounded-lg border border-white/[0.05] bg-white/[0.02] px-2.5 py-1.5">
-      {tool.argsDone === false ? (
-        // 参数生成中：工具名固定，参数区右锚定滚动显示最新生成的尾部——
-        // 长参数溢出时新字符持续从右侧推入，肉眼可见任务仍在进行
-        <p className="flex font-mono text-caption text-[var(--accent-2)]">
-          <span className="shrink-0">⚙ {tool.name}(</span>
+    <div className="min-w-0">
+      <button
+        type="button"
+        // 参数生成中没有可展开的定稿详情，此时行只作进度展示、不可点击
+        disabled={streaming}
+        onClick={() => setOpen((v) => !v)}
+        className="flex w-full min-w-0 items-center gap-1.5 py-0.5 text-left font-mono text-caption disabled:cursor-default"
+      >
+        <ChevronRightIcon
+          className={`size-3 shrink-0 text-[var(--text-faint)] transition-transform ${open ? "rotate-90" : ""}`}
+        />
+        <span className="shrink-0 text-[var(--accent-2)]">{tool.name}</span>
+        {streaming ? (
+          // 参数生成中：右锚定滚动显示最新生成的尾部——长参数溢出时新字符
+          // 持续从右侧推入，肉眼可见任务仍在进行
           <span className="flex min-w-0 flex-1 justify-end overflow-hidden [mask-image:linear-gradient(to_right,transparent,black_24px)]">
-            <span className="whitespace-nowrap">
+            <span className="whitespace-nowrap text-[var(--text-faint)]">
               {tool.label.slice(tool.name.length + 1).slice(-300)}
             </span>
           </span>
-        </p>
-      ) : (
-        <>
-          <p className="font-mono text-caption text-[var(--accent-2)]">⚙ {tool.name}</p>
+        ) : (
+          <span className="min-w-0 flex-1 truncate text-[var(--text-faint)]">{summary}</span>
+        )}
+        {streaming || tool.output === undefined ? (
+          <span className="shrink-0">
+            <ProgressRing />
+          </span>
+        ) : (
+          <span className={`shrink-0 ${tool.isError ? "text-[#ff6b6b]" : "text-[var(--text-faint)]"}`}>
+            {tool.isError ? "✗" : "✓"}
+          </span>
+        )}
+      </button>
+      {open && !streaming && (
+        <div className="mt-1 min-w-0 rounded-lg border border-white/[0.05] bg-white/[0.02] px-2.5 py-1.5">
           {input && <HighlightedCode code={input.code} lang={input.lang} />}
-        </>
-      )}
-      {tool.argsDone === false ? (
-        <p className="mt-0.5 animate-pulse text-caption text-[var(--text-faint)]">生成参数中…</p>
-      ) : tool.output === undefined ? (
-        <p className="mt-0.5 text-caption text-[var(--text-faint)]">执行中…</p>
-      ) : (
-        <div
-          // 行高用相对值：字号随语义 token 在移动端换档（11→13px），固定 16px 行高会挤死多行日志
-          className={`scroll-thin mt-1 max-h-44 overflow-y-auto whitespace-pre-wrap break-words font-mono text-caption leading-[1.45] ${
-            tool.isError ? "text-[#ff6b6b]" : "text-[var(--text-muted)]"
-          }`}
-        >
-          {tool.isError ? "✗ " : "✓ "}
-          {tool.output}
+          {tool.output === undefined ? (
+            <p className="mt-0.5 text-caption text-[var(--text-faint)]">执行中…</p>
+          ) : (
+            <div
+              // 行高用相对值：字号随语义 token 在移动端换档（11→13px），固定 16px 行高会挤死多行日志
+              className={`scroll-thin mt-1 max-h-44 overflow-y-auto whitespace-pre-wrap break-words font-mono text-caption leading-[1.45] ${
+                tool.isError ? "text-[#ff6b6b]" : "text-[var(--text-muted)]"
+              }`}
+            >
+              {tool.output}
+            </div>
+          )}
         </div>
       )}
     </div>
