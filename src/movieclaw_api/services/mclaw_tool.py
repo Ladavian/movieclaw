@@ -8,10 +8,15 @@
 
 from __future__ import annotations
 
+import logging
 from functools import lru_cache
 
+from movieclaw_api.exceptions import AppException
+from movieclaw_cli.core.errors import CliError
 from movieclaw_cli.gen.spec_loader import load_baseline
 from movieclaw_cli.gen.tree_builder import DOMAIN_HELP, is_generable, iter_operations
+
+logger = logging.getLogger("movieclaw_api.mclaw_tool")
 
 # 域 → 目录行（一行说明 + 关键子能力/入口提示）。新增域忘了补会被守护测试拦下，
 # 届时可先回落 DOMAIN_HELP 的短标签保证不漏。
@@ -58,9 +63,28 @@ def spec_domains() -> set[str]:
 
 @lru_cache(maxsize=1)
 def render_service_map() -> str:
-    """渲染一级服务目录（进程内缓存；spec 是构建期产物，运行期不变）。"""
+    """渲染一级服务目录（进程内缓存；spec 是构建期产物，运行期不变）。
+
+    spec 装载失败只可能是部署产物不完整（基线文件没进镜像/安装包）。这类
+    故障必须给出可读结论：CliError 是 CLI 侧的异常，逃到 API 层会被兜底
+    处理器变成一句裸的 "internal server error"，自部署用户根本无从判断该
+    重新部署还是该改配置。
+    """
+    try:
+        domains = sorted(spec_domains())
+    except CliError as exc:
+        logger.error("CLI 基线 spec 装载失败，Agent 无法组装 mclaw 工具：%s", exc)
+        raise AppException(
+            status_code=500,
+            code="SPEC_BASELINE_MISSING",
+            message=(
+                "服务端缺少 CLI 基线 spec（src/movieclaw_cli/data/spec.json），"
+                "Agent 功能不可用。这通常是镜像或安装包不完整，请更新到新版镜像后重新部署。"
+            ),
+        ) from exc
+
     lines = ['可用服务（一级目录；参数细节用 --help 现查，如 args="sub --help"）：']
-    for domain in sorted(spec_domains()):
+    for domain in domains:
         lines.append("- " + _DOMAIN_LINES.get(domain, f"{domain}   {DOMAIN_HELP.get(domain, '')}"))
     for extra in _TOP_LEVEL_LINES:
         lines.append("- " + extra)

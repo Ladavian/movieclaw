@@ -123,6 +123,14 @@ COPY src ./src
 COPY alembic ./alembic
 COPY alembic.ini ./
 
+# CLI 基线 spec 在这里现场导出，而不是信任构建上下文里那份仓库产物。
+# 它是运行期硬依赖：Agent 组装 mclaw 工具时要读它渲染服务目录，缺了就是每次
+# 对话都 500。而仓库产物可能过期（改了路由忘了重新导出）或干脆没进上下文，
+# 两种情况镜像都照样构建成功，故障要等用户发第一条对话才暴露。现场导出既堵
+# 死「缺失」，也顺带保证 spec 与镜像内代码严格同版（偏斜检测的前提）。
+RUN PYTHONPATH=/app/src /venv/bin/python -m movieclaw_api.export_openapi \
+    -o /app/src/movieclaw_cli/data/spec.json
+
 # 前端：standalone 产物 + 静态资源 + public（standalone 不自动包含后两者）
 COPY --from=web-builder /build/apps/web/.next/standalone ./web
 COPY --from=web-builder /build/apps/web/.next/static ./web/apps/web/.next/static
