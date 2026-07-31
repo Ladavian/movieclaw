@@ -24,12 +24,12 @@ import { formatRelativeTime } from "@/lib/time";
 /**
  * 侧栏搜索入口 + 命令面板（Command Palette）。
  *
- * 全站唯一搜索入口，双模式（媒体优先）：触发器是品牌行右侧的放大镜图标按钮，
+ * 全站唯一搜索入口，三模式（媒体优先）：触发器是品牌行右侧的放大镜图标按钮，
  * 点击（或 ⌘K）弹出面板。视觉对齐 Raycast/Spotlight 的**实心深色浮层**——
  * 纯 CSS 面板（不再用 WebGL 液态玻璃：弹窗是高频工具，要的是安静、快、可读，
  * 折射效果在这里只会增加视觉噪音），结构自上而下三段：
- *   输入行   放大镜 + 关键词输入 + 「搜媒体 | 搜资源」分段（右侧，Tab 键可切）
- *   主体     搜资源模式先出一行分类 chips；下方是最近搜索（媒体/资源混排，
+ *   输入行   放大镜 + 关键词输入 + 「影视 | 资源 | 媒体库」分段（右侧，Tab 键可切）
+ *   主体     资源模式先出一行分类 chips；下方是最近搜索（媒体/资源混排，
  *            图标 + 类型徽标区分，↑↓ 可选、输入即过滤、hover 可删）
  *   页脚     左侧当前模式说明，右侧快捷键提示
  *
@@ -76,7 +76,10 @@ function readSearchPaletteState(): SearchPaletteState {
       | Partial<SearchPaletteState>
       | null;
     return {
-      mode: value?.mode === "torrent" || value?.mode === "media" ? value.mode : fallback.mode,
+      mode:
+        value?.mode === "torrent" || value?.mode === "media" || value?.mode === "library"
+          ? value.mode
+          : fallback.mode,
       tabKey:
         typeof value?.tabKey === "string" && value.tabKey.length > 0
           ? value.tabKey
@@ -264,11 +267,12 @@ function SearchPalette({
   const submit = () => {
     const kw = keyword.trim();
     if (!kw) return;
-    if (mode === "media") {
-      onSearch(kw, SCOPE_ALL, { vertical: "media" });
-    } else {
+    if (mode === "torrent") {
       const tab = visibleTabs.find((t) => tabKeyOf(t) === tabKey);
       onSearch(kw, tab ? scopeOfTab(tab) : SCOPE_ALL, { vertical: "torrent" });
+    } else {
+      // 影视/媒体库都没有分类维度，范围恒为「全部」
+      onSearch(kw, SCOPE_ALL, { vertical: mode });
     }
   };
 
@@ -300,11 +304,11 @@ function SearchPalette({
         event.preventDefault();
         onClose();
         break;
-      // Tab 在两种模式间轮换：面板是模态浮层，焦点常驻输入框，Tab 的原生
+      // Tab 在三种模式间轮换：面板是模态浮层，焦点常驻输入框，Tab 的原生
       // 焦点移动在这里没有意义，挪用作模式切换（与页脚提示文案呼应）
       case "Tab":
         event.preventDefault();
-        changeMode(mode === "media" ? "torrent" : "media");
+        changeMode(mode === "media" ? "torrent" : mode === "torrent" ? "library" : "media");
         break;
       case "ArrowDown":
         event.preventDefault();
@@ -399,9 +403,13 @@ function SearchPalette({
             placeholder={
               mode === "media"
                 ? "搜索电影、剧集… · 下次按 ⌘K / Ctrl+K 唤醒"
-                : "搜索资源或 IMDb ID… · 下次按 ⌘K / Ctrl+K 唤醒"
+                : mode === "torrent"
+                  ? "搜索资源或 IMDb ID… · 下次按 ⌘K / Ctrl+K 唤醒"
+                  : "搜索已入库的影片… · 下次按 ⌘K / Ctrl+K 唤醒"
             }
-            aria-label={mode === "media" ? "搜索影视条目" : "搜索站点资源"}
+            aria-label={
+              mode === "media" ? "搜索影视条目" : mode === "torrent" ? "搜索站点资源" : "搜索媒体库"
+            }
             // 搜索词是片名/IMDb ID，不是英文句子：iOS 的首字母大写和自动纠错
             // 会把 "tt0111161"、"Dune" 这类输入改得面目全非，全部关掉
             autoCapitalize="off"
@@ -412,7 +420,7 @@ function SearchPalette({
           <ModeSwitch mode={mode} onChange={changeMode} />
         </div>
 
-        {/* —— 分类 chips（仅搜资源；媒体搜索没有分类维度）—— */}
+        {/* —— 分类 chips（仅资源模式；影视/媒体库搜索没有分类维度）—— */}
         {mode === "torrent" && (
           <div className="flex flex-wrap gap-1.5 px-4 pb-3">
             <CategoryChip
@@ -482,7 +490,11 @@ function SearchPalette({
         {/* —— 页脚：左侧模式说明，右侧快捷键 —— */}
         <div className="flex h-10 shrink-0 items-center justify-between border-t border-white/[0.06] px-4">
           <span className="text-caption text-[var(--text-faint)]">
-            {mode === "media" ? "在豆瓣中搜索影视条目" : "跨全部已配置站点搜索种子"}
+            {mode === "media"
+              ? "在豆瓣中搜索影视条目"
+              : mode === "torrent"
+                ? "跨全部已配置站点搜索种子"
+                : "在媒体库中搜索已入库的影片"}
           </span>
           <span className="flex items-center gap-3 text-caption text-[var(--text-faint)] max-md:hidden">
             <span className="flex items-center gap-1">
@@ -506,7 +518,9 @@ function SearchPalette({
 
 /* —— 小件 —— */
 
-/** 「搜媒体 | 搜资源」分段：输入行右侧的紧凑双段开关（Raycast 的 scope 选择位）。 */
+/** 「影视 | 资源 | 媒体库」分段：输入行右侧的紧凑三段开关（Raycast 的 scope 选择位）。
+ *  命名按内容来源走（不带「搜」前缀，弹窗本身就是搜索场景）：影视 = 世界上有什么
+ *  （豆瓣条目），资源 = 去哪儿下（跨站点种子），媒体库 = 我有没有（本地已入库）。 */
 function ModeSwitch({
   mode,
   onChange,
@@ -515,8 +529,9 @@ function ModeSwitch({
   onChange: (mode: SearchVertical) => void;
 }) {
   const options: { id: SearchVertical; label: string; hint: string }[] = [
-    { id: "media", label: "搜媒体", hint: "影视条目（豆瓣）" },
-    { id: "torrent", label: "搜资源", hint: "跨站点种子搜索" },
+    { id: "media", label: "影视", hint: "影视条目（豆瓣）" },
+    { id: "torrent", label: "资源", hint: "跨站点种子搜索" },
+    { id: "library", label: "媒体库", hint: "已入库的本地影片" },
   ];
   return (
     <div
@@ -550,7 +565,7 @@ function ModeSwitch({
   );
 }
 
-/** 分类 chip（搜资源模式）：展示哪些标签、什么顺序由「设置 → 搜索」的偏好决定。 */
+/** 分类 chip（资源模式）：展示哪些标签、什么顺序由「设置 → 搜索」的偏好决定。 */
 function CategoryChip({
   label,
   active,

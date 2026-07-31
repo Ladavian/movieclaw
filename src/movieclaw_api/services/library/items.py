@@ -28,7 +28,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Literal, NamedTuple
 
-from sqlalchemy import func
+from sqlalchemy import func, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
 
@@ -270,11 +270,6 @@ async def build_library_wall(
 
     调用方需自行完成库存在性检查（404）。
     """
-    from movieclaw_api.core.config import get_settings
-    from movieclaw_db.models import MediaMetadata
-    from movieclaw_db.repositories.library_file_repo import LibraryFileRepository
-    from movieclaw_db.repositories.media_repo import MediaItemRepository
-
     page_ids = await _wall_page_ids(session, library_id, sort, limit, offset)
     if not page_ids:
         return []
@@ -288,6 +283,24 @@ async def build_library_wall(
         if limit is None
         else page_ids
     )
+    return await _aggregate_wall_views(session, library_id, in_page, page_ids)
+
+
+async def _aggregate_wall_views(
+    session: AsyncSession,
+    library_id: int,
+    in_page,
+    ordered_ids: list[int],
+) -> list[LibraryItemView]:
+    """把一批条目在某个库内的台账行聚合成海报墙视图，按 ``ordered_ids`` 排列。
+
+    海报墙分页与媒体库搜索共用这份聚合（口径必须一致：库存概况、缺集数、
+    海报的本地资产优先级）。``in_page`` 是条目 id 列表或等价子查询。
+    """
+    from movieclaw_api.core.config import get_settings
+    from movieclaw_db.models import MediaMetadata
+    from movieclaw_db.repositories.library_file_repo import LibraryFileRepository
+    from movieclaw_db.repositories.media_repo import MediaItemRepository
 
     # 只取聚合真正用得上的六列，不整行取 ORM 对象：台账行有四十来列、其中
     # 三列是 JSON（音轨/字幕/候选），整行取意味着一部三万集的库要反序列化
@@ -379,8 +392,44 @@ async def build_library_wall(
             # 缺失文件不算「待补探」：文件都不在了，探不是「还没轮到」而是「探不了」
             probe_pending_count=sum(1 for f in files if f.unprobed and f.missing_since is None),
         )
-    # 顺序以选页查询为准（排序已在 SQL 里定好），不在这里二次排序
-    return [by_id[i] for i in page_ids if i in by_id]
+    # 顺序以调用方给定的 ordered_ids 为准，不在这里二次排序
+    return [by_id[i] for i in ordered_ids if i in by_id]
+
+
+async def search_library_items(
+    session: AsyncSession, keyword: str
+) -> dict[int, list[LibraryItemView]]:
+    """按关键词搜索全部媒体库的已识别条目：library_id -> 命中条目视图。
+
+    搜索弹窗「媒体库」垂直的数据源。标题/原名子串匹配（忽略英文大小写），
+    只搜已识别入库的条目——待识别文件没有可靠的标题可匹配，去待识别清单
+    处理更合适。组内按标题拼音排序，与海报墙同一套排序规则。
+    """
+    pattern = f"%{keyword.strip().lower()}%"
+    rows = (
+        await session.execute(
+            select(LibraryFile.library_id, LibraryFile.media_item_id, MediaItem.title)
+            .join(MediaItem, MediaItem.id == LibraryFile.media_item_id)  # type: ignore[arg-type]
+            .where(
+                LibraryFile.media_item_id.is_not(None),  # type: ignore[union-attr]
+                or_(
+                    func.lower(MediaItem.title).like(pattern),
+                    func.lower(MediaItem.original_title).like(pattern),
+                ),
+            )
+            .distinct()
+        )
+    ).all()
+    matched: dict[int, list[tuple[int, str]]] = {}
+    for library_id, item_id, title in rows:
+        if item_id is not None:
+            matched.setdefault(library_id, []).append((item_id, title))
+
+    result: dict[int, list[LibraryItemView]] = {}
+    for library_id, pairs in matched.items():
+        ordered = [i for i, _ in sorted(pairs, key=lambda p: (title_sort_key(p[1]), p[0]))]
+        result[library_id] = await _aggregate_wall_views(session, library_id, ordered, ordered)
+    return result
 
 
 @dataclass

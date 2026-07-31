@@ -12,6 +12,7 @@ movieclaw 的官方命令行工具。对本产品的一切操作——搜索资�
 - llm      AI 模型供应商配置
 - logs     系统日志（tail -f 可跟随）
 - net      网络与代理（show/set/test）
+- notices   
 - people   影人档案（本地库）
 - rules    订阅过滤规则组（分辨率/制作组/体积等偏好）
 - search   站点资源搜索：search "关键词" 流式聚合出带行号的结果
