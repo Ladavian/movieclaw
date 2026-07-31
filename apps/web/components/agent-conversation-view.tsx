@@ -15,6 +15,7 @@ import {
   type AgentTurnToolCall,
   useAgentConversations,
 } from "@/lib/agent-conversations";
+import { usePageChrome } from "@/lib/page-chrome";
 import { usePageTitle } from "@/lib/use-page-title";
 
 /**
@@ -34,6 +35,15 @@ export function AgentConversationView({ conversationId }: { conversationId: stri
   const { get, open, send, stop } = useAgentConversations();
   const conversation = get(conversationId);
   usePageTitle(conversation?.title);
+  // 移动端全局顶栏：把会话标题挂上去顶替品牌字标（见 lib/page-chrome.tsx），
+  // 页面自己的标题行随之只在桌面端保留——窄屏上不再吃「顶栏 + 标题」两行高度。
+  // 标题可能先于详情就绪（侧栏最近会话已带），也会随自动命名更新，跟着值重挂即可。
+  const chrome = usePageChrome();
+  const title = conversation?.title;
+  useEffect(() => {
+    if (!chrome || !title) return;
+    return chrome.setTopBarTitle(title);
+  }, [chrome, title]);
   const [input, setInput] = useState("");
   // 服务端详情加载失败的提示（404 = 会话不存在；其余为网络/服务错误）
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -89,9 +99,11 @@ export function AgentConversationView({ conversationId }: { conversationId: stri
     // 沉浸页：内容直接铺在页面纯色底（.page-solid）上，不再包阅读面板卡片；
     // immersive-theme 在容器内切换为中性灰阶 + 系统字体的阅读配色
     <div className="immersive-theme flex h-full flex-col">
-      {/* 顶部条：只留会话标题。「生成中 / 就绪」的全局状态点已由每轮页脚的
-          进度环取代——状态属于那一轮，放在正文旁边比钉在标题上更有指向性 */}
-      <header className="flex h-14 shrink-0 items-center px-5 max-md:h-11 max-md:px-4">
+      {/* 顶部条：只留会话标题，且仅桌面端渲染——移动端标题已挂进全局顶栏
+          （见上方 setTopBarTitle），这里再画一行就是重复信息。「生成中 / 就绪」
+          的全局状态点已由每轮页脚的进度环取代——状态属于那一轮，放在正文旁边
+          比钉在标题上更有指向性 */}
+      <header className="flex h-14 shrink-0 items-center px-5 max-md:hidden">
         <h1 className="truncate text-body font-semibold tracking-[-0.01em]">
           {conversation.title}
         </h1>

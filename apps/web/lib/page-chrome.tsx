@@ -53,6 +53,14 @@ export interface PageChromeValue {
    * 在 effect 里调用并返回它的清理函数；节点要用稳定依赖构造，别在渲染期直接调。
    */
   setTopBarActions: (node: ReactNode) => () => void;
+  /**
+   * 把页面标题挂进移动端全局顶栏、顶替品牌字标的位置，返回撤销函数。
+   *
+   * 给沉浸类顶层页面（如 Agent 会话）：窄屏上字标传达不了任何新信息（用户
+   * 就在应用里），这一格让给「我在看哪个会话」远比品牌曝光有用。字标只在
+   * 没有页面认领标题时兜底显示。同样在 effect 里调用。
+   */
+  setTopBarTitle: (title: string) => () => void;
 }
 
 const PageChromeContext = createContext<PageChromeValue | null>(null);
