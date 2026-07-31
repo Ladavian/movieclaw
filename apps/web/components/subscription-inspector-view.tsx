@@ -243,7 +243,10 @@ export function SubscriptionInspectorView({ id }: { id: number }) {
           label="活动记录"
           count={activities.length}
         />
-        <span className="ml-2 text-sub text-[var(--text-faint)]">
+        {/* 解释性副文案：窄屏上它会跟两颗标签胶囊抢宽度，把「追踪明细」挤成两行
+            （iPhone 实测），而它本身只是提示、不承载数据——移动端直接不显示。
+            桌面端也补 truncate 兜底，窄窗口时截断而不是撑破这一行。 */}
+        <span className="ml-2 truncate text-sub text-[var(--text-faint)] max-md:hidden">
           {tab === "wanted" ? "每个追踪单元此刻到哪一步了" : "系统对该订阅的每个动作"}
         </span>
       </div>
@@ -315,7 +318,9 @@ function InspectorTab({
       type="button"
       aria-pressed={active}
       onClick={onClick}
-      className={`flex items-center gap-2 rounded-full px-4 py-1.5 text-ui font-medium transition-colors ${
+      /* shrink-0 + whitespace-nowrap：标签是固定宽度的控件，任何情况下都不该
+         被同行的副文案压缩换行（这正是移动端「追踪明细」折成两行的直接原因） */
+      className={`flex shrink-0 items-center gap-2 whitespace-nowrap rounded-full px-4 py-1.5 text-ui font-medium transition-colors ${
         active
           ? "bg-white/[0.14] text-white"
           : "text-[var(--text-muted)] hover:bg-white/[0.07] hover:text-[var(--text)]"
@@ -446,7 +451,9 @@ function WantedBreakdown({ wanted, isMovie }: { wanted: WantedItem[]; isMovie: b
 function WantedRow({ wanted: w, isMovie }: { wanted: WantedItem; isMovie: boolean }) {
   const { label, color, note } = wantedPresentation(w);
   return (
-    <li className="flex items-center gap-4 px-5 py-2.5">
+    /* 移动端：顶部对齐 + 更紧的间距——说明文案在窄屏允许折行（见下方 md:truncate），
+       折行后徽标要与文案首行齐平，而不是吊在两行的正中 */
+    <li className="flex items-center gap-4 px-5 py-2.5 max-md:items-start max-md:gap-3 max-md:px-4">
       <span className="tnum w-14 shrink-0 text-sub font-medium text-white/90">
         {isMovie ? "正片" : `E${String(w.episode_number).padStart(2, "0")}`}
       </span>
@@ -456,7 +463,9 @@ function WantedRow({ wanted: w, isMovie }: { wanted: WantedItem; isMovie: boolea
       >
         {label}
       </span>
-      <span className="tnum min-w-0 flex-1 truncate text-sub text-[var(--text-muted)]">
+      {/* 桌面端一行截断（列表要能快速扫读）；移动端改为折行——窄屏截断后只剩
+          半个日期（「将于 202…」），信息量归零，不如让它占两行把话说完 */}
+      <span className="tnum min-w-0 flex-1 text-sub leading-5 text-[var(--text-muted)] md:truncate">
         {note}
       </span>
       {w.search_attempts > 0 && (
@@ -476,7 +485,7 @@ function wantedPresentation(w: WantedItem): { label: string; color: string; note
     return {
       label: "已下载",
       color: "#4ade80",
-      note: `完成于 ${formatDateTime(w.downloaded_at ?? w.grabbed_at)}，等待整理入库`,
+      note: `完成于 ${formatDateTime(w.downloaded_at ?? w.grabbed_at)}，待整理入库`,
     };
   }
   if (w.status === "grabbed") {
@@ -486,12 +495,15 @@ function wantedPresentation(w: WantedItem): { label: string; color: string; note
       note: `${formatRelativeTime(w.grabbed_at)}提交给下载器`,
     };
   }
-  // status === "wanted"：按调度语义解释它此刻卡在哪
+  // status === "wanted"：按调度语义解释它此刻卡在哪。
+  // 文案刻意写短：徽标已经说清「是什么状态」，这一行只补「关键的那个时间点」。
+  // 一屏几十行同状态的追踪项，把机制解释重复几十遍纯属噪音，窄屏上还会被截断
+  // 到只剩半个日期（iPhone 实测）——机制说明留给徽标语义本身。
   if (w.next_search_at === null) {
     return {
       label: "未定档",
       color: "#9ca3af",
-      note: "播出日期未公布，暂不安排搜索；定档后自动排队",
+      note: "播出日期未公布，定档后自动排队",
     };
   }
   const due = new Date(w.next_search_at);
@@ -499,19 +511,21 @@ function wantedPresentation(w: WantedItem): { label: string; color: string; note
     return {
       label: "待播出",
       color: "#f5c451",
-      note: `${w.air_date} 播出；播出后优先靠新种子自动匹配，${formatDateTime(w.next_search_at)} 起兜底搜索`,
+      note: `${w.air_date} 播出，${formatDateTime(w.next_search_at)} 起兜底搜索`,
     };
   }
   if (due <= new Date()) {
     return {
       label: "排队搜索",
       color: "#6aa7ff",
-      note: `已列入搜索队列${w.last_search_at ? `，上次搜索 ${formatRelativeTime(w.last_search_at)}` : "，等待搜索任务执行"}`,
+      note: w.last_search_at
+        ? `上次搜索 ${formatRelativeTime(w.last_search_at)}`
+        : "等待搜索任务执行",
     };
   }
   return {
     label: "冷却中",
     color: "#6aa7ff",
-    note: `上次未找到合适资源，将于 ${formatDateTime(w.next_search_at)} 再次搜索`,
+    note: `暂无合适资源，${formatDateTime(w.next_search_at)} 再试`,
   };
 }
