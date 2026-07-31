@@ -873,6 +873,17 @@ function SourceLink({ href, label }: { href: string; label: string }) {
 }
 
 /**
+ * 季号 → 展示名（0 是特别篇，TMDB 的 specials 惯例）。整季一个文件都没有的
+ * 季标"未入库"：季选择器里元数据的季和实有的季混在一起，不标出来用户会以为
+ * 自己本地存了那么多季。原生 select 收起时显示的就是选中项的文本，所以这个
+ * 后缀在展开和收起两种状态下都看得到。
+ */
+function seasonLabel(season: number, owned: boolean): string {
+  const name = season === 0 ? "特别篇" : `第 ${season} 季`;
+  return owned ? name : `${name} · 未入库`;
+}
+
+/**
  * 剧集分集区（播放器式）：季选择器 + 分集横滚缩略图卡（剧照 + 集名，
  * 缺集置灰），点选一集在下方展开该集的简介、真实规格与物理文件——
  * 剧集的浏览心智是"看这季有哪些集、这集是什么规格"，与电影的版本切换
@@ -886,7 +897,18 @@ function SeasonEpisodesSection({
   detail: LibraryItemDetail;
 }) {
   const seasons = detail.seasons;
-  const [season, setSeason] = useState(seasons[0]);
+  // 季选择器列的是「元数据的季 ∪ 库里实有的季」，本地没有的季也在里面（看得到
+  // 缺口）。所以要单独算出哪些季真在库——口径与后端 owned_seasons 一致：台账
+  // 文件的季号集合。
+  const ownedSeasons = useMemo(
+    () => new Set(detail.files.map((f) => f.season_number)),
+    [detail.files],
+  );
+  // 默认落在第一个在库的季，而不是季号最小的那一季：只存了第 5、6 季的剧，
+  // 打开详情页就停在满屏置灰的第 1 季，第一眼像"我的片子没了"
+  const [season, setSeason] = useState(
+    () => seasons.find((s) => ownedSeasons.has(s)) ?? seasons[0],
+  );
   const [data, setData] = useState<SeasonEpisodes | null>(null);
   const [failed, setFailed] = useState(false);
   const [selected, setSelected] = useState<number | null>(null);
@@ -935,13 +957,13 @@ function SeasonEpisodesSection({
           >
             {seasons.map((s) => (
               <option key={s} value={s}>
-                {s === 0 ? "特别篇" : `第 ${s} 季`}
+                {seasonLabel(s, ownedSeasons.has(s))}
               </option>
             ))}
           </select>
         ) : (
           <span className="text-sub text-[var(--text-muted)]">
-            {season === 0 ? "特别篇" : `第 ${season} 季`}
+            {seasonLabel(season, ownedSeasons.has(season))}
           </span>
         )}
         {data && (
