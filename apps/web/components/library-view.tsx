@@ -105,10 +105,18 @@ function regionLabels(regions: string[], options: RoutingOptions): string[] {
   return parts;
 }
 
+/** 规则字段 → 界面维度名（v1 仅两个维度），用于重叠提示里点名该补哪个条件。 */
+const RULE_FIELD_LABELS: Record<string, string> = {
+  genres: "类型",
+  origin_countries: "区域",
+};
+
 /**
  * 同类型两库的收藏范围可能同时命中同一部作品、且特异性（条件条数）相同
  * ——命中顺序只能靠创建先后，给只读提示（不阻断：加一个条件即可消解）。
  * 「可能同时命中」= 两库共同声明的每个字段取值都有交集。
+ * 提示不止陈述事实，还给出具体做法：点名给创建更晚（即将吃亏）的那个库
+ * 补上它缺的维度——条件数多者优先命中，补完歧义即消。
  */
 function routingOverlapWarnings(libraries: MediaLibrary[]): string[] {
   const declared = libraries.filter((l) => l.match_rules.length > 0);
@@ -124,10 +132,19 @@ function routingOverlapWarnings(libraries: MediaLibrary[]): string[] {
         return ra.values.some((v) => rb.values.includes(v));
       });
       if (compatible) {
-        const first = (a.id ?? 0) < (b.id ?? 0) ? a : b;
+        const [first, later] = (a.id ?? 0) < (b.id ?? 0) ? [a, b] : [b, a];
+        const laterFields = new Set(later.match_rules.map((r) => r.field));
+        const missing = Object.entries(RULE_FIELD_LABELS)
+          .filter(([field]) => !laterFields.has(field))
+          .map(([, label]) => label);
+        const fix =
+          missing.length > 0
+            ? `想让「${later.name}」优先收这类作品：编辑它，补上「${missing.join("」或「")}」条件` +
+              `（用「全选」也可以）——条件多的库优先命中；想维持现状则无需改动。`
+            : `两库已声明相同的维度：错开重叠的取值即可消除歧义。`;
         warnings.push(
           `「${a.name}」与「${b.name}」的收藏范围可能同时命中同一部作品且条件数相同，` +
-            `届时优先进创建更早的「${first.name}」；给其中一个加条件可消除歧义`,
+            `届时优先进创建更早的「${first.name}」。${fix}`,
         );
       }
     }
@@ -1179,6 +1196,24 @@ export function LibraryFormDialog({
                 {/* 预设组保留为快捷键：一键选中/取消整组，避免「欧美」要点十下 */}
                 <div className="mt-2 flex flex-wrap items-center gap-1.5">
                   <span className="text-caption text-[var(--text-faint)]">快捷组合</span>
+                  {/* 全选/清空：如「纪录片库收全部区域」这类声明逐个点太费劲；
+                      全选后条件数 +1，还能顺带压过单条件区域库消除重叠歧义 */}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const all = Object.keys(routingOptions.country_names);
+                      setMatchRegions((prev) =>
+                        all.every((c) => prev.includes(c)) ? [] : [...new Set([...prev, ...all])],
+                      );
+                    }}
+                    className="glass-row nav-item !w-auto px-2.5 py-1 text-caption font-medium"
+                  >
+                    {Object.keys(routingOptions.country_names).every((c) =>
+                      matchRegions.includes(c),
+                    )
+                      ? "清空"
+                      : "全选"}
+                  </button>
                   {routingOptions.region_presets.map((preset) => {
                     const active = preset.countries.every((c) => matchRegions.includes(c));
                     return (
@@ -1206,7 +1241,21 @@ export function LibraryFormDialog({
               </div>
               <div>
                 <label className={labelClass}>类型（勾选任一即匹配）</label>
-                <div className="flex flex-wrap gap-1.5">
+                <div className="flex flex-wrap items-center gap-1.5">
+                  {/* 与区域侧同款的全选/清空快捷键（类型没有预设组，只此一个） */}
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setMatchGenres((prev) =>
+                        genreOptions.every((g) => prev.includes(g.id))
+                          ? []
+                          : [...new Set([...prev, ...genreOptions.map((g) => g.id)])],
+                      )
+                    }
+                    className="glass-row nav-item !w-auto px-2.5 py-1 text-caption font-medium"
+                  >
+                    {genreOptions.every((g) => matchGenres.includes(g.id)) ? "清空" : "全选"}
+                  </button>
                   {genreOptions.map((g) => (
                     <button
                       key={g.id}
