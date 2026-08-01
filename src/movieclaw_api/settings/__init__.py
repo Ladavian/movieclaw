@@ -20,6 +20,10 @@ BT 下载器、媒体服务器……）提供基础支撑。分层与职责：
 
 from __future__ import annotations
 
+from movieclaw_api.settings.app_server import (
+    AppServerSetting,
+    resolve_boot_port,
+)
 from movieclaw_api.settings.base import (
     SettingDescriptor,
     SettingSchema,
@@ -85,4 +89,7 @@ __all__ = [
     # 网络与代理
     "NetworkEgressSetting",
     "BUILTIN_EGRESS_SERVICES",
+    # 应用服务（端口与外部访问地址）
+    "AppServerSetting",
+    "resolve_boot_port",
 ]

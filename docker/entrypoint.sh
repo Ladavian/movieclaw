@@ -15,7 +15,10 @@ cd /app
 # 数据库迁移由后端启动时自动执行（movieclaw_db/migrations.py），无需在此处理
 
 echo "[entrypoint] 启动后端 (FastAPI, 127.0.0.1:8000)……"
-python -m movieclaw_api.main &
+# 容器内后端端口显式钉死为 8000：它是 Next 反代目标（构建时固化），
+# 绝不能被「设置 → 应用设置」里的端口改动影响；容器对外端口请改 compose 的
+# ports 映射。设置页会据此环境变量提示「端口已由容器管理」。
+APP_PORT=8000 python -m movieclaw_api.main &
 API_PID=$!
 
 echo "[entrypoint] 启动前端 (Next.js, 0.0.0.0:3000)……"
