@@ -195,7 +195,9 @@ exit 42 仅重启后端。entrypoint 解析时若 data 卷有生效模型指针�
   发布侧配置 CI 机密 `RELEASE_SIGNING_KEY` 后自动上传 `manifest.json.sig`；
   部署侧配置 `UPDATE_MANIFEST_PUBKEY`（镜像构建参数或环境变量）后强制验签。
   双方都不配置时行为不变。密钥对用 `scripts/gen-release-signing-key.sh` 生成。
-- 自动检查更新：定时任务 `check_app_update`（每日）比对应用与模型的最新
-  Release，发现新版通过「待处理事项」提醒（绝不自动安装——更新会重启服务，
-  必须由用户主动触发）；网络不可达静默跳过，不产生告警。
+- 自动检查更新：定时任务 `check_app_update`（每小时，用 ETag 条件请求——
+  304 不计 GitHub 未认证配额，无新版时几乎零成本）+ 后端启动后延迟数分钟
+  的首查（容器重启即感知新版，不等下一个周期）。发现新版通过「待处理事项」
+  提醒（绝不自动安装——更新会重启服务，必须由用户主动触发）；用户 dismiss
+  的是具体版本，再有更新版本发布会重新点亮；网络不可达静默跳过，不产生告警。
 - runtime bump CI 守卫：`.github/workflows/runtime-guard.yml`。

@@ -136,6 +136,9 @@ def build_lifespan(settings: Settings):
                 )
             )
             await get_scheduler().start()
+            # 启动后的更新首查（延迟数分钟）：容器重启后尽快感知新版，
+            # 不用等下一个小时周期；非 Docker 部署内部自动跳过
+            app_update.start_startup_check()
         else:
             logger.info("定时任务调度器已按配置关闭（SCHEDULER_ENABLED=false）")
         # 媒体库实时监控（L4）：库根路径文件事件 → 去抖 → 增量扫描；
@@ -170,6 +173,9 @@ def build_lifespan(settings: Settings):
             # 先停止 Agent，避免它在下游 HTTP 客户端和数据库开始释放后继续工作。
             await close_agent_run_registry()
             if settings.scheduler_enabled:
+                from movieclaw_api.services.app_update import close_startup_check
+
+                await close_startup_check()
                 await get_scheduler().shutdown()
             # 关闭所有站点共享客户端的连接池，再释放数据库
             await get_site_access().aclose()

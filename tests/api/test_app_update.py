@@ -430,3 +430,116 @@ def test_manifest_signature_roundtrip(monkeypatch):
             app_update._verify_manifest_signature(raw, sig_b64)
     finally:
         get_settings.cache_clear()
+
+
+# ---------------------------------------------------------------------------
+# 更新提醒提速：ETag 条件请求 / 启动首查 / dismiss 后版本变化重点亮
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_fetch_releases_uses_etag_cache(updates_dir, monkeypatch):
+    """第二次请求带 If-None-Match，304 时直接用缓存（不计 GitHub 配额）。"""
+    import httpx
+
+    calls: list[dict] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(dict(request.headers))
+        if request.headers.get("if-none-match") == 'W/"abc"':
+            return httpx.Response(304)
+        return httpx.Response(
+            200, json=[{"tag_name": "v0.2.0"}], headers={"ETag": 'W/"abc"'}
+        )
+
+    transport = httpx.MockTransport(handler)
+    real_client = httpx.AsyncClient
+
+    def patched_client(**kwargs):
+        kwargs["transport"] = transport
+        return real_client(**kwargs)
+
+    monkeypatch.setattr(app_update.httpx, "AsyncClient", patched_client)
+    app_update.reset_release_cache_for_tests()
+    try:
+        first = await app_update._fetch_releases("更新")
+        second = await app_update._fetch_releases("更新")
+    finally:
+        app_update.reset_release_cache_for_tests()
+    assert first == second == [{"tag_name": "v0.2.0"}]
+    assert "if-none-match" not in calls[0]
+    assert calls[1].get("if-none-match") == 'W/"abc"'
+
+
+@pytest.mark.asyncio
+async def test_startup_check_runs_after_delay(updates_dir, monkeypatch):
+    ran = []
+
+    async def fake_task():
+        ran.append(True)
+
+    monkeypatch.setattr(app_update, "_STARTUP_CHECK_DELAY_SECONDS", 0)
+    monkeypatch.setattr(app_update, "check_app_update_task", fake_task)
+    app_update.start_startup_check()
+    assert app_update._startup_check_task is not None
+    await app_update._startup_check_task
+    await app_update.close_startup_check()
+    assert ran == [True]
+
+
+@pytest.mark.asyncio
+async def test_startup_check_skipped_outside_docker(updates_dir, monkeypatch):
+    monkeypatch.delenv("MOVIECLAW_RUNTIME_VERSION")
+    app_update.start_startup_check()
+    assert app_update._startup_check_task is None
+
+
+class _StubResult:
+    def __init__(self, row):
+        self._row = row
+
+    def scalar_one_or_none(self):
+        return self._row
+
+
+class _StubSession:
+    def __init__(self, row):
+        self._row = row
+
+    async def execute(self, _query):
+        return _StubResult(self._row)
+
+
+class _StubNotice:
+    def __init__(self, status: str, payload: dict):
+        self.status = status
+        self.payload = payload
+
+
+@pytest.mark.asyncio
+async def test_relight_dismissed_only_on_version_change(monkeypatch):
+    from movieclaw_db.models import NoticeStatus
+
+    resolved: list[str] = []
+
+    async def fake_resolve(_session, *, dedupe_key=None, prefix=None):
+        resolved.append(dedupe_key or prefix)
+        return 1
+
+    monkeypatch.setattr(app_update, "resolve_notices", fake_resolve)
+
+    # 没有历史提醒 / dismiss 的就是当前版本：不动
+    await app_update._relight_dismissed_on_change(_StubSession(None), "k", "v", "0.3.0")
+    row_same = _StubNotice(NoticeStatus.DISMISSED.value, {"v": "0.3.0"})
+    await app_update._relight_dismissed_on_change(_StubSession(row_same), "k", "v", "0.3.0")
+    assert resolved == []
+
+    # dismiss 的是旧版本、新版本到来：清场以便重新点亮
+    row_old = _StubNotice(NoticeStatus.DISMISSED.value, {"v": "0.3.0"})
+    await app_update._relight_dismissed_on_change(_StubSession(row_old), "k", "v", "0.4.0")
+    assert resolved == ["k"]
+
+    # 活跃（未 dismiss）的提醒版本变化：upsert 自己会刷新内容，不清场
+    row_active = _StubNotice("active", {"v": "0.3.0"})
+    await app_update._relight_dismissed_on_change(_StubSession(row_active), "k", "v", "0.4.0")
+    assert resolved == ["k"]

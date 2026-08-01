@@ -25,8 +25,10 @@
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import binascii
+import contextlib
 import hashlib
 import json
 import logging
@@ -40,6 +42,7 @@ from datetime import datetime
 from pathlib import Path
 
 import httpx
+from sqlmodel import select
 
 from movieclaw_api import __version__
 from movieclaw_api.core.config import get_settings
@@ -53,7 +56,7 @@ from movieclaw_api.schemas.app_update import (
 from movieclaw_api.services.app_config import FULL_RESTART_EXIT_CODE, schedule_restart
 from movieclaw_api.services.system_notice import resolve_notices, upsert_notice
 from movieclaw_db.engine import get_database
-from movieclaw_db.models import NoticeSeverity
+from movieclaw_db.models import NoticeSeverity, NoticeStatus, SystemNotice
 from movieclaw_db.models.scheduled_task import TriggerType
 from movieclaw_scheduler import register_task
 
@@ -304,24 +307,47 @@ def _parse_manifest(raw: bytes) -> dict:
     return {"version": version, "requires_runtime": requires, "files": files, "raw": raw}
 
 
+# GitHub 条件请求缓存（ETag → 上次的 Release 列表）：命中 304 时 GitHub
+# **不计入**未认证配额（60 次/小时/IP），这是每小时轮询不挤兑同出口 IP
+# 用户配额的关键——绝大多数轮询都是 304，只有真发了新版才付一次完整请求。
+_releases_etag: str | None = None
+_releases_cached: list[dict] | None = None
+
+
+def reset_release_cache_for_tests() -> None:
+    global _releases_etag, _releases_cached
+    _releases_etag = None
+    _releases_cached = None
+
+
 async def _fetch_releases(what: str) -> list[dict]:
     """拉全部 Release 列表（应用与模型的 Release 混在同一个仓库里，
     必须列表过滤，绝不能用 /releases/latest——模型发布会把 latest 顶掉）。"""
+    global _releases_etag, _releases_cached
     settings = get_settings()
     api_url = f"{settings.update_api_base_url}/repos/{settings.update_repo}/releases?per_page=100"
     headers = {"Accept": "application/vnd.github+json", "User-Agent": "movieclaw-updater"}
+    if _releases_etag and _releases_cached is not None:
+        headers["If-None-Match"] = _releases_etag
     async with httpx.AsyncClient(
         timeout=_HTTP_TIMEOUT, follow_redirects=True, headers=headers
     ) as client:
         try:
             resp = await client.get(api_url)
+            if resp.status_code == 304 and _releases_cached is not None:
+                return _releases_cached
             resp.raise_for_status()
         except httpx.HTTPError as exc:
             raise BadRequestException(
                 f"无法连接 GitHub 检查{what}，"
                 "请确认网络可达（可配置代理或 UPDATE_API_BASE_URL 反代）"
             ) from exc
-        return resp.json()
+        releases = resp.json()
+        etag = resp.headers.get("etag")
+        if etag:
+            _releases_etag = etag
+            _releases_cached = releases
+        return releases
 
 
 _APP_TAG_RE = re.compile(r"^v\d+(?:\.\d+)*(?:[-+].*)?$")
@@ -833,14 +859,29 @@ _NOTICE_KEY_APP = "app_update:new-version"
 _NOTICE_KEY_MODEL = "app_update:new-model"
 
 
+async def _relight_dismissed_on_change(session, dedupe_key: str, field: str, value: str) -> None:
+    """用户 dismiss 的是「某个具体新版本」的提醒，不是「永远别提醒我更新」：
+    再有更新的版本发布时，把沉默的旧提醒清场，让 upsert 以新内容重新点亮。"""
+    row = (
+        await session.execute(select(SystemNotice).where(SystemNotice.dedupe_key == dedupe_key))
+    ).scalar_one_or_none()
+    if (
+        row is not None
+        and row.status == NoticeStatus.DISMISSED.value
+        and (row.payload or {}).get(field) != value
+    ):
+        await resolve_notices(session, dedupe_key=dedupe_key)
+
+
 @register_task(
     "check_app_update",
     title="检查应用更新",
-    trigger_type=TriggerType.CRON,
-    cron="30 9 * * *",
+    trigger_type=TriggerType.INTERVAL,
+    interval_seconds=3600,
     description=(
-        "每天检查 GitHub 是否发布了新版本与新的 NER 模型；发现后在待处理事项中"
-        "提醒（不会自动安装，更新入口在「设置 → 关于与更新」）。仅 Docker 部署生效。"
+        "每小时检查 GitHub 是否发布了新版本与新的 NER 模型；发现后在待处理事项中"
+        "提醒（不会自动安装，更新入口在「设置 → 关于与更新」）。检查用 ETag 条件"
+        "请求，无新版时不消耗 GitHub API 配额。仅 Docker 部署生效。"
     ),
 )
 async def check_app_update_task() -> None:
@@ -858,6 +899,9 @@ async def check_app_update_task() -> None:
     else:
         async with db.session() as session:
             if view.update_available:
+                await _relight_dismissed_on_change(
+                    session, _NOTICE_KEY_APP, "latest_version", view.latest_version
+                )
                 await upsert_notice(
                     session,
                     dedupe_key=_NOTICE_KEY_APP,
@@ -883,6 +927,9 @@ async def check_app_update_task() -> None:
     else:
         async with db.session() as session:
             if model.update_available and model.installable:
+                await _relight_dismissed_on_change(
+                    session, _NOTICE_KEY_MODEL, "latest_tag", model.latest_tag
+                )
                 await upsert_notice(
                     session,
                     dedupe_key=_NOTICE_KEY_MODEL,
@@ -897,6 +944,48 @@ async def check_app_update_task() -> None:
                 )
             else:
                 await resolve_notices(session, dedupe_key=_NOTICE_KEY_MODEL)
+
+
+# ---------------------------------------------------------------------------
+# 启动首查（lifespan 拉起）：NAS 用户重启容器/设备很常见，启动后几分钟就
+# 检查一次，不用等下一个整点周期才第一次感知到新版
+# ---------------------------------------------------------------------------
+
+_STARTUP_CHECK_DELAY_SECONDS = 180
+_startup_check_task: asyncio.Task | None = None
+
+
+def start_startup_check() -> None:
+    """排定启动后的更新首查（由 lifespan 在调度器启动后调用）。
+
+    延迟几分钟再查：把启动窗口让给迁移、扫库等更要紧的初始化，也避免
+    容器被 restart 策略反复拉起时高频打 GitHub。非 Docker 部署不排定。
+    """
+    global _startup_check_task
+    if _runtime_version() is None:
+        return
+    _startup_check_task = asyncio.get_running_loop().create_task(_startup_check())
+
+
+async def _startup_check() -> None:
+    try:
+        await asyncio.sleep(_STARTUP_CHECK_DELAY_SECONDS)
+        await check_app_update_task()
+    except asyncio.CancelledError:
+        raise
+    except Exception:
+        # 首查失败无所谓：每小时的定时任务会继续兜着
+        logger.info("启动后的更新首查未完成（定时任务会继续检查）", exc_info=True)
+
+
+async def close_startup_check() -> None:
+    """停机时取消未执行完的首查任务（lifespan 关闭阶段调用）。"""
+    global _startup_check_task
+    if _startup_check_task is not None:
+        _startup_check_task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await _startup_check_task
+        _startup_check_task = None
 
 
 # ---------------------------------------------------------------------------
