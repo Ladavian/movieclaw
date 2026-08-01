@@ -4,14 +4,17 @@
 #
 # 应用内模型更新要求模型 Release（tag 形如 torrent-ner-vN）携带 manifest.json
 # 供下载后做 sha256 强制校验。发布新模型时：
-#   ./scripts/build-model-manifest.sh <模型目录>
+#   ./scripts/build-model-manifest.sh <模型目录> [Release tag]
 # 会在模型目录里生成 manifest.json，与三个模型文件一起上传为 Release assets。
+# 建议始终带上 Release tag（如 torrent-ner-v2）：清单会声明自己属于哪个
+# tag，后端安装时强校验一致性——开启签名后可防「旧签名清单重放成新版本」。
 # =============================================================================
 set -euo pipefail
 
-MODEL_DIR="${1:?用法：build-model-manifest.sh <含 model.int8.onnx/tokenizer.json/labels.json 的目录>}"
+MODEL_DIR="${1:?用法：build-model-manifest.sh <含 model.int8.onnx/tokenizer.json/labels.json 的目录> [Release tag]}"
+MODEL_TAG="${2:-}"
 
-MODEL_DIR="$MODEL_DIR" python3 - <<'PY'
+MODEL_DIR="$MODEL_DIR" MODEL_TAG="$MODEL_TAG" python3 - <<'PY'
 import hashlib
 import json
 import os
@@ -29,6 +32,8 @@ for name in ("model.int8.onnx", "tokenizer.json", "labels.json"):
         "size": path.stat().st_size,
     }
 manifest = {"schema": 1, "files": files}
+if os.environ.get("MODEL_TAG"):
+    manifest["tag"] = os.environ["MODEL_TAG"]
 out = model_dir / "manifest.json"
 out.write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 print(f"已生成 {out}")

@@ -87,8 +87,10 @@ RUN mkdir -p /model \
     && curl -fSL --retry 3 -O "$NER_MODEL_BASE/model.int8.onnx" \
     && curl -fSL --retry 3 -O "$NER_MODEL_BASE/tokenizer.json" \
     && curl -fSL --retry 3 -O "$NER_MODEL_BASE/labels.json" \
-    # 记录内置模型的 Release tag（URL 末段），应用内模型更新据此比对版本
-    && echo "${NER_MODEL_BASE##*/}" > /model/.release-tag
+    # 记录内置模型的 Release tag（URL 末段；先去尾斜杠，防加速镜像地址
+    # 以 / 结尾时写入空 tag），应用内模型更新据此比对版本
+    && NER_BASE_TRIMMED="${NER_MODEL_BASE%/}" \
+    && echo "${NER_BASE_TRIMMED##*/}" > /model/.release-tag
 
 # ---------------------------------------------------------------------------
 # 阶段 4：目标架构的 node 二进制来源

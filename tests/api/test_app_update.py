@@ -80,10 +80,36 @@ def _make_manifest(download_dir: Path, version: str = "0.2.0") -> dict:
 # ---------------------------------------------------------------------------
 
 
-def test_version_key_ordering():
-    assert app_update._version_key("0.10.0") > app_update._version_key("0.9.9")
-    assert app_update._version_key("1.0.0") > app_update._version_key("0.99.0")
-    assert app_update._version_key("0.2.0") == app_update._version_key("0.2.0")
+def test_is_newer_semver_ordering():
+    assert app_update._is_newer("0.10.0", "0.9.9")
+    assert app_update._is_newer("1.0.0", "0.99.0")
+    assert not app_update._is_newer("0.2.0", "0.2.0")
+    # 主段长度对齐：1.2 与 1.2.0 等价
+    assert not app_update._is_newer("1.2", "1.2.0")
+    # 预发布比同主段正式版旧（semver 语义）
+    assert app_update._is_newer("0.2.0", "0.2.0-beta.1")
+    assert not app_update._is_newer("0.2.0-beta.1", "0.2.0")
+    assert app_update._is_newer("0.2.1-beta", "0.2.0")
+
+
+def test_is_newer_never_raises_on_weird_versions():
+    # 混合数字/非数字段、完全不规范的版本号：退化为「不相等即更新」，绝不抛异常
+    assert app_update._is_newer("0.2.x", "0.2.0")
+    assert app_update._is_newer("0.2.0-beta.1", "0.2.0-1") in (True, False)
+    assert not app_update._is_newer("garbage", "garbage")
+
+
+def test_latest_app_release_filters_model_and_prerelease():
+    releases = [
+        {"tag_name": "torrent-ner-v2"},  # 模型发布：绝不能被当成应用 latest
+        {"tag_name": "v0.3.0-rc1", "prerelease": True},
+        {"tag_name": "v0.2.5", "draft": True},
+        {"tag_name": "v0.2.0"},
+        {"tag_name": "v0.10.0"},
+        {"tag_name": "v0.3.0"},
+    ]
+    assert app_update._latest_app_release(releases)["tag_name"] == "v0.10.0"
+    assert app_update._latest_app_release([{"tag_name": "torrent-ner-v9"}]) is None
 
 
 # ---------------------------------------------------------------------------
@@ -115,9 +141,15 @@ def test_apply_switches_current_and_prunes(updates_dir, tmp_path):
 
 
 def test_apply_clears_bad_markers_and_backs_up_db(updates_dir, tmp_path):
-    # 数据库文件存在 → 切换前自动备份
+    import sqlite3
+
+    # 真实的 SQLite 库（备份走 sqlite3 backup API，假文件会被正确拒绝）
     db = Path(get_settings().database_url.split(":///", 1)[1])
-    db.write_bytes(b"sqlite-data")
+    conn = sqlite3.connect(db)
+    conn.execute("CREATE TABLE t (v TEXT)")
+    conn.execute("INSERT INTO t VALUES ('data-1')")
+    conn.commit()
+    conn.close()
     state = updates_dir / "state"
     state.mkdir(parents=True)
     (state / "bad-0.2.0").touch()
@@ -130,7 +162,34 @@ def test_apply_clears_bad_markers_and_backs_up_db(updates_dir, tmp_path):
     assert not (state / "failures-0.2.0").exists()
     backups = list((updates_dir / "backup").glob("movieclaw-*.db"))
     assert len(backups) == 1
-    assert backups[0].read_bytes() == b"sqlite-data"
+    # 备份是可打开的完整数据库，数据在
+    check = sqlite3.connect(backups[0])
+    assert check.execute("SELECT v FROM t").fetchall() == [("data-1",)]
+    check.close()
+
+
+def test_apply_aborts_when_db_backup_fails(updates_dir, tmp_path):
+    # 数据库文件损坏（非 SQLite 格式）→ 备份失败必须中止更新，不切换版本
+    db = Path(get_settings().database_url.split(":///", 1)[1])
+    db.write_bytes(b"not-a-sqlite-file")
+    manifest = _make_manifest(tmp_path / "dl", "0.2.0")
+    with pytest.raises(RuntimeError, match="备份失败"):
+        app_update._apply_downloaded(manifest, tmp_path / "dl")
+    assert not (updates_dir / "current").exists()
+
+
+def test_apply_prune_keeps_running_version(updates_dir, tmp_path, monkeypatch):
+    """current 指向已标 bad 的 vB、实际运行 previous 的 vA 时更新 vC：
+    previous 必须指向真正在运行的 vA（而非 bad 的 vB），vA 不能被清理。"""
+    app_update._apply_downloaded(_make_manifest(tmp_path / "d1", "0.2.0"), tmp_path / "d1")
+    app_update._apply_downloaded(_make_manifest(tmp_path / "d2", "0.3.0"), tmp_path / "d2")
+    # 模拟 entrypoint 因 v0.3.0 坏而回落运行 v0.2.0
+    monkeypatch.setenv("MOVIECLAW_OVERLAY_VERSION", "0.2.0")
+
+    app_update._apply_downloaded(_make_manifest(tmp_path / "d3", "0.4.0"), tmp_path / "d3")
+    assert Path(updates_dir / "current").resolve().name == "v0.4.0"
+    assert Path(updates_dir / "previous").resolve().name == "v0.2.0"
+    assert (updates_dir / "versions" / "v0.2.0").exists()
 
 
 def test_apply_rejects_bad_checksum(updates_dir, tmp_path):
@@ -182,8 +241,12 @@ def test_rollback_swaps_current_and_previous(updates_dir, tmp_path, no_restart):
     assert Path(updates_dir / "current").resolve().name == "v0.2.0"
     assert Path(updates_dir / "previous").resolve().name == "v0.3.0"
     assert no_restart == [app_update.FULL_RESTART_EXIT_CODE]
+    # 回退后处于 restarting 占位（重启窗口内拒绝并发操作）
+    with pytest.raises(BadRequestException, match="正在进行中"):
+        app_update.rollback()
 
-    # 再次回退 = 撤销回退，切回新版
+    # 再次回退 = 撤销回退，切回新版（真实场景中重启后进度自然复位）
+    app_update.reset_progress_for_tests()
     app_update.rollback()
     assert Path(updates_dir / "current").resolve().name == "v0.3.0"
 

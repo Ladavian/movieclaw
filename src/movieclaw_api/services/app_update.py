@@ -12,10 +12,12 @@
 安全设计：
 - 更新从不覆盖镜像内文件，只在 data 卷的 updates/ 目录落盘并切换指针，
   任何一步失败都不影响正在运行的版本（详见 entrypoint 的解析与兜底）；
-- sha256 校验是强制项：用户可能走第三方加速镜像下载，被篡改的产物过不了
-  与 GitHub 官方 manifest 的比对；
+- sha256 校验是强制项，其信任锚点是 manifest：未配置签名公钥时 manifest
+  固定直连 GitHub（只有大文件走加速镜像），恶意镜像无法自洽伪造；
+  配置 UPDATE_MANIFEST_PUBKEY 后 manifest 强制验签，此时可整体走镜像；
 - 解包用 tarfile 的 data 过滤器，杜绝路径穿越；
-- 切换前自动备份 SQLite（迁移是单向的，回退跨版本时可从备份恢复）。
+- 切换前用 sqlite3 backup API 在线备份数据库（WAL 下直接拷文件会丢
+  未 checkpoint 的事务；迁移是单向的，回退跨版本时靠备份恢复数据）。
 
 只有 Docker entrypoint 环境才支持应用内更新（据 MOVIECLAW_RUNTIME_VERSION
 环境变量判定）：源码部署的用户直接 git pull 即可，无需这套机制。
@@ -85,9 +87,34 @@ def _sanitize(version: str) -> str:
     return re.sub(r"[^A-Za-z0-9._-]", "_", version)
 
 
-def _version_key(version: str) -> tuple:
-    """版本比较键：数字段按整数比，非数字段按字符串比（足以覆盖 x.y.z）。"""
-    return tuple(int(p) if p.isdigit() else p for p in re.split(r"[.\-+]", version))
+_VERSION_RE = re.compile(r"^(\d+(?:\.\d+)*)(?:-([0-9A-Za-z.\-]+))?(?:\+.*)?$")
+
+
+def _is_newer(candidate: str, current: str) -> bool:
+    """candidate 是否比 current 新（semver 语义的够用子集）。
+
+    规则：数字主段逐段比较；带预发布段（-beta.1 等）的版本比同主段的正式版
+    旧；两个预发布段按字符串比较。任何一侧无法解析时退化为「不相等即视为
+    更新」——绝不抛异常（版本命名不规范不能把检查更新整个打挂）。
+    """
+
+    def parse(text: str) -> tuple[tuple[int, ...], tuple[int, str]] | None:
+        match = _VERSION_RE.match(text.strip())
+        if match is None:
+            return None
+        nums = tuple(int(p) for p in match.group(1).split("."))
+        pre = match.group(2)
+        # 正式版排在同主段的预发布之后：(1, "") > (0, "beta.1")
+        return nums, ((0, pre) if pre else (1, ""))
+
+    a, b = parse(candidate), parse(current)
+    if a is None or b is None:
+        return candidate.strip() != current.strip()
+    # 主段长度对齐（1.2 与 1.2.0 等价）
+    width = max(len(a[0]), len(b[0]))
+    a_nums = a[0] + (0,) * (width - len(a[0]))
+    b_nums = b[0] + (0,) * (width - len(b[0]))
+    return (a_nums, a[1]) > (b_nums, b[1])
 
 
 # ---------------------------------------------------------------------------
@@ -215,7 +242,14 @@ def _verify_manifest_signature(raw: bytes, sig_text: bytes) -> None:
 
 
 async def _download_manifest_bytes(client: httpx.AsyncClient, release: dict) -> bytes:
-    """下载 Release 的更新清单；配置了签名公钥时强制验签后才返回。"""
+    """下载 Release 的更新清单；配置了签名公钥时强制验签后才返回。
+
+    信任模型：清单是产物 sha256 的信任锚点，若也走第三方加速镜像下载，
+    恶意镜像可同时伪造清单与产物、sha256 自洽通过。因此**未配置签名公钥时
+    清单固定直连 GitHub**（体积小，直连通常可行），只有大文件走镜像；
+    配置了公钥后签名接管防篡改，清单也允许走镜像加速。
+    """
+    signed = bool(get_settings().update_manifest_pubkey.strip())
     manifest_asset = next(
         (a for a in release.get("assets", []) if a.get("name") == _MANIFEST_NAME), None
     )
@@ -224,13 +258,20 @@ async def _download_manifest_bytes(client: httpx.AsyncClient, release: dict) -> 
             f"发布（{release.get('tag_name', '?')}）没有携带更新清单，"
             "可能是旧版发布或发布流程未完成，暂无法应用内更新"
         )
-    try:
-        resp = await client.get(_mirror_url(manifest_asset["browser_download_url"]))
+
+    async def fetch(url: str) -> bytes:
+        resp = await client.get(_mirror_url(url) if signed else url)
         resp.raise_for_status()
+        return resp.content
+
+    try:
+        raw = await fetch(manifest_asset["browser_download_url"])
     except httpx.HTTPError as exc:
-        raise BadRequestException("下载更新清单失败，请稍后重试") from exc
-    raw = resp.content
-    if get_settings().update_manifest_pubkey.strip():
+        raise BadRequestException(
+            "下载更新清单失败。为防篡改，未配置签名公钥时清单固定直连 GitHub 获取——"
+            "直连不可达时可配置代理，或配置 UPDATE_MANIFEST_PUBKEY 签名校验后走加速镜像"
+        ) from exc
+    if signed:
         sig_asset = next(
             (a for a in release.get("assets", []) if a.get("name") == _SIGNATURE_NAME), None
         )
@@ -240,11 +281,10 @@ async def _download_manifest_bytes(client: httpx.AsyncClient, release: dict) -> 
                 f"缺少 {_SIGNATURE_NAME}，已放弃本次更新"
             )
         try:
-            sig_resp = await client.get(_mirror_url(sig_asset["browser_download_url"]))
-            sig_resp.raise_for_status()
+            sig_raw = await fetch(sig_asset["browser_download_url"])
         except httpx.HTTPError as exc:
             raise BadRequestException("下载更新清单签名失败，请稍后重试") from exc
-        _verify_manifest_signature(raw, sig_resp.content)
+        _verify_manifest_signature(raw, sig_raw)
     return raw
 
 
@@ -264,10 +304,11 @@ def _parse_manifest(raw: bytes) -> dict:
     return {"version": version, "requires_runtime": requires, "files": files, "raw": raw}
 
 
-async def _fetch_latest_release() -> tuple[dict, dict]:
-    """取最新 Release 与其 manifest。返回 (release_json, manifest_dict)。"""
+async def _fetch_releases(what: str) -> list[dict]:
+    """拉全部 Release 列表（应用与模型的 Release 混在同一个仓库里，
+    必须列表过滤，绝不能用 /releases/latest——模型发布会把 latest 顶掉）。"""
     settings = get_settings()
-    api_url = f"{settings.update_api_base_url}/repos/{settings.update_repo}/releases/latest"
+    api_url = f"{settings.update_api_base_url}/repos/{settings.update_repo}/releases?per_page=100"
     headers = {"Accept": "application/vnd.github+json", "User-Agent": "movieclaw-updater"}
     async with httpx.AsyncClient(
         timeout=_HTTP_TIMEOUT, follow_redirects=True, headers=headers
@@ -277,11 +318,42 @@ async def _fetch_latest_release() -> tuple[dict, dict]:
             resp.raise_for_status()
         except httpx.HTTPError as exc:
             raise BadRequestException(
-                "无法连接 GitHub 检查更新，请确认网络可达（可配置代理或 UPDATE_API_BASE_URL 反代）"
+                f"无法连接 GitHub 检查{what}，"
+                "请确认网络可达（可配置代理或 UPDATE_API_BASE_URL 反代）"
             ) from exc
-        release = resp.json()
+        return resp.json()
+
+
+_APP_TAG_RE = re.compile(r"^v\d+(?:\.\d+)*(?:[-+].*)?$")
+
+
+def _latest_app_release(releases: list[dict]) -> dict | None:
+    """从 Release 列表挑出版本号最大的应用发布（tag 形如 vX.Y.Z；
+    跳过草稿/预发布，也天然跳过模型发布的 torrent-ner-vN）。"""
+    latest: dict | None = None
+    for release in releases:
+        tag = release.get("tag_name") or ""
+        if release.get("draft") or release.get("prerelease"):
+            continue
+        if not _APP_TAG_RE.match(tag):
+            continue
+        if latest is None or _is_newer(tag[1:], (latest.get("tag_name") or "v")[1:]):
+            latest = release
+    return latest
+
+
+async def _fetch_latest_release() -> tuple[dict, dict]:
+    """取最新应用 Release 与其 manifest。返回 (release_json, manifest_dict)。"""
+    releases = await _fetch_releases("更新")
+    release = _latest_app_release(releases)
+    if release is None:
+        raise BadRequestException("未找到任何应用发布（vX.Y.Z 的 Release），暂无可用更新")
+    headers = {"Accept": "application/vnd.github+json", "User-Agent": "movieclaw-updater"}
+    async with httpx.AsyncClient(
+        timeout=_HTTP_TIMEOUT, follow_redirects=True, headers=headers
+    ) as client:
         raw = await _download_manifest_bytes(client, release)
-        return release, _parse_manifest(raw)
+    return release, _parse_manifest(raw)
 
 
 async def check_update() -> UpdateCheckView:
@@ -291,7 +363,7 @@ async def check_update() -> UpdateCheckView:
     return UpdateCheckView(
         current_version=__version__,
         latest_version=latest,
-        update_available=_version_key(latest) > _version_key(__version__),
+        update_available=_is_newer(latest, __version__),
         compatible=runtime is not None and manifest["requires_runtime"] == runtime,
         requires_runtime=manifest["requires_runtime"],
         changelog=release.get("body") or "",
@@ -346,7 +418,14 @@ def _validate_layout(version_dir: Path) -> None:
 
 def _backup_database(updates: Path) -> None:
     """切换版本前备份 SQLite（非 SQLite 部署跳过）。迁移单向，备份是回退跨
-    版本时恢复数据的唯一通道。"""
+    版本时恢复数据的唯一通道。
+
+    必须用 sqlite3 的 backup API 而不是拷文件：数据库开着 WAL，已提交但
+    未 checkpoint 的事务都在 -wal 文件里，直接拷主文件必然丢这部分数据，
+    撞上 checkpoint 还可能拷出损坏文件。备份失败视为致命，中止本次更新。
+    """
+    import sqlite3
+
     url = get_settings().database_url
     if "sqlite" not in url or ":///" not in url:
         logger.info("当前数据库不是 SQLite，跳过更新前自动备份")
@@ -358,7 +437,21 @@ def _backup_database(updates: Path) -> None:
     backup_dir.mkdir(parents=True, exist_ok=True)
     stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
     target = backup_dir / f"movieclaw-v{_sanitize(__version__)}-{stamp}.db"
-    shutil.copy2(db_path, target)
+    try:
+        src = sqlite3.connect(db_path)
+        try:
+            dst = sqlite3.connect(target)
+            try:
+                src.backup(dst)
+            finally:
+                dst.close()
+        finally:
+            src.close()
+    except sqlite3.Error as exc:
+        target.unlink(missing_ok=True)
+        raise RuntimeError(
+            f"更新前的数据库自动备份失败（{exc}），为保护数据已中止本次更新"
+        ) from exc
     logger.info("已在更新前备份数据库：%s", target)
     backups = sorted(backup_dir.glob("movieclaw-*.db"), key=lambda p: p.stat().st_mtime)
     for old in backups[:-_BACKUP_KEEP]:
@@ -394,19 +487,34 @@ def _apply_downloaded(manifest: dict, download_dir: Path) -> None:
 
     _backup_database(updates)
 
-    # 落定版本目录后原子切换指针：previous ← 现 current，current ← 新版本
+    # 落定版本目录后原子切换指针：previous ← **实际运行中的版本**，current ← 新版本。
+    # 不能简单取 readlink(current)：current 可能指向一个已被标 bad、实际并未在
+    # 运行的版本（entrypoint 回落了 previous），把它记成 previous 会让「回退」
+    # 名存实亡，还会把真正在运行的目录当垃圾清掉。
     shutil.rmtree(final_dir, ignore_errors=True)
     os.replace(partial_dir, final_dir)
     current = updates / "current"
-    if current.is_symlink():
-        _atomic_symlink(Path(os.readlink(current)), updates / "previous")
+    prev_target: Path | None = None
+    running = os.environ.get("MOVIECLAW_OVERLAY_VERSION")
+    if running:
+        running_dir = versions_dir / f"v{_sanitize(running)}"
+        if running_dir.is_dir() and running_dir.name != final_dir.name:
+            prev_target = running_dir
+    if prev_target is None and current.is_symlink():
+        cur_target = Path(os.readlink(current))
+        if cur_target.name != final_dir.name:
+            prev_target = cur_target
+    if prev_target is not None:
+        _atomic_symlink(prev_target, updates / "previous")
     _atomic_symlink(final_dir, current)
 
-    # 只保留 current/previous 引用的版本目录，更早的清掉（磁盘不无限增长）
+    # 只保留 current/previous 引用与运行中的版本目录，更早的清掉（磁盘不无限增长）
     referenced = set()
     for link in (current, updates / "previous"):
         if link.is_symlink():
             referenced.add(Path(os.readlink(link)).name)
+    if running:
+        referenced.add(f"v{_sanitize(running)}")
     for vdir in versions_dir.iterdir():
         if vdir.is_dir() and vdir.name not in referenced:
             shutil.rmtree(vdir, ignore_errors=True)
@@ -487,7 +595,7 @@ async def start_update() -> UpdateProgressView:
     _progress.set("checking", "正在获取最新版本信息……", target_version=None)
     try:
         _release, manifest = await _fetch_latest_release()
-        if _version_key(manifest["version"]) <= _version_key(__version__):
+        if not _is_newer(manifest["version"], __version__):
             raise BadRequestException(f"当前已是最新版本（v{__version__}），无需更新")
         if manifest["requires_runtime"] != _runtime_version():
             raise BadRequestException(
@@ -556,25 +664,11 @@ def _parse_model_manifest(raw: bytes) -> dict:
         raise BadRequestException(
             "模型更新清单（manifest.json）格式异常，请稍后重试或反馈问题"
         ) from exc
-    return {"files": files, "raw": raw}
+    return {"files": files, "raw": raw, "tag": manifest.get("tag") or ""}
 
 
 async def _fetch_latest_model_release() -> dict:
-    settings = get_settings()
-    api_url = f"{settings.update_api_base_url}/repos/{settings.update_repo}/releases?per_page=100"
-    headers = {"Accept": "application/vnd.github+json", "User-Agent": "movieclaw-updater"}
-    async with httpx.AsyncClient(
-        timeout=_HTTP_TIMEOUT, follow_redirects=True, headers=headers
-    ) as client:
-        try:
-            resp = await client.get(api_url)
-            resp.raise_for_status()
-        except httpx.HTTPError as exc:
-            raise BadRequestException(
-                "无法连接 GitHub 检查模型更新，"
-                "请确认网络可达（可配置代理或 UPDATE_API_BASE_URL 反代）"
-            ) from exc
-    release = _latest_model_release(resp.json())
+    release = _latest_model_release(await _fetch_releases("模型更新"))
     if release is None:
         raise BadRequestException("未找到任何模型发布（torrent-ner-v* 的 Release）")
     return release
@@ -665,10 +759,13 @@ def _download_and_apply_model(release: dict, manifest: dict) -> None:
         shutil.rmtree(tmp_dir, ignore_errors=True)
         _progress.set(
             "restarting",
-            f"模型 {tag} 安装完成，正在重启后端生效（页面无需刷新）……",
+            f"模型 {tag} 安装完成，正在重启应用生效……",
             target_version=tag,
         )
-        schedule_restart()  # 42：只重启后端，前端不中断
+        # 必须走 43 全量重启：MOVIECLAW_NER_DIR 是 entrypoint 解析模型指针后
+        # 导出的**具体版本目录**路径，只有重新走一遍 resolve 才会指向新模型；
+        # 42 只拉起后端、不重解析，新模型不会生效（旧目录还已被清理）。
+        schedule_restart(FULL_RESTART_EXIT_CODE)
     except httpx.HTTPError as exc:
         logger.warning("模型更新下载失败：%s", exc)
         _progress.set(
@@ -708,6 +805,13 @@ async def start_model_update() -> UpdateProgressView:
         ) as client:
             raw = await _download_manifest_bytes(client, release)
         manifest = _parse_model_manifest(raw)
+        # 清单声明了 tag 时必须与 Release tag 一致：开启验签后这一致性把
+        # 「用旧签名清单重放成新版本」的路径也堵死（清单未声明 tag 时跳过，
+        # 兼容早期模型发布）
+        if manifest.get("tag") and manifest["tag"] != tag:
+            raise BadRequestException(
+                f"模型发布 {tag} 的更新清单声明的是 {manifest['tag']}，内容不匹配，已放弃安装"
+            )
     except BaseException:
         _progress.set("idle", target_version=None)
         raise
@@ -747,7 +851,9 @@ async def check_app_update_task() -> None:
     # 网络不可达按「下轮再试」处理，不产生告警（避免离线环境天天报错）
     try:
         view = await check_update()
-    except BadRequestException as exc:
+    except Exception as exc:
+        # 兜住一切异常（含 GitHub 返回异常结构导致的解析错误）：
+        # 定时检查失败只记日志、下轮再试，绝不让任务本身报故障打扰用户
         logger.info("定时检查应用更新未完成：%s", exc)
     else:
         async with db.session() as session:
@@ -772,7 +878,7 @@ async def check_app_update_task() -> None:
                 await resolve_notices(session, dedupe_key=_NOTICE_KEY_APP)
     try:
         model = await check_model_update()
-    except BadRequestException as exc:
+    except Exception as exc:
         logger.info("定时检查模型更新未完成：%s", exc)
     else:
         async with db.session() as session:
@@ -785,7 +891,7 @@ async def check_app_update_task() -> None:
                     title=f"发现新的识别模型 {model.latest_tag}",
                     message=(
                         f"种子名识别（NER）模型 {model.latest_tag} 已发布。"
-                        "到「设置 → 关于与更新」更新即可，仅重启后端、页面不中断。"
+                        "到「设置 → 关于与更新」一键更新即可（更新后应用会自动重启）。"
                     ),
                     payload={"latest_tag": model.latest_tag},
                 )
@@ -808,6 +914,11 @@ def rollback() -> str:
     updates = _updates_dir()
     current = updates / "current"
     previous = updates / "previous"
+    if current.exists() and not current.is_symlink():
+        raise BadRequestException(
+            "updates/current 不是符号链接（可能被手工改动过），"
+            "请删除 data/updates/current 后重启容器回到镜像内置版本"
+        )
     if previous.is_symlink() and (previous / _MANIFEST_NAME).is_file():
         prev_target = Path(os.readlink(previous))
         if current.is_symlink():
@@ -824,5 +935,8 @@ def rollback() -> str:
     else:
         raise BadRequestException("当前运行的就是镜像内置版本，没有可回退的目标")
     logger.info("应用回退：%s", message)
+    # 占住 busy 态：重启前的窗口（响应缓冲 + 优雅停机最长约 11 秒）内
+    # 拒绝并发的更新/再回退请求，与更新线程置 restarting 的做法对称
+    _progress.set("restarting", "正在回退并重启应用……", target_version=None)
     schedule_restart(FULL_RESTART_EXIT_CODE)
     return message

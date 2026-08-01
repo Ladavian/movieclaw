@@ -47,6 +47,11 @@ export function AppUpdateSection() {
   const [restartWait, setRestartWait] = useState<RestartWait>("idle");
   const [confirmRollback, setConfirmRollback] = useState(false);
   const pollTimer = useRef<ReturnType<typeof setInterval> | null>(null);
+  // 组件已卸载标记：waitForRestart 的长循环不能在用户离开设置页后还整页刷新
+  const unmounted = useRef(false);
+  // 进度轮询的连续失败计数：单次瞬时错误（反代 502、网络抖动）绝不能被
+  // 误判成「后端已进入重启」——那会提前刷新页面并永久丢失更新跟踪
+  const pollFailStreak = useRef(0);
 
   const reload = useCallback(() => {
     setFailed(false);
@@ -55,49 +60,86 @@ export function AppUpdateSection() {
       .catch(() => setFailed(true));
   }, []);
 
-  useEffect(() => {
-    reload();
-    return () => {
-      if (pollTimer.current) clearInterval(pollTimer.current);
-    };
-  }, [reload]);
-
-  /** 全量重启的等待：前后端都会退出，稍等后轮询 /health，恢复即整页刷新。 */
+  /** 全量重启的等待：先观察到服务不可达（sawDown）、再观察到恢复才算完成
+   *  一次真实重启——否则可能命中「还没退出的旧进程」提前刷新，刷新后再无
+   *  任何轮询跟踪，页面在真正重启时静默失联。 */
   const waitForRestart = useCallback(async () => {
+    if (unmounted.current) return;
     setRestartWait("waiting");
-    await new Promise((r) => setTimeout(r, 5000));
-    for (let i = 0; i < 60; i++) {
+    let sawDown = false;
+    for (let i = 0; i < 90; i++) {
+      if (unmounted.current) return;
       try {
         await getHealth();
-        window.location.reload();
-        return;
+        // 恢复成立的两种情况：见过一次不可达（真实重启完成）；或等了足够久
+        // 都没见到不可达（重启在两次探测间隙内完成，30 次 ≈ 60 秒后放行）
+        if (sawDown || i >= 30) {
+          window.location.reload();
+          return;
+        }
       } catch {
-        await new Promise((r) => setTimeout(r, 2000));
+        sawDown = true;
       }
+      await new Promise((r) => setTimeout(r, 2000));
     }
-    setRestartWait("timeout");
+    if (!unmounted.current) setRestartWait("timeout");
   }, []);
 
   /** 更新执行中：轮询进度直到失败或进入重启阶段。 */
   const pollProgress = useCallback(() => {
     if (pollTimer.current) clearInterval(pollTimer.current);
+    pollFailStreak.current = 0;
     pollTimer.current = setInterval(async () => {
       try {
         const p = await getUpdateProgress();
+        pollFailStreak.current = 0;
         setProgress(p);
         if (p.phase === "failed") {
           if (pollTimer.current) clearInterval(pollTimer.current);
         } else if (p.phase === "restarting") {
           if (pollTimer.current) clearInterval(pollTimer.current);
           void waitForRestart();
+        } else if (p.phase === "idle") {
+          // 活跃阶段之后读到 idle = 后端已重启完毕（新进程进度是空的）：
+          // 更新已生效，直接刷新页面载入新版
+          if (pollTimer.current) clearInterval(pollTimer.current);
+          window.location.reload();
         }
       } catch {
-        // 后端可能已进入重启：转入健康轮询
-        if (pollTimer.current) clearInterval(pollTimer.current);
-        void waitForRestart();
+        // 连续 3 次失败才认定「后端进入重启」，单次瞬时错误继续轮询
+        pollFailStreak.current += 1;
+        if (pollFailStreak.current >= 3) {
+          if (pollTimer.current) clearInterval(pollTimer.current);
+          void waitForRestart();
+        }
       }
     }, 1000);
   }, [waitForRestart]);
+
+  useEffect(() => {
+    unmounted.current = false;
+    reload();
+    // 恢复进行中的更新跟踪：页面刷新/中途进入设置页时，后台线程可能正在
+    // 下载安装（进度在后端单例里）。不恢复的话 UI 会显示空闲、按钮可点，
+    // 全量重启来临时页面毫无预警地失联。
+    getUpdateProgress()
+      .then((p) => {
+        if (["checking", "downloading", "verifying", "applying"].includes(p.phase)) {
+          setProgress(p);
+          pollProgress();
+        } else if (p.phase === "restarting") {
+          setProgress(p);
+          void waitForRestart();
+        } else if (p.phase === "failed" && p.error) {
+          setProgress(p);
+        }
+      })
+      .catch(() => undefined);
+    return () => {
+      unmounted.current = true;
+      if (pollTimer.current) clearInterval(pollTimer.current);
+    };
+  }, [reload, pollProgress, waitForRestart]);
 
   const doCheck = async () => {
     setChecking(true);
@@ -234,6 +276,17 @@ export function AppUpdateSection() {
         </div>
       </section>
 
+      {/* 上一次更新（应用或模型）异步失败的统一外显：失败可能发生在任一区
+          发起的后台任务里，放在共享位置避免归属混乱 */}
+      {progress?.phase === "failed" && progress.error && (
+        <div className="css-glass !rounded-2xl px-5 py-3.5">
+          <p className="text-sub text-red-300">
+            上次更新{progress.target_version ? `（${progress.target_version}）` : ""}失败：
+            {progress.error}
+          </p>
+        </div>
+      )}
+
       {/* —— 更新 —— */}
       <section>
         <h3 className="group-label mb-2.5 px-1">更新</h3>
@@ -307,15 +360,12 @@ export function AppUpdateSection() {
                 </div>
               )}
               {actionError && <p className="text-sub text-red-300">{actionError}</p>}
-              {progress?.phase === "failed" && progress.error && (
-                <p className="text-sub text-red-300">更新失败：{progress.error}</p>
-              )}
             </div>
           )}
         </div>
       </section>
 
-      {/* —— NER 模型 ——（独立于代码更新，更新只重启后端、页面不中断） */}
+      {/* —— NER 模型 ——（独立于代码更新；生效需重新解析模型指针，走全量重启） */}
       {status.can_update && (
         <section>
           <h3 className="group-label mb-2.5 px-1">NER 识别模型</h3>
@@ -326,7 +376,7 @@ export function AppUpdateSection() {
                   当前模型：{status.model_tag ?? "无法识别（较早的镜像）"}
                 </p>
                 <p className="mt-0.5 text-sub text-[var(--text-muted)]">
-                  种子名识别（NER）模型独立更新，无需升级镜像；更新后仅重启后端，页面不中断。
+                  种子名识别（NER）模型独立更新，无需升级镜像；更新后应用会自动重启并刷新页面。
                 </p>
               </div>
               {!updating && (

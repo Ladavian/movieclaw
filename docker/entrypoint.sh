@@ -228,26 +228,50 @@ handle_startup_failure() {
     return 0
 }
 
-start_all
-
 # 收到停止信号时把两个子进程都带走，确保容器干净退出。
 # SHUTTING_DOWN 标志让主循环把「停机导致的进程退出」与故障区分开——
 # 否则 overlay 启动后 60 秒内 docker stop 会被误计为一次「启动失败」，
 # 连续两次正常停容器就可能把好版本错标成坏版本。
+# trap 必须先于 start_all 安装：启动窗口内到达的 TERM 不能被 PID 1 默认忽略。
 SHUTTING_DOWN=0
 shutdown() {
     SHUTTING_DOWN=1
-    kill "$API_PID" "$WEB_PID" 2>/dev/null || true
+    kill "${API_PID:-}" "${WEB_PID:-}" 2>/dev/null || true
 }
 trap shutdown TERM INT
+
+start_all
+
+# 启动失败计数的衰减：进程稳定运行超过宽限期后清零该版本的计数。
+# 否则计数在 data 卷上跨周跨月累计，两次相隔很久的孤立故障会把好版本
+# 误标成坏版本——设计语义是「连续」失败，不是「累计」。
+clear_failures_if_seasoned() {
+    if [ "$ACTIVE_SOURCE" = "overlay" ] && [ -n "$ACTIVE_VERSION" ] \
+        && [ "$(( NOW - API_START_TS ))" -ge "$STARTUP_GRACE_SECONDS" ] \
+        && [ "$(( NOW - WEB_START_TS ))" -ge "$STARTUP_GRACE_SECONDS" ]; then
+        rm -f "$STATE_DIR/failures-$(sanitize "$ACTIVE_VERSION")"
+    fi
+}
 
 # 主循环：处理重启约定码（42 后端 / 43 全量）、overlay 启动失败兜底、
 # 真故障与停机（整容器退出，交给 Docker 的 restart 策略与 healthcheck，
 # 不在容器内静默兜养）。
 while true; do
+    if [ "$SHUTTING_DOWN" -eq 1 ]; then
+        break # 停机信号在分支处理期间到达：不再进入 wait（新进程由结尾的 shutdown 收拾）
+    fi
+    # bash ≤5.2 的 wait -n 会忽略「调用前已被收割」的进程（打印 no such job
+    # 后继续等另一个），特定竞态下会漏掉一侧进程的死亡。先同步探测再兜底：
     # 「&& … || …」写法让非零退出码不触发顶部的 set -e（否则脚本在此直接终止）
-    wait -n "$API_PID" "$WEB_PID" && EXIT_CODE=0 || EXIT_CODE=$?
+    if ! kill -0 "$API_PID" 2>/dev/null; then
+        wait "$API_PID" && EXIT_CODE=0 || EXIT_CODE=$?
+    elif ! kill -0 "$WEB_PID" 2>/dev/null; then
+        wait "$WEB_PID" && EXIT_CODE=0 || EXIT_CODE=$?
+    else
+        wait -n "$API_PID" "$WEB_PID" && EXIT_CODE=0 || EXIT_CODE=$?
+    fi
     NOW="$(date +%s)"
+    clear_failures_if_seasoned
     if [ "$SHUTTING_DOWN" -eq 1 ]; then
         break # 停机信号已到：无论进程处于什么状态都直接走停机流程
     fi
