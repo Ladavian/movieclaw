@@ -59,6 +59,21 @@ def get_agent_tools(cli_env: dict[str, str]) -> list[AgentTool]:
     ]
 
 
+def _agent_system_prompt() -> str:
+    """组装本次运行的系统提示词：通用正文 + 部署环境事实。
+
+    日志目录是 API 层的配置（LOG_DIR），按 prompts.build_system_prompt 的
+    设计走 extra_environment 传入——mclaw 已对 Agent 隐藏 logs 域（见
+    services/mclaw_tool 的 _EXCLUDED_DOMAINS），排查问题靠这里给出的
+    路径用 bash 直接检索。
+    """
+    log_dir = Path(get_settings().log_dir).resolve()
+    return build_system_prompt(
+        f"- 运行日志目录：{log_dir}，按天一个文件（movieclaw-YYYY-MM-DD.log）。"
+        "排查问题时用 bash 的 grep/tail 直接检索日志。"
+    )
+
+
 async def _cli_env(session_id: str) -> dict[str, str]:
     """构造工作区里 mclaw CLI 的自动授权环境（docs/design/cli.md §6.2）。
 
@@ -140,7 +155,12 @@ async def start_agent(
         on_message=recorder.on_message,
         on_compaction=recorder.on_compaction,
     )
-    params = AgentStartParams(input=payload.input, history=history, model=payload.model)
+    params = AgentStartParams(
+        input=payload.input,
+        history=history,
+        model=payload.model,
+        system_prompt=_agent_system_prompt(),
+    )
     run_id = get_agent_run_registry().start(runner, params, on_terminal=recorder.on_terminal)
     await recorder.begin(run_id)
     return ok(
@@ -258,7 +278,7 @@ async def compact_agent_session(
         "",
     )
 
-    messages = [ChatMessage(role="system", content=build_system_prompt()), *history]
+    messages = [ChatMessage(role="system", content=_agent_system_prompt()), *history]
     result = await compact(llm_router, model, messages, ModelSettings())
     if result is None:
         raise UpstreamServiceException("压缩失败：模型未能生成摘要，请稍后重试")

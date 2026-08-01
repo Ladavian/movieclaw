@@ -36,7 +36,6 @@ _DOMAIN_LINES = {
     "llm": "llm      AI 模型供应商配置",
     "ui": "ui       界面偏好（Web 端玻璃质感参数）",
     "net": "net      网络与代理（show/set/test）",
-    "logs": "logs     系统日志（tail -f 可跟随）",
     "auth": "auth     账号、API 令牌管理",
     "appearance": "appearance 外观背景图库",
     "extension": "extension 浏览器插件 Cookie 同步令牌",
@@ -49,8 +48,12 @@ _TOP_LEVEL_LINES = [
     "status   一眼看部署状态：服务健康、登录身份、版本同步",
 ]
 
-# 不进目录的域：agent 被工具硬闸禁止（递归），目录里出现只会误导模型
-_EXCLUDED_DOMAINS = {"agent"}
+# 不进目录的域：
+# - agent：被工具硬闸禁止（递归），目录里出现只会误导模型；
+# - logs：对 Agent 是 bash 的弱化重复——日志就是同容器内的本地文件（路径已写进
+#   系统提示词环境段），grep/tail 能力更强；且 logs tail -f 永不退出，模型误用
+#   会干等到工具超时。CLI 命令保留，服务远程管理的人类用户。
+_EXCLUDED_DOMAINS = {"agent", "logs"}
 
 
 def spec_domains() -> set[str]:
