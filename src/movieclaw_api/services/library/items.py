@@ -28,12 +28,12 @@ from datetime import datetime
 from pathlib import Path
 from typing import Literal, NamedTuple
 
-from sqlalchemy import func, or_
+from sqlalchemy import and_, func, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
 
 from movieclaw_api.schemas.library import LibraryItemView, derive_air_status
-from movieclaw_api.services.library.layout import entry_dir_of
+from movieclaw_api.services.library.layout import STRM_EXT, entry_dir_of
 from movieclaw_api.services.library.nfo import (
     EntryMetadata,
     NfoActor,
@@ -231,7 +231,9 @@ async def _wall_page_ids(
         return [i for i in (await session.execute(query)).scalars().all() if i is not None]
 
     # probing：扫描补探阶段把「还有文件没读出规格」的条目提到墙最前面，
-    # 用户能看见"在处理哪几部"；两段各自保持拼音序（sorted 稳定排序）
+    # 用户能看见"在处理哪几部"；两段各自保持拼音序（sorted 稳定排序）。
+    # strm 占位文件不算"没读出"——它永远探不出规格，算进来会让网盘库
+    # 每轮扫描都全墙置顶、永不落位
     ordered = await _titles_sorted(session, library_id)
     unprobed = {
         i
@@ -243,6 +245,7 @@ async def _wall_page_ids(
                     LibraryFile.media_item_id.is_not(None),  # type: ignore[union-attr]
                     LibraryFile.audio_streams.is_(None),  # type: ignore[union-attr]
                     LibraryFile.missing_since.is_(None),  # type: ignore[union-attr]
+                    LibraryFile.file_path.not_like(f"%{STRM_EXT}"),  # type: ignore[union-attr]
                 )
                 .distinct()
             )
@@ -315,7 +318,11 @@ async def _aggregate_wall_views(
                 LibraryFile.resolution,
                 LibraryFile.missing_since,
                 LibraryFile.created_at,
-                LibraryFile.audio_streams.is_(None),  # type: ignore[union-attr]
+                # strm 占位文件永远探不出规格，不算「待补探」
+                and_(
+                    LibraryFile.audio_streams.is_(None),  # type: ignore[union-attr]
+                    LibraryFile.file_path.not_like(f"%{STRM_EXT}"),  # type: ignore[union-attr]
+                ),
             ).where(
                 LibraryFile.library_id == library_id,
                 LibraryFile.media_item_id.in_(in_page),  # type: ignore[union-attr]
@@ -511,10 +518,15 @@ async def build_item_detail(
         local_poster_version=file_version(poster_art),
         local_fanart_version=file_version(fanart_art),
         external_subtitles=external,
+        # strm 占位文件不排后台补探——探了必失败，还会让详情页每次打开都
+        # 白排一次任务
         pending_probe_ids=[
             row.id
             for row in files
-            if row.id is not None and row.audio_streams is None and row.missing_since is None
+            if row.id is not None
+            and row.audio_streams is None
+            and row.missing_since is None
+            and not row.file_path.lower().endswith(STRM_EXT)
         ][:_DETAIL_PROBE_LIMIT],
     )
 
@@ -894,6 +906,8 @@ async def backfill_streams(
             break
         if row.audio_streams is not None or row.missing_since is not None:
             continue
+        if row.file_path.lower().endswith(STRM_EXT):
+            continue  # strm 占位文件没有媒体流，探了必失败，别每轮白试
         path = Path(row.file_path)
         target = disc_main_stream(path) if row.container in ("bluray", "dvd") else path
         if target is None or not await asyncio.to_thread(target.exists):

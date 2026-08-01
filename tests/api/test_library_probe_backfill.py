@@ -186,6 +186,27 @@ async def test_backfill_skipped_when_ffprobe_missing(db, tmp_path, monkeypatch) 
     assert calls == [], "可用性检查为假时不该再调 ffprobe"
 
 
+async def test_backfill_skips_strm_rows(db, tmp_path, monkeypatch) -> None:
+    """strm 占位行不参与补探：本体没有媒体流，探了必失败，只会污染进度分母。"""
+    _no_ffprobe(monkeypatch)
+    library_id = await _build(db, tmp_path, count=1)
+    entry = tmp_path / "media" / "movies" / "影片4000 (2020)"
+    entry.mkdir(parents=True)
+    (entry / "影片4000.strm").write_text("https://cloud.example.com/m.mkv", encoding="utf-8")
+    (entry / "movie.nfo").write_text("<movie><tmdbid>4000</tmdbid></movie>", encoding="utf-8")
+    await scan_library(library_id)
+
+    calls: list[str] = []
+    _with_ffprobe(monkeypatch, calls)
+    summary = await scan_library(library_id)
+
+    assert summary.probed == 1, "只有真视频那行需要补探"
+    assert all(not c.endswith(".strm") for c in calls)
+    rows = {Path(r.file_path).suffix: r for r in await _rows(db)}
+    assert rows[".strm"].audio_streams is None and rows[".strm"].resolution is None
+    assert rows[".mkv"].audio_streams is not None
+
+
 async def test_backfill_leaves_missing_and_ignored_rows_alone(db, tmp_path, monkeypatch) -> None:
     """已标记 missing 与用户忽略过的行不参与补探。
 

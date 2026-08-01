@@ -6,7 +6,8 @@
 入账）完成，工单由库存对账关闭（wanted_fulfillment），订阅专属管线
 退役。这里沉淀的是三个入库引擎共用的约定：
 
-- ``VIDEO_EXTS``：视频文件扩展名（入库对象）；
+- ``VIDEO_EXTS`` / ``STRM_EXT`` / ``SCAN_VIDEO_EXTS``：视频文件扩展名
+  （入库对象）与 strm 占位文件的接纳约定；
 - ``IN_PROGRESS_MARKERS``：下载器/浏览器的"未完成"标记后缀
   （扫描与监听导入的完整性检测共用）；
 - ``season_from_dir`` / ``entry_dirs``：季目录与条目目录的判定——识别链
@@ -41,6 +42,17 @@ VIDEO_EXTS = {
     ".m4v",
     ".webm",
 }
+
+# strm：Kodi/Emby/Jellyfin 生态约定的"播放地址占位文件"——内容是一行
+# 播放 URL 的纯文本（网盘挂载场景的标配，本地不占盘、播放时才拉流）。
+# 识别与刮削全靠文件名/目录名，与普通视频一致；但文件本体没有媒体流，
+# ffprobe 探测对它天然无意义（规格列留空）。
+STRM_EXT = ".strm"
+
+# 库扫描/实时监控/整理的接纳范围 = 视频 + strm 占位。**下载入库链
+# （监听导入 ingest）刻意不收 strm**：那里的 ffprobe 完整性门禁
+# （挡残缺文件）对 strm 必然失败，会陷入"探测失败自动重试"的死循环。
+SCAN_VIDEO_EXTS = VIDEO_EXTS | {STRM_EXT}
 # 文件名/路径含这些标记的视频不入库（样品片段等）
 _IGNORE_MARKERS = ("sample",)
 
