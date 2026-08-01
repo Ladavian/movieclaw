@@ -97,18 +97,25 @@ def _is_newer(candidate: str, current: str) -> bool:
     """candidate 是否比 current 新（semver 语义的够用子集）。
 
     规则：数字主段逐段比较；带预发布段（-beta.1 等）的版本比同主段的正式版
-    旧；两个预发布段按字符串比较。任何一侧无法解析时退化为「不相等即视为
-    更新」——绝不抛异常（版本命名不规范不能把检查更新整个打挂）。
+    旧；预发布段按点分段、数字段按数值比（beta.10 > beta.9，semver 语义）。
+    任何一侧无法解析时退化为「不相等即视为更新」——绝不抛异常（版本命名
+    不规范不能把检查更新整个打挂）。
     """
 
-    def parse(text: str) -> tuple[tuple[int, ...], tuple[int, str]] | None:
+    def parse(text: str) -> tuple[tuple[int, ...], tuple] | None:
         match = _VERSION_RE.match(text.strip())
         if match is None:
             return None
         nums = tuple(int(p) for p in match.group(1).split("."))
         pre = match.group(2)
-        # 正式版排在同主段的预发布之后：(1, "") > (0, "beta.1")
-        return nums, ((0, pre) if pre else (1, ""))
+        if not pre:
+            # 正式版排在同主段的任何预发布之后：(1,) > (0, …)
+            return nums, (1,)
+        # 数字段标 (0, 数值)、非数字段标 (1, 字符串)：同位仅同类比较，不混型
+        pre_key = tuple(
+            (0, int(seg)) if seg.isdigit() else (1, seg) for seg in pre.split(".")
+        )
+        return nums, (0, pre_key)
 
     a, b = parse(candidate), parse(current)
     if a is None or b is None:
@@ -183,6 +190,35 @@ def reset_progress_for_tests() -> None:
 # ---------------------------------------------------------------------------
 
 
+def _is_marked_bad(version: str) -> bool:
+    return (_updates_dir() / "state" / f"bad-{_sanitize(version)}").is_file()
+
+
+def _overlay_state(vdir: Path) -> tuple[str, bool, str]:
+    """判定一个 overlay 版本目录能否被 entrypoint 采用（与其校验口径一致）。
+
+    返回 (版本号, 是否可用, 不可用原因的中文说明)。status 的 has_previous、
+    rollback 的目标校验、previous 指针的候选校验都用它——「能回退/会生效」
+    的承诺必须以 entrypoint 真实会接受为准，否则用户会经历一次什么都没变的
+    全量重启。
+    """
+    manifest_path = vdir / _MANIFEST_NAME
+    if not vdir.is_dir() or not manifest_path.is_file():
+        return "", False, "缺少更新清单"
+    try:
+        manifest = json.loads(manifest_path.read_bytes())
+        version = str(manifest["version"])
+        requires = int(manifest["requires_runtime"])
+    except Exception:
+        return "", False, "更新清单损坏"
+    runtime = _runtime_version()
+    if runtime is not None and requires != runtime:
+        return version, False, f"需要 runtime {requires}（当前镜像为 {runtime}），需升级镜像"
+    if _is_marked_bad(version):
+        return version, False, "曾连续启动失败，已被自动回落保护"
+    return version, True, ""
+
+
 def build_status() -> UpdateStatusView:
     updates = _updates_dir()
     state_dir = updates / "state"
@@ -190,15 +226,31 @@ def build_status() -> UpdateStatusView:
         p.name.removeprefix("bad-") for p in state_dir.glob("bad-*")
     ) if state_dir.is_dir() else []
     previous = updates / "previous"
+    has_previous = previous.is_symlink() and _overlay_state(Path(previous))[1]
+
+    # 盘上 current 指向的版本与实际运行版本不一致时，把「为什么没生效」外显：
+    # 否则 runtime 不匹配 / bad 回落场景下，用户昨天还在的版本会凭空消失
+    running_overlay = os.environ.get("MOVIECLAW_OVERLAY_VERSION") or None
+    inactive_version: str | None = None
+    inactive_reason: str | None = None
+    current = updates / "current"
+    if current.is_symlink():
+        version, usable, reason = _overlay_state(Path(current))
+        if version and version != running_overlay:
+            inactive_version = version
+            inactive_reason = reason if not usable else "尚未生效（等待应用重启）"
+
     return UpdateStatusView(
         current_version=__version__,
         code_source=os.environ.get("MOVIECLAW_CODE_SOURCE", "dev"),
-        overlay_version=os.environ.get("MOVIECLAW_OVERLAY_VERSION") or None,
+        overlay_version=running_overlay,
         runtime_version=_runtime_version(),
         can_update=_runtime_version() is not None,
-        has_previous=previous.exists() and (previous / _MANIFEST_NAME).is_file(),
+        has_previous=has_previous,
         bad_versions=list(bad_versions),
         model_tag=_current_model_tag(),
+        inactive_overlay_version=inactive_version,
+        inactive_overlay_reason=inactive_reason,
     )
 
 
@@ -379,7 +431,15 @@ async def _fetch_latest_release() -> tuple[dict, dict]:
         timeout=_HTTP_TIMEOUT, follow_redirects=True, headers=headers
     ) as client:
         raw = await _download_manifest_bytes(client, release)
-    return release, _parse_manifest(raw)
+    manifest = _parse_manifest(raw)
+    # 清单与 Release tag 强一致（与模型侧对称）：防「旧签名清单挂到新 tag」
+    # 的重放，也防手工发布时张冠李戴——下载 URL 是按清单 version 拼的
+    tag = release.get("tag_name") or ""
+    if tag != f"v{manifest['version']}":
+        raise BadRequestException(
+            f"发布（{tag}）的更新清单声明的是 v{manifest['version']}，内容不匹配，已放弃"
+        )
+    return release, manifest
 
 
 async def check_update() -> UpdateCheckView:
@@ -394,6 +454,7 @@ async def check_update() -> UpdateCheckView:
         requires_runtime=manifest["requires_runtime"],
         changelog=release.get("body") or "",
         published_at=release.get("published_at") or "",
+        latest_known_bad=_is_marked_bad(latest),
     )
 
 
@@ -528,7 +589,9 @@ def _apply_downloaded(manifest: dict, download_dir: Path) -> None:
             prev_target = running_dir
     if prev_target is None and current.is_symlink():
         cur_target = Path(os.readlink(current))
-        if cur_target.name != final_dir.name:
+        # 旧 current 只有在 entrypoint 真会采用（runtime 匹配且未标坏）时才配
+        # 当 previous——把不可用的旧版本记成「可回退目标」只会制造无效回退
+        if cur_target.name != final_dir.name and _overlay_state(cur_target)[1]:
             prev_target = cur_target
     if prev_target is not None:
         _atomic_symlink(prev_target, updates / "previous")
@@ -544,6 +607,14 @@ def _apply_downloaded(manifest: dict, download_dir: Path) -> None:
     for vdir in versions_dir.iterdir():
         if vdir.is_dir() and vdir.name not in referenced:
             shutil.rmtree(vdir, ignore_errors=True)
+    # 状态标记跟着版本目录走：目录已清理的版本，其 bad/failures 标记一并清掉
+    state_dir = updates / "state"
+    if state_dir.is_dir():
+        remaining = {v.name for v in versions_dir.iterdir() if v.is_dir()}
+        for marker in list(state_dir.glob("bad-*")) + list(state_dir.glob("failures-*")):
+            marked_version = marker.name.split("-", 1)[1]
+            if f"v{marked_version}" not in remaining:
+                marker.unlink(missing_ok=True)
     logger.info("应用内更新已就绪：v%s，即将全量重启生效", version)
 
 
@@ -641,7 +712,8 @@ async def start_update() -> UpdateProgressView:
 
 # ---------------------------------------------------------------------------
 # NER 模型更新（独立于代码更新：模型 Release 单独发布，tag 形如 torrent-ner-vN；
-# 更新只切 data 卷上的 current 指针 + 重启后端进程，前端不中断）
+# 更新只切 data 卷上的 current 指针，之后走 43 全量重启让 entrypoint
+# 重新解析模型指针——42 不重解析 MOVIECLAW_NER_DIR，新模型不会生效）
 # ---------------------------------------------------------------------------
 
 _MODEL_TAG_RE = re.compile(r"^torrent-ner-v(\d+)$")
@@ -735,15 +807,21 @@ def _install_model_files(tag: str, manifest: dict, download_dir: Path) -> None:
     shutil.rmtree(final_dir, ignore_errors=True)
     os.replace(partial_dir, final_dir)
     _atomic_symlink(final_dir, models / "current")
-    # 只保留 current 指向的模型目录，旧模型清掉
+    # 清掉旧模型目录，但保护**当前进程正在用**的那个（MOVIECLAW_NER_DIR 指向
+    # 的目录）：距离重启生效还有约 11 秒窗口，删了它会让窗口内的 NER 推理
+    # 因文件缺失而失败；留下的这一个目录会在下次模型更新时被清理
+    active = os.environ.get("MOVIECLAW_NER_DIR", "")
+    active_dir = Path(active).resolve() if active else None
     for entry in models.iterdir():
         if entry.is_dir() and not entry.is_symlink() and entry.name != final_dir.name:
+            if active_dir is not None and entry.resolve() == active_dir:
+                continue
             shutil.rmtree(entry, ignore_errors=True)
     logger.info("NER 模型已安装：%s，即将重启后端生效", tag)
 
 
 def _download_and_apply_model(release: dict, manifest: dict) -> None:
-    """后台线程主体：下载模型文件 → 安装 → 重启后端（前端不中断）。"""
+    """后台线程主体：下载模型文件 → 安装 → 全量重启生效（43，见下方注释）。"""
     tag = release["tag_name"]
     assets = {a.get("name"): a for a in release.get("assets", [])}
     tmp_dir = _models_dir() / "tmp"
@@ -898,7 +976,9 @@ async def check_app_update_task() -> None:
         logger.info("定时检查应用更新未完成：%s", exc)
     else:
         async with db.session() as session:
-            if view.update_available:
+            # 曾在本机连续启动失败被回落的版本不再提醒（提醒用户安装刚坑过
+            # 自己的版本是误导）；等更新的版本发布后自然恢复提醒
+            if view.update_available and not view.latest_known_bad:
                 await _relight_dismissed_on_change(
                     session, _NOTICE_KEY_APP, "latest_version", view.latest_version
                 )
@@ -1008,7 +1088,9 @@ def rollback() -> str:
             "updates/current 不是符号链接（可能被手工改动过），"
             "请删除 data/updates/current 后重启容器回到镜像内置版本"
         )
-    if previous.is_symlink() and (previous / _MANIFEST_NAME).is_file():
+    # 回退目标必须是 entrypoint 真实会采用的版本（runtime 匹配且未标坏）：
+    # 否则用户会经历一次什么都没变的全量重启。不可用的 previous 视同不存在。
+    if previous.is_symlink() and _overlay_state(Path(previous))[1]:
         prev_target = Path(os.readlink(previous))
         if current.is_symlink():
             cur_target = Path(os.readlink(current))
@@ -1018,9 +1100,9 @@ def rollback() -> str:
             _atomic_symlink(prev_target, current)
             previous.unlink(missing_ok=True)
         message = "已切换到上一版本，应用正在重启……如需撤销可再次回退切回"
-    elif current.is_symlink():
+    elif current.is_symlink() and os.environ.get("MOVIECLAW_OVERLAY_VERSION"):
         current.unlink()
-        message = "没有更早的更新版本，已回落到镜像内置版本，应用正在重启……"
+        message = "没有可用的更早版本，已回落到镜像内置版本，应用正在重启……"
     else:
         raise BadRequestException("当前运行的就是镜像内置版本，没有可回退的目标")
     logger.info("应用回退：%s", message)

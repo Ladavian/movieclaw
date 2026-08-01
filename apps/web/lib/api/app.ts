@@ -74,6 +74,10 @@ export interface UpdateStatusView {
   bad_versions: string[];
   /** 当前生效的 NER 模型 Release tag（如 torrent-ner-v1）；无法识别时为 null */
   model_tag: string | null;
+  /** 盘上已安装但未在运行的 overlay 版本（runtime 不匹配/坏版本回落/等待重启） */
+  inactive_overlay_version: string | null;
+  /** 上述版本未生效的中文原因 */
+  inactive_overlay_reason: string | null;
 }
 
 /** 检查更新的结果（POST /app/update/check）。 */
@@ -87,6 +91,8 @@ export interface UpdateCheckView {
   /** GitHub Release 的更新说明（Markdown 文本） */
   changelog: string;
   published_at: string;
+  /** 最新版曾在本机连续启动失败被自动回落（重装会清除标记再试一次） */
+  latest_known_bad: boolean;
 }
 
 /** 更新执行进度（GET /app/update/progress）。 */

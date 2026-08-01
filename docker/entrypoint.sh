@@ -135,6 +135,11 @@ resolve_code() {
 
     export MOVIECLAW_CODE_SOURCE="$ACTIVE_SOURCE"
     export MOVIECLAW_CODE_ROOT="$BACKEND_ROOT"
+    # 更新/模型目录以 entrypoint 的 DATA_DIR 为唯一事实源导出给后端：
+    # 后端配置里的同名变量默认值只是「约定一致」，显式导出彻底堵死
+    # 「更新装到 A 目录、启动解析 B 目录」的 split-brain（哪怕用户只覆盖了其一）
+    export MOVIECLAW_UPDATES_DIR="$UPDATES_DIR"
+    export MOVIECLAW_MODELS_DIR="$DATA_DIR/models/ner"
     if [ -n "$ACTIVE_VERSION" ]; then
         export MOVIECLAW_OVERLAY_VERSION="$ACTIVE_VERSION"
     else
@@ -216,9 +221,20 @@ handle_startup_failure() {
         return 1
     fi
     mkdir -p "$STATE_DIR"
-    echo "$(date +%s)" >> "$STATE_DIR/failures-$marker"
+    local fail_file="$STATE_DIR/failures-$marker"
+    # 只统计时间窗内的失败（1 小时）：不洁关机（断电/OOM/docker kill）没有
+    # wake 事件来清零计数，陈旧记录若被原样累计，相隔数周的两次孤立故障
+    # 会把好版本误标成坏版本——按时间戳过滤让「连续」语义不依赖清零时机
+    local now cutoff
+    now="$(date +%s)"
+    cutoff=$(( now - 3600 ))
+    if [ -f "$fail_file" ]; then
+        awk -v cutoff="$cutoff" '$1 >= cutoff' "$fail_file" > "$fail_file.tmp" \
+            && mv "$fail_file.tmp" "$fail_file"
+    fi
+    echo "$now" >> "$fail_file"
     local count
-    count="$(wc -l < "$STATE_DIR/failures-$marker")"
+    count="$(wc -l < "$fail_file")"
     if [ "$count" -ge "$MAX_STARTUP_FAILURES" ]; then
         touch "$STATE_DIR/bad-$marker"
         echo "[entrypoint] overlay v$ACTIVE_VERSION 启动后 ${uptime}s 内退出，已连续失败 $count 次：标记为坏版本并回落。" >&2
@@ -256,6 +272,9 @@ clear_failures_if_seasoned() {
 # 主循环：处理重启约定码（42 后端 / 43 全量）、overlay 启动失败兜底、
 # 真故障与停机（整容器退出，交给 Docker 的 restart 策略与 healthcheck，
 # 不在容器内静默兜养）。
+# EXIT_CODE 预置为 143（SIGTERM 的约定码）：TERM 落在首次 wait 之前时主循环
+# 会在顶部直接 break，此时若变量未定义，set -u 会让脚本在结尾崩掉、跳过收尾
+EXIT_CODE=143
 while true; do
     if [ "$SHUTTING_DOWN" -eq 1 ]; then
         break # 停机信号在分支处理期间到达：不再进入 wait（新进程由结尾的 shutdown 收拾）

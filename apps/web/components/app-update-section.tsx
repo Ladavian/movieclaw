@@ -265,6 +265,14 @@ export function AppUpdateSection() {
             </div>
             <span className="font-mono text-body text-[var(--text)]">v{status.current_version}</span>
           </div>
+          {status.inactive_overlay_version && (
+            <div className="px-5 py-3.5">
+              <p className="text-sub text-[var(--text-muted)]">
+                已安装的 v{status.inactive_overlay_version} 未在运行
+                {status.inactive_overlay_reason ? `：${status.inactive_overlay_reason}` : ""}
+              </p>
+            </div>
+          )}
           {status.bad_versions.length > 0 && (
             <div className="px-5 py-3.5">
               <p className="text-sub text-amber-300/90">
@@ -352,6 +360,13 @@ export function AppUpdateSection() {
                       </span>
                     )}
                   </div>
+                  {check.latest_known_bad && (
+                    <p className="mt-2 text-sub text-amber-300/90">
+                      注意：v{check.latest_version} 此前曾在本机连续启动失败被自动回落。
+                      重新更新会清除失败标记再试一次；若问题依旧，容器会再次自动回落，
+                      建议等待修复版本。
+                    </p>
+                  )}
                   {check.changelog && (
                     <pre className="scroll-thin mt-3 max-h-56 overflow-y-auto whitespace-pre-wrap break-words font-sans text-sub leading-relaxed text-[var(--text-muted)]">
                       {check.changelog}

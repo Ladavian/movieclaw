@@ -24,6 +24,11 @@ class UpdateStatusView(BaseModel):
     bad_versions: list[str]
     #: 当前生效的 NER 模型 Release tag（如 torrent-ner-v1）；无法识别时为 None
     model_tag: str | None
+    #: 盘上 current 指向、但**并未在运行**的 overlay 版本（runtime 不匹配 /
+    #: 坏版本回落 / 等待重启）；一切正常时为 None
+    inactive_overlay_version: str | None
+    #: 上述版本未生效的中文原因
+    inactive_overlay_reason: str | None
 
 
 class UpdateCheckView(BaseModel):
@@ -41,6 +46,8 @@ class UpdateCheckView(BaseModel):
     changelog: str
     #: Release 发布时间（ISO 8601）
     published_at: str
+    #: 最新版曾在本机连续启动失败被回落（重新安装会清除标记再试，需用户知情）
+    latest_known_bad: bool
 
 
 class ModelUpdateCheckView(BaseModel):

@@ -156,7 +156,8 @@ overlay 生效后，**必须保证 Agent 看到的是当前实际运行的代码
 
 `MOVIECLAW_NER_DIR` 已是环境变量。更新流程：下载新模型到
 `/app/data/models/torrent-ner-vN/` → 校验 → 更新指针（data 卷上的配置或链接）→
-exit 42 仅重启后端。entrypoint 解析时若 data 卷有生效模型指针则导出其路径为
+exit 43 全量重启（MOVIECLAW_NER_DIR 是 entrypoint 解析后导出的具体版本目录，
+必须重新走一遍 resolve 才会指向新模型）。entrypoint 解析时若 data 卷有生效模型指针则导出其路径为
 `MOVIECLAW_NER_DIR`，否则用镜像内置。manifest 的 `min_model` 声明代码对模型的
 最低版本要求，防止偏斜。
 

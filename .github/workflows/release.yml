@@ -56,9 +56,15 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          # 带预发布段的 tag（v0.2.0-beta 等）自动标记 GitHub prerelease：
+          # 应用内更新的检查逻辑会跳过 prerelease，避免 beta 被推给全量用户
+          PRERELEASE_FLAG=""
+          case "$GITHUB_REF_NAME" in
+            *-*) PRERELEASE_FLAG="--prerelease" ;;
+          esac
           if ! gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
             gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" \
-              --title "$GITHUB_REF_NAME" --generate-notes
+              --title "$GITHUB_REF_NAME" --generate-notes $PRERELEASE_FLAG
           fi
           assets=(dist/release/app-web.tar.gz dist/release/app-backend.tar.gz dist/release/manifest.json)
           [ -f dist/release/manifest.json.sig ] && assets+=(dist/release/manifest.json.sig)

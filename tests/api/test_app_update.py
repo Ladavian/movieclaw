@@ -90,6 +90,10 @@ def test_is_newer_semver_ordering():
     assert app_update._is_newer("0.2.0", "0.2.0-beta.1")
     assert not app_update._is_newer("0.2.0-beta.1", "0.2.0")
     assert app_update._is_newer("0.2.1-beta", "0.2.0")
+    # 预发布数字段按数值比较（beta.10 > beta.9，字符串序会反转）
+    assert app_update._is_newer("1.2.0-beta.10", "1.2.0-beta.9")
+    assert not app_update._is_newer("1.2.0-beta.9", "1.2.0-beta.10")
+    assert app_update._is_newer("1.2.0-rc.1", "1.2.0-beta.9")
 
 
 def test_is_newer_never_raises_on_weird_versions():
@@ -251,12 +255,62 @@ def test_rollback_swaps_current_and_previous(updates_dir, tmp_path, no_restart):
     assert Path(updates_dir / "current").resolve().name == "v0.3.0"
 
 
-def test_rollback_without_previous_falls_back_to_baseline(updates_dir, tmp_path, no_restart):
+def test_rollback_without_previous_falls_back_to_baseline(
+    updates_dir, tmp_path, no_restart, monkeypatch
+):
     app_update._apply_downloaded(_make_manifest(tmp_path / "d1", "0.2.0"), tmp_path / "d1")
+    monkeypatch.setenv("MOVIECLAW_OVERLAY_VERSION", "0.2.0")  # 正在运行该 overlay
     app_update.reset_progress_for_tests()
     app_update.rollback()
     assert not (updates_dir / "current").exists()
     assert no_restart == [app_update.FULL_RESTART_EXIT_CODE]
+
+
+def test_rollback_skips_unusable_previous(updates_dir, tmp_path, no_restart, monkeypatch):
+    """previous 指向坏版本时视同不存在：回退直接落基线，绝不安排一次
+    「entrypoint 会拒绝目标、什么都没变」的全量重启。"""
+    app_update._apply_downloaded(_make_manifest(tmp_path / "d1", "0.2.0"), tmp_path / "d1")
+    app_update._apply_downloaded(_make_manifest(tmp_path / "d2", "0.3.0"), tmp_path / "d2")
+    state = updates_dir / "state"
+    state.mkdir(exist_ok=True)
+    (state / "bad-0.2.0").touch()  # previous(v0.2.0) 被标坏
+    monkeypatch.setenv("MOVIECLAW_OVERLAY_VERSION", "0.3.0")
+    app_update.reset_progress_for_tests()
+
+    assert app_update.build_status().has_previous is False
+    app_update.rollback()
+    assert not (updates_dir / "current").exists()  # 落基线而非 swap 到坏版本
+
+
+def test_apply_skips_bad_current_as_previous_and_gc_markers(updates_dir, tmp_path):
+    """current 指向坏版本、运行基线时更新：坏版本不配当 previous；
+    其目录被清理后 bad/failures 标记一并 GC。"""
+    app_update._apply_downloaded(_make_manifest(tmp_path / "d1", "0.2.0"), tmp_path / "d1")
+    state = updates_dir / "state"
+    state.mkdir(exist_ok=True)
+    (state / "bad-0.2.0").touch()
+    (state / "failures-0.2.0").write_text("1\n")
+
+    app_update._apply_downloaded(_make_manifest(tmp_path / "d2", "0.3.0"), tmp_path / "d2")
+    assert not (updates_dir / "previous").exists()
+    assert not (updates_dir / "versions" / "v0.2.0").exists()
+    assert not (state / "bad-0.2.0").exists()
+    assert not (state / "failures-0.2.0").exists()
+
+
+def test_status_exposes_inactive_overlay(updates_dir, tmp_path, monkeypatch):
+    """current 指向的版本没在运行时，状态页外显原因（bad 回落场景）。"""
+    app_update._apply_downloaded(_make_manifest(tmp_path / "d1", "0.2.0"), tmp_path / "d1")
+    app_update._apply_downloaded(_make_manifest(tmp_path / "d2", "0.3.0"), tmp_path / "d2")
+    state = updates_dir / "state"
+    state.mkdir(exist_ok=True)
+    (state / "bad-0.3.0").touch()
+    monkeypatch.setenv("MOVIECLAW_OVERLAY_VERSION", "0.2.0")  # 回落运行 v0.2.0
+
+    status = app_update.build_status()
+    assert status.inactive_overlay_version == "0.3.0"
+    assert "启动失败" in (status.inactive_overlay_reason or "")
+    assert app_update._is_marked_bad("0.3.0") is True
 
 
 def test_rollback_on_baseline_rejected(updates_dir, no_restart):
@@ -365,6 +419,27 @@ def test_install_model_files_switches_pointer_and_prunes(models_dir, tmp_path):
     app_update._install_model_files("torrent-ner-v3", manifest3, dl3)
     assert Path(current).resolve().name == "torrent-ner-v3"
     assert not (models_dir / "torrent-ner-v2").exists()
+
+
+def test_install_model_files_protects_active_dir(models_dir, tmp_path, monkeypatch):
+    """当前进程正在用的模型目录（MOVIECLAW_NER_DIR）不被清理：
+    距重启生效有约 11 秒窗口，删了会让窗口内的 NER 推理失败。"""
+    active = models_dir / "torrent-ner-v1"
+    active.mkdir(parents=True)
+    (active / "model.int8.onnx").write_bytes(b"old")
+    monkeypatch.setenv("MOVIECLAW_NER_DIR", str(active))
+
+    dl = tmp_path / "dl"
+    dl.mkdir()
+    files = {}
+    for name in app_update._MODEL_FILES:
+        data = f"v2:{name}".encode()
+        (dl / name).write_bytes(data)
+        files[name] = {"sha256": hashlib.sha256(data).hexdigest(), "size": len(data)}
+    app_update._install_model_files("torrent-ner-v2", {"files": files}, dl)
+
+    assert active.is_dir()  # 活动目录被保护
+    assert Path(models_dir / "current").resolve().name == "torrent-ner-v2"
 
 
 def test_install_model_files_rejects_bad_checksum(models_dir, tmp_path):
