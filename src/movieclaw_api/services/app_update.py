@@ -23,6 +23,8 @@
 
 from __future__ import annotations
 
+import base64
+import binascii
 import hashlib
 import json
 import logging
@@ -47,6 +49,11 @@ from movieclaw_api.schemas.app_update import (
     UpdateStatusView,
 )
 from movieclaw_api.services.app_config import FULL_RESTART_EXIT_CODE, schedule_restart
+from movieclaw_api.services.system_notice import resolve_notices, upsert_notice
+from movieclaw_db.engine import get_database
+from movieclaw_db.models import NoticeSeverity
+from movieclaw_db.models.scheduled_task import TriggerType
+from movieclaw_scheduler import register_task
 
 logger = logging.getLogger("movieclaw_api.app_update")
 
@@ -178,6 +185,69 @@ def _mirror_url(url: str) -> str:
     return mirror.rstrip("/") + "/" + url
 
 
+_SIGNATURE_NAME = "manifest.json.sig"
+
+
+def _verify_manifest_signature(raw: bytes, sig_text: bytes) -> None:
+    """用配置的 Ed25519 公钥校验更新清单签名（base64 签名，签的是清单原始字节）。
+
+    仅在 UPDATE_MANIFEST_PUBKEY 配置时被调用；校验失败抛 BadRequest（中文直达用户）。
+    """
+    from cryptography.exceptions import InvalidSignature
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
+
+    try:
+        pubkey = Ed25519PublicKey.from_public_bytes(
+            base64.b64decode(get_settings().update_manifest_pubkey.strip())
+        )
+    except (binascii.Error, ValueError) as exc:
+        raise BadRequestException(
+            "UPDATE_MANIFEST_PUBKEY 配置无效（应为 base64 的 32 字节 Ed25519 公钥），"
+            "签名校验无法进行"
+        ) from exc
+    try:
+        pubkey.verify(base64.b64decode(sig_text.strip()), raw)
+    except (InvalidSignature, binascii.Error, ValueError) as exc:
+        raise BadRequestException(
+            "更新清单的签名校验失败，发布内容可能被篡改，已放弃本次更新。"
+            "请改为直连 GitHub 重试，并向项目反馈"
+        ) from exc
+
+
+async def _download_manifest_bytes(client: httpx.AsyncClient, release: dict) -> bytes:
+    """下载 Release 的更新清单；配置了签名公钥时强制验签后才返回。"""
+    manifest_asset = next(
+        (a for a in release.get("assets", []) if a.get("name") == _MANIFEST_NAME), None
+    )
+    if manifest_asset is None:
+        raise BadRequestException(
+            f"发布（{release.get('tag_name', '?')}）没有携带更新清单，"
+            "可能是旧版发布或发布流程未完成，暂无法应用内更新"
+        )
+    try:
+        resp = await client.get(_mirror_url(manifest_asset["browser_download_url"]))
+        resp.raise_for_status()
+    except httpx.HTTPError as exc:
+        raise BadRequestException("下载更新清单失败，请稍后重试") from exc
+    raw = resp.content
+    if get_settings().update_manifest_pubkey.strip():
+        sig_asset = next(
+            (a for a in release.get("assets", []) if a.get("name") == _SIGNATURE_NAME), None
+        )
+        if sig_asset is None:
+            raise BadRequestException(
+                f"本实例要求更新清单携带签名，但发布（{release.get('tag_name', '?')}）"
+                f"缺少 {_SIGNATURE_NAME}，已放弃本次更新"
+            )
+        try:
+            sig_resp = await client.get(_mirror_url(sig_asset["browser_download_url"]))
+            sig_resp.raise_for_status()
+        except httpx.HTTPError as exc:
+            raise BadRequestException("下载更新清单签名失败，请稍后重试") from exc
+        _verify_manifest_signature(raw, sig_resp.content)
+    return raw
+
+
 def _parse_manifest(raw: bytes) -> dict:
     try:
         manifest = json.loads(raw)
@@ -210,20 +280,8 @@ async def _fetch_latest_release() -> tuple[dict, dict]:
                 "无法连接 GitHub 检查更新，请确认网络可达（可配置代理或 UPDATE_API_BASE_URL 反代）"
             ) from exc
         release = resp.json()
-        manifest_asset = next(
-            (a for a in release.get("assets", []) if a.get("name") == _MANIFEST_NAME), None
-        )
-        if manifest_asset is None:
-            raise BadRequestException(
-                f"最新 Release（{release.get('tag_name', '?')}）没有携带更新清单，"
-                "可能是旧版发布或发布流程未完成，暂无法应用内更新"
-            )
-        try:
-            resp = await client.get(_mirror_url(manifest_asset["browser_download_url"]))
-            resp.raise_for_status()
-        except httpx.HTTPError as exc:
-            raise BadRequestException("下载更新清单失败，请稍后重试") from exc
-        return release, _parse_manifest(resp.content)
+        raw = await _download_manifest_bytes(client, release)
+        return release, _parse_manifest(raw)
 
 
 async def check_update() -> UpdateCheckView:
@@ -640,8 +698,7 @@ async def start_model_update() -> UpdateProgressView:
         tag = release["tag_name"]
         if _model_tag_num(tag) <= _model_tag_num(_current_model_tag()):
             raise BadRequestException(f"当前模型已是最新（{_current_model_tag()}），无需更新")
-        manifest_asset = _model_manifest_asset(release)
-        if manifest_asset is None:
+        if _model_manifest_asset(release) is None:
             raise BadRequestException(
                 f"模型发布 {tag} 未携带更新清单（manifest.json），暂无法应用内安装"
             )
@@ -649,12 +706,8 @@ async def start_model_update() -> UpdateProgressView:
         async with httpx.AsyncClient(
             timeout=_HTTP_TIMEOUT, follow_redirects=True, headers=headers
         ) as client:
-            resp = await client.get(_mirror_url(manifest_asset["browser_download_url"]))
-            resp.raise_for_status()
-        manifest = _parse_model_manifest(resp.content)
-    except httpx.HTTPError as exc:
-        _progress.set("idle", target_version=None)
-        raise BadRequestException("下载模型更新清单失败，请稍后重试") from exc
+            raw = await _download_manifest_bytes(client, release)
+        manifest = _parse_model_manifest(raw)
     except BaseException:
         _progress.set("idle", target_version=None)
         raise
@@ -666,6 +719,78 @@ async def start_model_update() -> UpdateProgressView:
     )
     thread.start()
     return _progress.view()
+
+
+# ---------------------------------------------------------------------------
+# 定时自动检查（只提醒、绝不自动安装：更新会重启服务，须由用户主动触发）
+# ---------------------------------------------------------------------------
+
+_NOTICE_KEY_APP = "app_update:new-version"
+_NOTICE_KEY_MODEL = "app_update:new-model"
+
+
+@register_task(
+    "check_app_update",
+    title="检查应用更新",
+    trigger_type=TriggerType.CRON,
+    cron="30 9 * * *",
+    description=(
+        "每天检查 GitHub 是否发布了新版本与新的 NER 模型；发现后在待处理事项中"
+        "提醒（不会自动安装，更新入口在「设置 → 关于与更新」）。仅 Docker 部署生效。"
+    ),
+)
+async def check_app_update_task() -> None:
+    if _runtime_version() is None:
+        return  # 源码部署/开发环境不适用应用内更新
+    db = get_database()
+    # 应用与模型两条检查相互独立：一条网络失败不拖累另一条；
+    # 网络不可达按「下轮再试」处理，不产生告警（避免离线环境天天报错）
+    try:
+        view = await check_update()
+    except BadRequestException as exc:
+        logger.info("定时检查应用更新未完成：%s", exc)
+    else:
+        async with db.session() as session:
+            if view.update_available:
+                await upsert_notice(
+                    session,
+                    dedupe_key=_NOTICE_KEY_APP,
+                    severity=NoticeSeverity.WARNING,
+                    source="app",
+                    title=f"发现新版本 v{view.latest_version}",
+                    message=(
+                        f"movieclaw v{view.latest_version} 已发布（当前 v{view.current_version}）。"
+                        + (
+                            "到「设置 → 关于与更新」一键更新即可，无需重拉镜像。"
+                            if view.compatible
+                            else "本次更新包含运行时依赖变化，需要拉取新的 Docker 镜像升级。"
+                        )
+                    ),
+                    payload={"latest_version": view.latest_version, "compatible": view.compatible},
+                )
+            else:
+                await resolve_notices(session, dedupe_key=_NOTICE_KEY_APP)
+    try:
+        model = await check_model_update()
+    except BadRequestException as exc:
+        logger.info("定时检查模型更新未完成：%s", exc)
+    else:
+        async with db.session() as session:
+            if model.update_available and model.installable:
+                await upsert_notice(
+                    session,
+                    dedupe_key=_NOTICE_KEY_MODEL,
+                    severity=NoticeSeverity.WARNING,
+                    source="app",
+                    title=f"发现新的识别模型 {model.latest_tag}",
+                    message=(
+                        f"种子名识别（NER）模型 {model.latest_tag} 已发布。"
+                        "到「设置 → 关于与更新」更新即可，仅重启后端、页面不中断。"
+                    ),
+                    payload={"latest_tag": model.latest_tag},
+                )
+            else:
+                await resolve_notices(session, dedupe_key=_NOTICE_KEY_MODEL)
 
 
 # ---------------------------------------------------------------------------

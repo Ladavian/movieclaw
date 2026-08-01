@@ -159,6 +159,12 @@ COPY docker/runtime-version /etc/movieclaw-runtime
 ARG TMDB_API_KEY=""
 ENV TMDB_API_KEY=${TMDB_API_KEY}
 
+# 更新清单签名公钥（可选，base64 的 Ed25519 公钥）：烧入后应用内更新强制
+# 验签（manifest.json.sig），防 Release/加速镜像被篡改。留空则不校验。
+# 密钥对由 scripts/gen-release-signing-key.sh 生成。
+ARG UPDATE_MANIFEST_PUBKEY=""
+ENV UPDATE_MANIFEST_PUBKEY=${UPDATE_MANIFEST_PUBKEY}
+
 ENV PATH="/venv/bin:${PATH}" \
     PYTHONPATH=/app/src \
     PYTHONUNBUFFERED=1 \

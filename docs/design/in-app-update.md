@@ -190,5 +190,12 @@ exit 42 仅重启后端。entrypoint 解析时若 data 卷有生效模型指针�
 **M4 — 模型独立更新 + 收尾**
 - 模型更新流程；SQLite 备份保留策略；README/文档补「何时需要升级镜像」。
 
-**M5 —（二期）加固**
-- manifest minisign 签名；自动检查更新的定时任务；runtime bump 的 CI 守卫。
+**M5 — 加固（已全部落地）**
+- manifest 签名：采用 Ed25519（cryptography 已是运行依赖，无需引入 minisign）。
+  发布侧配置 CI 机密 `RELEASE_SIGNING_KEY` 后自动上传 `manifest.json.sig`；
+  部署侧配置 `UPDATE_MANIFEST_PUBKEY`（镜像构建参数或环境变量）后强制验签。
+  双方都不配置时行为不变。密钥对用 `scripts/gen-release-signing-key.sh` 生成。
+- 自动检查更新：定时任务 `check_app_update`（每日）比对应用与模型的最新
+  Release，发现新版通过「待处理事项」提醒（绝不自动安装——更新会重启服务，
+  必须由用户主动触发）；网络不可达静默跳过，不产生告警。
+- runtime bump CI 守卫：`.github/workflows/runtime-guard.yml`。

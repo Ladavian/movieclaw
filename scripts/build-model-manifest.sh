@@ -33,3 +33,20 @@ out = model_dir / "manifest.json"
 out.write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 print(f"已生成 {out}")
 PY
+
+# 可选签名（与 build-release-artifacts.sh 同一机制）：manifest.json.sig 一并上传
+if [[ -n "${RELEASE_SIGNING_KEY:-}" ]]; then
+    MODEL_DIR="$MODEL_DIR" python3 - <<'PY'
+import base64
+import os
+from pathlib import Path
+
+from cryptography.hazmat.primitives.serialization import load_pem_private_key
+
+key = load_pem_private_key(os.environ["RELEASE_SIGNING_KEY"].encode(), password=None)
+model_dir = Path(os.environ["MODEL_DIR"])
+raw = (model_dir / "manifest.json").read_bytes()
+(model_dir / "manifest.json.sig").write_bytes(base64.b64encode(key.sign(raw)) + b"\n")
+print(f"已生成 {model_dir / 'manifest.json.sig'}")
+PY
+fi

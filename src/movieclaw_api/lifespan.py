@@ -115,6 +115,7 @@ def build_lifespan(settings: Settings):
         # 领域业务任务在此处 import 其任务模块以触发 @register_task 注册（须在 start() 前）。
         if settings.scheduler_enabled:
             from movieclaw_api.services import (  # noqa: F401  订阅管线三任务注册  # noqa: F401  下载完成检测与入库任务注册  # noqa: F401  媒体库对账任务注册
+                app_update,  # noqa: F401  应用更新每日检查任务注册
                 download_progress,
                 media_refresh,
                 torrent_matcher,

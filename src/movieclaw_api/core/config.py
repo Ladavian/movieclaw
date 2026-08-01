@@ -170,6 +170,12 @@ class Settings(BaseSettings):
     # NER 模型的应用内更新落盘目录（entrypoint 解析其中的 current 指针，
     # 优先于镜像内置模型）。与 updates_dir 同在 data/ 卷上。
     models_dir: str = Field(default="./data/models/ner", alias="MOVIECLAW_MODELS_DIR")
+    # 更新清单的 Ed25519 签名公钥（base64 的 32 字节原始公钥）。配置后所有
+    # 更新清单必须携带有效签名（manifest.json.sig），防 Release 被篡改——
+    # 对走第三方加速镜像的用户是 sha256 之上的第二道保险。留空则不校验签名。
+    # 发布侧配套：scripts/gen-release-signing-key.sh 生成密钥对，CI 配置
+    # RELEASE_SIGNING_KEY 机密后自动随 Release 上传签名。
+    update_manifest_pubkey: str = Field(default="", alias="UPDATE_MANIFEST_PUBKEY")
 
     # ------------------------------------------------------------------
     # 定时任务调度配置

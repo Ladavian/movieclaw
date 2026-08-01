@@ -322,3 +322,48 @@ async def test_start_model_update_rejected_outside_docker(models_dir, monkeypatc
     monkeypatch.delenv("MOVIECLAW_RUNTIME_VERSION")
     with pytest.raises(BadRequestException, match="不支持应用内更新模型"):
         await app_update.start_model_update()
+
+
+# ---------------------------------------------------------------------------
+# 更新清单签名（可选启用：配置 UPDATE_MANIFEST_PUBKEY 后强制验签）
+# ---------------------------------------------------------------------------
+
+
+def _signing_pair() -> tuple[bytes, str]:
+    """生成测试密钥对：返回（私钥对象可签名的 raw 清单签名函数用密钥, 公钥 base64）。"""
+    import base64
+
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+    from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
+
+    key = Ed25519PrivateKey.generate()
+    pub_b64 = base64.b64encode(
+        key.public_key().public_bytes(Encoding.Raw, PublicFormat.Raw)
+    ).decode()
+    raw = b'{"schema":1}'
+    sig_b64 = base64.b64encode(key.sign(raw))
+    return raw, pub_b64, sig_b64  # type: ignore[return-value]
+
+
+def test_manifest_signature_roundtrip(monkeypatch):
+
+    raw, pub_b64, sig_b64 = _signing_pair()
+    monkeypatch.setenv("UPDATE_MANIFEST_PUBKEY", pub_b64)
+    get_settings.cache_clear()
+    try:
+        # 正确签名通过；尾随换行（脚本产物带 \n）也通过
+        app_update._verify_manifest_signature(raw, sig_b64)
+        app_update._verify_manifest_signature(raw, sig_b64 + b"\n")
+        # 内容被篡改 → 拒绝
+        with pytest.raises(BadRequestException, match="签名校验失败"):
+            app_update._verify_manifest_signature(raw + b" ", sig_b64)
+        # 签名本身是垃圾 → 拒绝
+        with pytest.raises(BadRequestException, match="签名校验失败"):
+            app_update._verify_manifest_signature(raw, b"not-base64!!")
+        # 公钥配置无效 → 明确报配置错误
+        monkeypatch.setenv("UPDATE_MANIFEST_PUBKEY", "bad key")
+        get_settings.cache_clear()
+        with pytest.raises(BadRequestException, match="配置无效"):
+            app_update._verify_manifest_signature(raw, sig_b64)
+    finally:
+        get_settings.cache_clear()

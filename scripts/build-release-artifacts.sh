@@ -136,5 +136,26 @@ manifest = {
 print((out / "manifest.json").read_text())
 PY
 
+# ---------------------------------------------------------------------------
+# 4) 可选签名：配置 RELEASE_SIGNING_KEY（Ed25519 私钥 PEM 内容）后生成
+#    manifest.json.sig。镜像/部署侧配置 UPDATE_MANIFEST_PUBKEY 即强制验签。
+#    密钥对用 scripts/gen-release-signing-key.sh 生成。
+# ---------------------------------------------------------------------------
+if [[ -n "${RELEASE_SIGNING_KEY:-}" ]]; then
+    OUT_DIR="$OUT_DIR" "$PYTHON_BIN" - <<'PY'
+import base64
+import os
+from pathlib import Path
+
+from cryptography.hazmat.primitives.serialization import load_pem_private_key
+
+key = load_pem_private_key(os.environ["RELEASE_SIGNING_KEY"].encode(), password=None)
+out = Path(os.environ["OUT_DIR"])
+raw = (out / "manifest.json").read_bytes()
+(out / "manifest.json.sig").write_bytes(base64.b64encode(key.sign(raw)) + b"\n")
+print("已生成更新清单签名 manifest.json.sig")
+PY
+fi
+
 echo "==> 完成，产物在 $OUT_DIR/"
 ls -lh "$OUT_DIR"

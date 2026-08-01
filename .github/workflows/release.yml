@@ -46,6 +46,9 @@ jobs:
       - name: 构建更新产物（版本取自 tag，与 pyproject/__version__ 三方校验）
         env:
           NEXT_TELEMETRY_DISABLED: "1"
+          # 配置了 RELEASE_SIGNING_KEY 机密（Ed25519 私钥 PEM）时自动生成
+          # manifest.json.sig；未配置则跳过签名（部署侧不设公钥即不校验）
+          RELEASE_SIGNING_KEY: ${{ secrets.RELEASE_SIGNING_KEY }}
         run: |
           VERSION="${GITHUB_REF_NAME#v}" ./scripts/build-release-artifacts.sh dist/release
 
@@ -57,7 +60,6 @@ jobs:
             gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" \
               --title "$GITHUB_REF_NAME" --generate-notes
           fi
-          gh release upload "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --clobber \
-            dist/release/app-web.tar.gz \
-            dist/release/app-backend.tar.gz \
-            dist/release/manifest.json
+          assets=(dist/release/app-web.tar.gz dist/release/app-backend.tar.gz dist/release/manifest.json)
+          [ -f dist/release/manifest.json.sig ] && assets+=(dist/release/manifest.json.sig)
+          gh release upload "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --clobber "${assets[@]}"
