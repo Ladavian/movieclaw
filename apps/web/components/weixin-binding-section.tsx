@@ -2,7 +2,10 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 
+import Link from "next/link";
+
 import { ChatIcon } from "@/components/icons";
+import { useLlmConfigured } from "@/components/llm-gate";
 import {
   type WeixinAccount,
   type WeixinBindingSnapshot,
@@ -26,8 +29,13 @@ import { useVisiblePolling } from "@/lib/use-visible-polling";
  *   confirmed → 二维码消失、提示完成、刷新列表(此时通道已在收发);
  *   expired/failed → 展示原因 + 「重新生成」按钮;
  * - 已有绑定后,除非点「新增绑定」,二维码不再出现。
+ *
+ * 前置门禁:微信侧对话完全由 AI 模型驱动,未接入模型供应商时不自动出码、
+ * 隐藏绑定入口,并展示引导提醒(判定与 useLlmConfigured / 后端同口径)。
  */
 export function WeixinBindingSection() {
+  // null = 探测中(不出码也不提醒,避免闪烁);false = 未配置(拦下并引导)
+  const llmConfigured = useLlmConfigured();
   const [accounts, setAccounts] = useState<WeixinAccount[] | null>(null);
   const [binding, setBinding] = useState<WeixinBindingSnapshot | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -73,15 +81,19 @@ export function WeixinBindingSection() {
     }
   }, []);
 
-  // 进入页面:先拉列表;为空则自动发起绑定(仅首次)
+  // 进入页面:先拉账号列表
   useEffect(() => {
-    void loadAccounts().then((rows) => {
-      if (rows.length === 0 && !autoStartedRef.current) {
-        autoStartedRef.current = true;
-        void beginBinding();
-      }
-    });
-  }, [loadAccounts, beginBinding]);
+    void loadAccounts();
+  }, [loadAccounts]);
+
+  // 列表为空且模型已配置时自动发起绑定(仅首次);未配置模型不出码
+  useEffect(() => {
+    if (llmConfigured !== true || accounts == null) return;
+    if (accounts.length === 0 && !autoStartedRef.current) {
+      autoStartedRef.current = true;
+      void beginBinding();
+    }
+  }, [llmConfigured, accounts, beginBinding]);
 
   // 绑定进行中每 2s poll 状态;终态停止
   const polling =
@@ -163,6 +175,20 @@ export function WeixinBindingSection() {
         </div>
       )}
 
+      {/* 前置门禁:未接入 AI 模型时给出引导,并隐藏所有绑定入口 */}
+      {llmConfigured === false && (
+        <div className="rounded-xl border border-[#f5c451]/30 bg-[#f5c451]/10 px-4 py-3 text-body text-[#f5c451]">
+          微信绑定需要先完成 AI 模型配置——微信里的对话完全由模型驱动。请先前往
+          <Link
+            href="/settings/llm"
+            className="mx-1 font-medium underline underline-offset-2 hover:opacity-80"
+          >
+            设置 → AI 模型
+          </Link>
+          接入模型供应商，再回来扫码绑定。
+        </div>
+      )}
+
       {loading ? (
         <div className="h-[104px] animate-pulse rounded-xl bg-white/[0.04]" />
       ) : (
@@ -233,8 +259,8 @@ export function WeixinBindingSection() {
             </div>
           )}
 
-          {/* 已有绑定且当前没在走绑定流程:提供「新增绑定」入口 */}
-          {hasAccounts && binding == null && (
+          {/* 已有绑定且当前没在走绑定流程:提供「新增绑定」入口(模型未配置时隐藏) */}
+          {hasAccounts && binding == null && llmConfigured !== false && (
             <button
               type="button"
               disabled={busy}
@@ -245,8 +271,8 @@ export function WeixinBindingSection() {
             </button>
           )}
 
-          {/* 空态且绑定发起失败(网关不可达等):手动重试入口 */}
-          {!hasAccounts && binding == null && (
+          {/* 空态且绑定发起失败(网关不可达等):手动重试入口(模型未配置时隐藏,由上方提醒引导) */}
+          {!hasAccounts && binding == null && llmConfigured !== false && (
             <div className="css-glass flex flex-col items-center gap-3 !rounded-2xl px-6 py-12 text-center">
               <span className="icon-chip size-12 !rounded-2xl">
                 <ChatIcon className="size-6" />
