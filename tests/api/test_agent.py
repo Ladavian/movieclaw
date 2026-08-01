@@ -323,3 +323,20 @@ def test_cancel_run_ends_with_cancelled_event(client, monkeypatch) -> None:
 
     events = parse_sse(client.get(f"/api/v1/agent/runs/{run_id}/stream").text)
     assert events[-1][1] == "agent_cancelled"
+
+
+def test_system_prompt_external_url_injection(client) -> None:
+    """外部访问地址注入系统提示词环境段：未配置不出现，配置后原文出现。"""
+    from movieclaw_api.api.routes.agent import _agent_system_prompt
+
+    prompt = asyncio.run(_agent_system_prompt())
+    assert "外部访问地址" not in prompt
+
+    saved = client.put(
+        "/api/v1/app/config",
+        json={"port": 0, "external_url": "http://192.168.1.10:3000/"},
+    )
+    assert saved.status_code == 200
+    prompt = asyncio.run(_agent_system_prompt())
+    # 保存时规范化掉了尾部斜杠
+    assert "外部访问地址：http://192.168.1.10:3000。" in prompt

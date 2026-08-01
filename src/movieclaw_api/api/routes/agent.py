@@ -34,6 +34,7 @@ from movieclaw_api.services.agent_sessions import (
 )
 from movieclaw_api.services.llm_config import acquire_llm_router
 from movieclaw_api.services.mclaw_tool import render_service_map
+from movieclaw_api.settings import AppServerSetting, get_setting_store
 from movieclaw_db.engine import get_session
 from movieclaw_db.repositories.agent_session_repo import (
     AgentSessionRepository,
@@ -59,19 +60,29 @@ def get_agent_tools(cli_env: dict[str, str]) -> list[AgentTool]:
     ]
 
 
-def _agent_system_prompt() -> str:
+async def _agent_system_prompt() -> str:
     """组装本次运行的系统提示词：通用正文 + 部署环境事实。
 
     日志目录是 API 层的配置（LOG_DIR），按 prompts.build_system_prompt 的
     设计走 extra_environment 传入——mclaw 已对 Agent 隐藏 logs 域（见
     services/mclaw_tool 的 _EXCLUDED_DOMAINS），排查问题靠这里给出的
     路径用 bash 直接检索。
+
+    外部访问地址来自「设置 → 应用设置」（保存即生效），因此每次运行时
+    现读设置存储，不做缓存；未配置时不输出该行，避免模型拼出无效链接。
     """
     log_dir = Path(get_settings().log_dir).resolve()
-    return build_system_prompt(
+    lines = [
         f"- 运行日志目录：{log_dir}，按天一个文件（movieclaw-YYYY-MM-DD.log）。"
         "排查问题时用 bash 的 grep/tail 直接检索日志。"
-    )
+    ]
+    external_url = (await get_setting_store().get(AppServerSetting)).external_url
+    if external_url:
+        lines.append(
+            f"- 本应用的外部访问地址：{external_url}。需要给用户可点击的页面链接时"
+            "以它为前缀（例如订阅详情、媒体库条目页）；不要用容器内地址拼链接。"
+        )
+    return build_system_prompt("\n".join(lines))
 
 
 async def _cli_env(session_id: str) -> dict[str, str]:
@@ -159,7 +170,7 @@ async def start_agent(
         input=payload.input,
         history=history,
         model=payload.model,
-        system_prompt=_agent_system_prompt(),
+        system_prompt=await _agent_system_prompt(),
     )
     run_id = get_agent_run_registry().start(runner, params, on_terminal=recorder.on_terminal)
     await recorder.begin(run_id)
@@ -278,7 +289,7 @@ async def compact_agent_session(
         "",
     )
 
-    messages = [ChatMessage(role="system", content=_agent_system_prompt()), *history]
+    messages = [ChatMessage(role="system", content=await _agent_system_prompt()), *history]
     result = await compact(llm_router, model, messages, ModelSettings())
     if result is None:
         raise UpstreamServiceException("压缩失败：模型未能生成摘要，请稍后重试")
