@@ -29,6 +29,7 @@ from movieclaw_api.services.weixin_channel import get_weixin_channel
 from movieclaw_channel.weixin.adapter import CHANNEL_ID
 from movieclaw_db.engine import get_session
 from movieclaw_db.repositories.channel_account_repo import ChannelAccountRepository
+from movieclaw_db.repositories.llm_provider_repo import LlmProviderRepository
 
 router = APIRouter(prefix="/channels/weixin", tags=["channels"])
 
@@ -74,8 +75,19 @@ async def list_weixin_accounts(
     summary="发起微信扫码绑定",
     operation_id="channels.weixin.bindings.start",
 )
-async def start_weixin_binding() -> ApiResponse[WeixinBindingStartView]:
-    """获取二维码并启动后台状态轮询;前端拿 challenge_id 开始 poll。"""
+async def start_weixin_binding(
+    session: AsyncSession = Depends(get_session),
+) -> ApiResponse[WeixinBindingStartView]:
+    """获取二维码并启动后台状态轮询;前端拿 challenge_id 开始 poll。
+
+    前置:必须已配置 AI 模型——微信侧对话完全由模型驱动,没配置时绑定了
+    也无法使用,不如在入口拦下并引导去设置(与 acquire_llm_router 同口径,
+    只看是否已配置,连通性验证失败仍放行由运行时报错)。
+    """
+    if await LlmProviderRepository(session).get() is None:
+        raise BadRequestException(
+            "微信绑定需要先完成 AI 模型配置:请先在「设置 → AI 模型」接入模型供应商,再进行绑定"
+        )
     try:
         challenge = await get_weixin_channel().binding.begin()
     except Exception as exc:  # noqa: BLE001 -- 网关不可达等,转成中文业务错误
