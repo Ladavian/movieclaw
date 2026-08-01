@@ -134,6 +134,35 @@ async def test_movie_plan_targets_and_skips(db, tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_strm_renames_independently_not_as_sidecar(db, tmp_path):
+    """strm 占位文件独立参与整理（保留 .strm 后缀），不被同名视频当附属拖走。"""
+    root = tmp_path / "movies"
+    async with db.session() as session:
+        library = await _make_library(session, kind=MediaKind.MOVIE, root=root)
+        movie = await _make_item(
+            session, kind=MediaKind.MOVIE, tmdb_id=310, title="云上电影", year=2022
+        )
+        messy_dir = root / "Cloud.Movie.2022.1080p"
+        messy_dir.mkdir(parents=True)
+        video = messy_dir / "cloud.movie.2022.mkv"
+        video.write_bytes(b"v")
+        # 双后缀是 strm 生成器的常见命名——正好构成"以主文件名. 开头"的附属形态
+        strm = messy_dir / "cloud.movie.2022.mkv.strm"
+        strm.write_text("https://cloud.example.com/m.mkv", encoding="utf-8")
+        _add_file(session, library, movie, video, resolution="1080p")
+        _add_file(session, library, movie, strm)
+        await session.commit()
+
+        plan = await build_organize_plan(session, library)
+
+    targets = {a.source_path: a.target_path for a in plan.renames}
+    assert targets[str(video)] == str(root / "云上电影 (2022)" / "云上电影 (2022).mkv")
+    assert targets[str(strm)] == str(root / "云上电影 (2022)" / "云上电影 (2022).strm")
+    video_action = next(a for a in plan.renames if a.source_path == str(video))
+    assert video_action.sidecars == [], "strm 是独立版本，不该作为附属被视频拖走"
+
+
+@pytest.mark.asyncio
 async def test_tv_plan_targets(db, tmp_path):
     """剧集库：季集号 → Season 目录 + SxxEyy 规范名；集号缺失跳过。"""
     root = tmp_path / "tv"

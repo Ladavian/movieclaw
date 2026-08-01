@@ -50,16 +50,17 @@ def _is_relevant_event(event) -> bool:  # noqa: ANN001
     """
     from watchdog.events import EVENT_TYPE_CLOSED_NO_WRITE, EVENT_TYPE_OPENED
 
-    from movieclaw_api.services.library.layout import VIDEO_EXTS
+    from movieclaw_api.services.library.layout import SCAN_VIDEO_EXTS
 
     if event.event_type in (EVENT_TYPE_OPENED, EVENT_TYPE_CLOSED_NO_WRITE):
         return False
     if event.is_directory:
         return event.event_type in ("moved", "deleted")
     # moved 事件的语义看终点：改名成视频（下载完成）要触发，视频被改走
-    # （旧路径消失）同样要触发——起点终点任一是视频扩展名即算数
+    # （旧路径消失）同样要触发——起点终点任一是视频扩展名即算数。
+    # strm 与视频同权：网盘工具重新生成 strm 树时台账要跟着对齐
     paths = (getattr(event, "dest_path", "") or "", event.src_path or "")
-    return any(Path(os.fsdecode(p)).suffix.lower() in VIDEO_EXTS for p in paths if p)
+    return any(Path(os.fsdecode(p)).suffix.lower() in SCAN_VIDEO_EXTS for p in paths if p)
 
 
 class LibraryWatcher:

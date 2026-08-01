@@ -329,6 +329,51 @@ async def test_scan_prefers_nfo_identity(db, tmp_path) -> None:
         assert (row.season_number, row.episode_number) == (0, 0)
 
 
+async def test_scan_ingests_strm_placeholders(db, tmp_path, monkeypatch) -> None:
+    """strm 占位文件（网盘场景）与普通视频同权入库：按文件名识别、规格留空。
+
+    覆盖两种常见生成器命名：纯 strm 与保留原容器后缀的双后缀（foo.mkv.strm）。
+    strm 本体是一行 URL 的文本，ffprobe 探测必须整个跳过——包括入账时的
+    首探与后续扫描的补探阶段。
+    """
+    probed: list[str] = []
+    monkeypatch.setattr(scan_mod, "probe_media", lambda path, *_a, **_k: probed.append(str(path)))
+
+    root = tmp_path / "media" / "tv"
+    show = root / "测试剧集 (2024)" / "Season 01"
+    show.mkdir(parents=True)
+    (show / "测试剧集.S01E01.1080p.strm").write_text(
+        "https://cloud.example.com/e1.mkv", encoding="utf-8"
+    )
+    (show / "测试剧集.S01E02.1080p.mkv.strm").write_text(
+        "https://cloud.example.com/e2.mkv", encoding="utf-8"
+    )
+    (show / "测试剧集.S01E03.1080p.mkv").write_bytes(b"e3")  # 混排的真视频照常探测
+    async with db.session() as session:
+        library = await LibraryRepository(session).create(
+            name="网盘剧集库", kind="tv", root_paths=[str(root)]
+        )
+
+    summary = await scan_library(library.id)
+    assert summary.scanned == 3 and summary.identified == 3
+    assert probed == [str(show / "测试剧集.S01E03.1080p.mkv")], "strm 不该被 ffprobe 摸到"
+
+    async with db.session() as session:
+        files = list((await session.execute(select(LibraryFile))).scalars().all())
+        assert {(f.season_number, f.episode_number) for f in files} == {(1, 1), (1, 2), (1, 3)}
+        strm_rows = [f for f in files if f.file_path.endswith(".strm")]
+        assert len(strm_rows) == 2
+        for row in strm_rows:
+            assert row.container == "strm"
+            assert row.resolution is None and row.audio_streams is None
+
+    # 增量重扫：strm 行与普通行同样秒过，补探阶段也不再回头摸 strm
+    probed.clear()
+    summary2 = await scan_library(library.id)
+    assert summary2.skipped_known == 3
+    assert probed == []
+
+
 async def test_tv_files_in_movie_library_refuse_to_identify(db, tmp_path) -> None:
     """事故回归：剧集文件落在**电影库**里，绝不能按电影建档。
 

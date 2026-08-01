@@ -52,7 +52,7 @@ from pathlib import Path
 from sqlmodel import select
 
 from movieclaw_api.services.library.config import sanitize_folder_name
-from movieclaw_api.services.library.layout import VIDEO_EXTS, entry_base_name
+from movieclaw_api.services.library.layout import SCAN_VIDEO_EXTS, entry_base_name
 from movieclaw_api.services.task_state import TaskState
 from movieclaw_db.engine import get_database
 from movieclaw_db.models import Library, LibraryFile, MediaItem, utcnow
@@ -63,7 +63,8 @@ logger = logging.getLogger("movieclaw_api.library_organize")
 
 # 跟随主文件一起改名的附属文件后缀（字幕/章节/单文件 NFO 等，
 # 同目录且文件名以"主文件名."开头即视为附属，如 foo.zh.srt / foo.nfo）
-_SIDECAR_SKIP_EXTS = VIDEO_EXTS | {".iso"}  # 同名不同容器的视频是独立版本，不是附属
+# 同名不同容器的视频（含 strm 占位）是独立版本，不是附属
+_SIDECAR_SKIP_EXTS = SCAN_VIDEO_EXTS | {".iso"}
 
 # 每库单飞互斥 + 实时进度 (已完成, 总数) + 最近一次结论，容器统一为 TaskState
 _organize_tasks: TaskState[tuple[int, int]] = TaskState()

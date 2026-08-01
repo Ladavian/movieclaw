@@ -47,7 +47,8 @@ from pathlib import Path
 from sqlmodel import select
 
 from movieclaw_api.services.library.layout import (
-    VIDEO_EXTS,
+    SCAN_VIDEO_EXTS,
+    STRM_EXT,
     entry_dirs,
     season_from_dir,
     trailing_index_episode,
@@ -672,7 +673,7 @@ def _walk_videos(root: Path):
                 continue
             lower = name.lower()
             suffix = Path(lower).suffix
-            if suffix not in VIDEO_EXTS and suffix != ".iso":
+            if suffix not in SCAN_VIDEO_EXTS and suffix != ".iso":
                 continue
             if any(marker in lower for marker in _IGNORE_MARKERS):
                 continue
@@ -701,8 +702,12 @@ async def _ingest_file(
         summary.scanned += 1  # 新文件 / 回归的 missing 文件
     else:
         summary.retried += 1  # 在位但待识别：识别重试，不算新入账
-    # 先探测：实测时长是电影同名候选消歧的强信号（原盘探测其主流文件）
-    probe_target = disc_main_stream(file) if is_disc else file
+    # 先探测：实测时长是电影同名候选消歧的强信号（原盘探测其主流文件）。
+    # strm 是网盘播放占位文件（内容是一行 URL 的文本），没有可探测的媒体流，
+    # 直接跳过——去探 strm 内部的 URL 既慢又不可靠（直链多带时效鉴权），
+    # 还违背 strm"扫库零流量"的初衷，规格列留空即可
+    is_strm = not is_disc and file.suffix.lower() == STRM_EXT
+    probe_target = None if is_strm else (disc_main_stream(file) if is_disc else file)
     spec = await asyncio.to_thread(probe_media, probe_target) if probe_target is not None else None
     if is_disc:
         size_bytes = await asyncio.to_thread(_disc_total_size, file)
@@ -713,8 +718,11 @@ async def _ingest_file(
 
     # 改名归并（走识别链之前）：新路径可能只是台账里某个旧文件被改了名，
     # 归并成功即结束——身份锚（含人工认领）随行迁移，免一次 TMDB 收敛。
-    # 该路径已有台账行时跳过：行会原地更新，归并反而会撞路径唯一键
-    if existing is None and await _try_relink(
+    # 该路径已有台账行时跳过：行会原地更新，归并反而会撞路径唯一键。
+    # strm 不参与归并：指纹靠"尺寸 + 时长"，而 strm 只有几百字节且无时长，
+    # 同剧各集的 URL 长度往往完全相同，尺寸毫无区分度——错并会把身份锚
+    # 挂到另一集头上，宁可当新文件重走识别链
+    if existing is None and not is_strm and await _try_relink(
         repo,
         library,
         file,
@@ -928,6 +936,9 @@ async def _probe_backfill(
         .scalars()
         .all()
     )
+    # strm 占位文件永远探不出规格（本体没有媒体流），不进分母——否则
+    # strm 库每轮扫描都会报"待补 N、探测 0"，像坏了一样
+    rows = [row for row in rows if not row.file_path.lower().endswith(STRM_EXT)]
     if not rows:
         return
     state.phase = ScanPhase.PROBING
@@ -1556,7 +1567,7 @@ def local_episode_count(directory: Path) -> int | None:
     episodes: set[int] = set()
     for entry in entries:
         name = entry.name
-        if entry.suffix.lower() not in VIDEO_EXTS or not entry.is_file():
+        if entry.suffix.lower() not in SCAN_VIDEO_EXTS or not entry.is_file():
             continue
         if any(marker in name.lower() for marker in _IGNORE_MARKERS):
             continue

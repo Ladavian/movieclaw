@@ -455,6 +455,35 @@ async def test_wall_reports_probe_pending_count(db, tmp_path, monkeypatch) -> No
         assert [v.probe_pending_count for v in wall] == [0]
 
 
+async def test_strm_rows_never_count_as_probe_pending(db, tmp_path) -> None:
+    """strm 占位行不算「待补探」：墙上计数为零，详情页也不排后台补探。
+
+    strm 永远探不出规格（本体没有媒体流），算进待补探会让网盘库的海报墙
+    每轮扫描都全墙点亮「正在读取规格」且永不消失。
+    """
+    root = tmp_path / "media" / "movies"
+    entry = root / "某电影 (2020)"
+    entry.mkdir(parents=True)
+    (entry / "某电影.2020.1080p.WEB-DL.strm").write_text(
+        "https://cloud.example.com/m.mkv", encoding="utf-8"
+    )
+    (entry / "movie.nfo").write_text(_FULL_NFO, encoding="utf-8")
+    async with db.session() as session:
+        library = await LibraryRepository(session).create(
+            name="网盘电影库", kind="movie", root_paths=[str(root)]
+        )
+    summary = await scan_library(library.id)
+    assert summary.identified == 1
+
+    async with db.session() as session:
+        wall = await items_mod.build_library_wall(session, library.id)
+        assert [v.probe_pending_count for v in wall] == [0]
+        item_id = (await session.execute(select(MediaItem))).scalars().one().id
+        tasks = BackgroundTasks()
+        await get_library_item(library.id, item_id, tasks, session)
+        assert tasks.tasks == [], "strm 不该被排进详情页的后台补探任务"
+
+
 async def test_item_detail_selfsufficient_after_scan(db, tmp_path) -> None:
     """一次入库刮削（docs/design/metadata.md）：扫描挂锚即展示档案落库、
     最小身份 NFO 原地升级为完整版。详情页读路径 NFO > DB——删掉 NFO 后
