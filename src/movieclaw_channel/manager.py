@@ -25,6 +25,9 @@ logger = logging.getLogger("movieclaw_channel.manager")
 
 #: 收消息循环异常退出后的重启退避(秒)
 _RESTART_BACKOFF_S = 30.0
+#: 停止账号时的优雅退出窗口:先置 stop 让长轮询中断、notifystop 送达,
+#: 超时仍未退出才强制取消
+_GRACEFUL_STOP_TIMEOUT_S = 5.0
 
 
 @dataclass(slots=True)
@@ -116,6 +119,9 @@ class ChannelManager:
                         await on_auth_error(ctx.account_id)
                     except Exception:  # noqa: BLE001
                         logger.exception("stale 状态回调失败 account=%s", ctx.account_id)
+                # 收消息循环已终止,发送泵/会话 worker 也一并关掉,避免任务泄漏
+                # (账号句柄保留在 _accounts 里,状态接口据此展示 stale)
+                await rt.dispatcher.close()
                 return
             except Exception as exc:  # noqa: BLE001
                 rt.last_error = str(exc)
@@ -135,9 +141,10 @@ class ChannelManager:
             return
         rt.stop.set()
         if rt.task is not None and not rt.task.done():
-            rt.task.cancel()
-            with contextlib.suppress(asyncio.CancelledError, Exception):
-                await rt.task
+            # 优雅窗口:stop 信号会掐断在飞长轮询,循环自然退出并发 notifystop;
+            # 超时兜底强制取消(wait_for 超时时已自动 cancel 并等待任务结束)
+            with contextlib.suppress(TimeoutError, asyncio.CancelledError, Exception):
+                await asyncio.wait_for(rt.task, timeout=_GRACEFUL_STOP_TIMEOUT_S)
         await rt.dispatcher.close()
         logger.info("通道账号已停止 %s", key)
 

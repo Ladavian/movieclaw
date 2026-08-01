@@ -145,6 +145,8 @@ async def submit_weixin_verify_code(
     response_model=ApiResponse[dict],
     summary="解绑微信账号",
     operation_id="channels.weixin.accounts.unbind",
+    # 解绑删除凭据、停止通道,须二次确认(CLI 据此决定 --yes 门槛)
+    openapi_extra={"x-cli-dangerous": "confirm"},
 )
 async def unbind_weixin_account(account_id: str) -> ApiResponse[dict]:
     """停止收发循环并删除凭据;之后该 bot 需重新扫码才能使用。"""

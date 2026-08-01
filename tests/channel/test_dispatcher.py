@@ -159,10 +159,42 @@ async def test_stop_cancels_running_agent():
         await d.submit_inbound(_msg("跑个长任务", msg_id="m1"))
         await asyncio.wait_for(started.wait(), timeout=2)
         await d.submit_inbound(_msg("/stop", msg_id="m2"))
-        # 应收到 /stop 回执与取消回执两条系统消息
-        await _drain(d, adapter, expect=2)
+        # /stop 只回执一条,worker 侧不再重复发「已取消」
+        await _drain(d, adapter, expect=1)
+        await asyncio.sleep(0.05)
         texts = [t for _, t in adapter.sent]
-        assert any("已取消当前处理" in t for t in texts)
+        assert texts == ["已取消当前处理。"]
+    finally:
+        await d.close()
+
+
+async def test_dead_worker_is_revived():
+    """worker 意外死亡后,下一条消息触发自动复活,会话不永久卡死。"""
+    adapter = FakeAdapter()
+    calls: list[str] = []
+
+    async def run_agent(msg, emit):
+        calls.append(msg.text)
+        await emit(f"回复:{msg.text}")
+
+    d = make_dispatcher(
+        adapter, is_allowed=lambda _u: True, run_agent=run_agent, reset_session=lambda _k: None
+    )
+    d.start()
+    try:
+        await d.submit_inbound(_msg("一", msg_id="m1"))
+        await _drain(d, adapter, expect=1)
+        # 模拟 worker 被意外终止(等价于内部未预期崩溃后任务结束)
+        session = d._sessions["weixin:bot1:u1@im.wechat"]  # noqa: SLF001 -- 测试内部状态
+        assert session.worker is not None
+        session.worker.cancel()
+        await asyncio.sleep(0.05)
+        assert session.worker.done()
+
+        await d.submit_inbound(_msg("还活着吗", msg_id="m2"))
+        await _drain(d, adapter, expect=2)
+        assert calls == ["一", "还活着吗"]
+        assert adapter.sent[-1][1] == "回复:还活着吗"
     finally:
         await d.close()
 

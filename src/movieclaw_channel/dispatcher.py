@@ -176,11 +176,16 @@ class ChannelDispatcher:
         session = self._sessions.get(msg.session_key)
         if session is None:
             session = _Session(queue=asyncio.Queue(maxsize=_SESSION_QUEUE_SIZE))
+            self._sessions[msg.session_key] = session
+        if session.worker is None or session.worker.done():
+            # 首次创建,或 worker 因未预期异常死亡后自动复活——否则该会话的
+            # 队列将无人消费,用户消息从此石沉大海
+            if session.worker is not None:
+                logger.warning("会话 worker 已退出,自动重建 session=%s", msg.session_key)
             session.worker = asyncio.create_task(
                 self._session_worker(msg.session_key, session),
                 name=f"channel-worker-{msg.session_key}",
             )
-            self._sessions[msg.session_key] = session
         try:
             session.queue.put_nowait(msg)
         except asyncio.QueueFull:
@@ -236,10 +241,8 @@ class ChannelDispatcher:
                     await run_task
                 except asyncio.CancelledError:
                     if run_task.cancelled() and not self._closing:
-                        # /stop 取消的是运行而非 worker:回执后继续下一条
-                        await self.push_outbound(
-                            OutboundEnvelope(reply=msg.reply, text="已取消。", origin="system")
-                        )
+                        # /stop 取消的是运行而非 worker(命令处理已回执过,
+                        # 这里不再重复发消息),继续消费下一条
                         continue
                     raise
                 except Exception:

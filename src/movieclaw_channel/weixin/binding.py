@@ -88,8 +88,18 @@ class WeixinBindingRegistry:
     # 对外操作(API 层调用)
     # ------------------------------------------------------------------
     async def begin(self) -> BindingChallenge:
-        """发起绑定:取二维码、启动后台轮询任务,立即返回。"""
+        """发起绑定:取二维码、启动后台轮询任务,立即返回。
+
+        单飞:同一时刻只保留一个进行中的绑定流程。反复进入绑定页/重复点击
+        「新增绑定」会终止旧流程,避免孤儿轮询任务在后台空转 5 分钟。
+        """
         self._purge_expired()
+        for old in self._challenges.values():
+            if old.status not in _TERMINAL_STATUSES:
+                old.status = "expired"
+                old.message = "已发起新的绑定,本流程终止"
+                if old.task is not None and not old.task.done():
+                    old.task.cancel()
         tokens = await self._get_local_tokens()
         qr = await fetch_qrcode(DEFAULT_BASE_URL, tokens)
         qrcode = str(qr.get("qrcode") or "")

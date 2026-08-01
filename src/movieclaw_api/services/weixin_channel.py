@@ -132,11 +132,17 @@ class WeixinChannelService:
         return save
 
     async def _on_auth_error(self, account_id: str) -> None:
-        """凭据失效回调:落库标记 stale,绑定页据此引导重新扫码。"""
+        """凭据失效回调:落库标记 stale,并关闭该账号的连接池。
+
+        绑定页据 stale 状态引导用户重新扫码;重新绑定成功后会构造新客户端。
+        """
         async with get_database().session() as session:
             await ChannelAccountRepository(session).mark_stale(
                 account_id, "微信 bot 凭据已失效,请重新扫码绑定"
             )
+        client = self._clients.pop(account_id, None)
+        if client is not None:
+            await client.aclose()
 
     # ------------------------------------------------------------------
     # 绑定流程回调
@@ -178,9 +184,7 @@ class WeixinChannelService:
     # ------------------------------------------------------------------
     # Agent 装配与执行(dispatcher 的 run_agent 回调)
     # ------------------------------------------------------------------
-    async def _run_agent(
-        self, msg: InboundMessage, emit: Callable[[str], Awaitable[None]]
-    ) -> None:
+    async def _run_agent(self, msg: InboundMessage, emit: Callable[[str], Awaitable[None]]) -> None:
         from movieclaw_channel.pusher import StepReplyPusher
 
         try:
@@ -190,9 +194,7 @@ class WeixinChannelService:
             await emit(f"⚠️ {exc.message}")
             return
 
-        history = self._histories.setdefault(
-            msg.session_key, deque(maxlen=_HISTORY_MAX_MESSAGES)
-        )
+        history = self._histories.setdefault(msg.session_key, deque(maxlen=_HISTORY_MAX_MESSAGES))
         runner = AgentRunner(
             llm_router,
             tools=await self._restricted_tools(msg.session_key),

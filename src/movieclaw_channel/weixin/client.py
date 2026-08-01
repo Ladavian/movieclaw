@@ -205,11 +205,13 @@ async def fetch_qrcode(base_url: str, local_token_list: list[str]) -> dict[str, 
     「该 bot 是否已绑定过本实例」(binded_redirect)。
     """
     url = f"{base_url.rstrip('/')}/ilink/bot/get_bot_qrcode?bot_type={_QR_BOT_TYPE}"
+    # 与 openclaw 一致:即使无 token,POST 也要带 AuthorizationType 声明
+    headers = {**_base_headers(), "AuthorizationType": "ilink_bot_token"}
     async with httpx.AsyncClient(timeout=httpx.Timeout(_API_TIMEOUT_S)) as client:
         resp = await client.post(
             url,
             json={"local_token_list": local_token_list[:10], "base_info": _base_info()},
-            headers=_base_headers(),
+            headers=headers,
         )
         if resp.status_code != 200:
             raise WeixinApiError(f"获取二维码失败 HTTP {resp.status_code}: {resp.text[:200]}")

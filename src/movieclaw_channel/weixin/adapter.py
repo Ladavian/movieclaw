@@ -15,9 +15,15 @@ import contextlib
 import logging
 from typing import Any
 
+import httpx
+
 from movieclaw_channel.adapter import ChannelContext
 from movieclaw_channel.types import ChannelAuthError, InboundMessage, ReplyContext
-from movieclaw_channel.weixin.client import STALE_TOKEN_ERRCODE, WeixinClient
+from movieclaw_channel.weixin.client import (
+    STALE_TOKEN_ERRCODE,
+    WeixinApiError,
+    WeixinClient,
+)
 
 logger = logging.getLogger("movieclaw_channel.weixin.adapter")
 
@@ -71,7 +77,23 @@ class WeixinAdapter:
 
         try:
             while not stop.is_set():
-                resp = await self._client.get_updates(cursor, stop=stop, timeout_s=timeout_s)
+                try:
+                    resp = await self._client.get_updates(cursor, stop=stop, timeout_s=timeout_s)
+                except (httpx.HTTPError, WeixinApiError) as exc:
+                    # 传输层/网关错误在循环内退避重试(与业务错误同节奏),
+                    # 不抛给 supervisor 整层重启——那会重发 notifystart 且粒度太粗
+                    failures += 1
+                    logger.error(
+                        "getupdates 请求失败 (%d/%d):%s",
+                        failures,
+                        _MAX_CONSECUTIVE_FAILURES,
+                        exc,
+                    )
+                    hit_cap = failures >= _MAX_CONSECUTIVE_FAILURES
+                    if hit_cap:
+                        failures = 0
+                    await self._sleep(stop, _BACKOFF_DELAY_S if hit_cap else _RETRY_DELAY_S)
+                    continue
 
                 ret = resp.get("ret") or 0
                 errcode = resp.get("errcode") or 0
