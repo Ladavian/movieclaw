@@ -8,6 +8,7 @@ from __future__ import annotations
 import asyncio
 import json
 import time
+from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
@@ -340,3 +341,45 @@ def test_system_prompt_external_url_injection(client) -> None:
     prompt = asyncio.run(_agent_system_prompt())
     # 保存时规范化掉了尾部斜杠
     assert "外部访问地址：http://192.168.1.10:3000。" in prompt
+
+
+def test_page_routes_match_web_app_pages() -> None:
+    """路由表守护：声明的页面必须真实存在，前端新增页面必须显式处理（进表或豁免）。
+
+    归一化规则：路由表的 {参数} 与 Next.js 的 [参数] 目录都归一为 *，
+    只比较路径形状，参数叫什么名字不影响同步判断。
+    """
+    from movieclaw_api.api.routes.agent import _PAGE_ROUTES
+
+    web_app = Path(__file__).resolve().parents[2] / "apps" / "web" / "app" / "(app)"
+    assert web_app.is_dir(), f"前端页面目录不存在：{web_app}"
+
+    fs_routes = set()
+    for page in web_app.rglob("page.tsx"):
+        rel = page.parent.relative_to(web_app).as_posix()
+        if rel == ".":
+            fs_routes.add("/")
+        else:
+            fs_routes.add(
+                "/" + "/".join("*" if seg.startswith("[") else seg for seg in rel.split("/"))
+            )
+
+    def normalize(pattern: str) -> str:
+        if pattern == "/":
+            return "/"
+        return "/" + "/".join(
+            "*" if seg.startswith("{") else seg for seg in pattern.strip("/").split("/")
+        )
+
+    declared = {normalize(pattern) for pattern, _ in _PAGE_ROUTES}
+
+    # 不进路由表的页面：/runs 是 Agent 会话页自身，/settings 子分区给 /settings 兜底
+    exempt = {"/runs/*", "/settings/*"}
+
+    ghosts = declared - fs_routes
+    assert not ghosts, f"路由表声明了前端不存在的页面：{sorted(ghosts)}"
+    unhandled = fs_routes - declared - exempt
+    assert not unhandled, (
+        f"前端新增了路由表未覆盖的页面：{sorted(unhandled)}——"
+        "要么补进 _PAGE_ROUTES 告知模型，要么加入本测试的豁免清单"
+    )
