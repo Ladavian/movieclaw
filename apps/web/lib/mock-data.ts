@@ -6,6 +6,7 @@
 import type { ComponentType, SVGProps } from "react";
 import {
   BookmarkIcon,
+  ChatIcon,
   DownloadIcon,
   FilmIcon,
   FolderIcon,
@@ -131,6 +132,7 @@ export const settingsSectionGroups: SettingsSectionGroup[] = [
     label: "智能",
     items: [
       { id: "llm", label: "AI 模型", description: "大语言模型供应商接入", icon: SparkIcon },
+      { id: "weixin", label: "微信绑定", description: "把 AI 助手接入你的微信，扫码即用", icon: ChatIcon },
     ],
   },
   {

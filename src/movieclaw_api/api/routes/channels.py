@@ -9,6 +9,11 @@
 
 from __future__ import annotations
 
+import base64
+from functools import lru_cache
+
+import qrcode
+import qrcode.image.svg
 from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -26,6 +31,19 @@ from movieclaw_db.engine import get_session
 from movieclaw_db.repositories.channel_account_repo import ChannelAccountRepository
 
 router = APIRouter(prefix="/channels/weixin", tags=["channels"])
+
+
+@lru_cache(maxsize=8)
+def _qrcode_data_url(content: str) -> str:
+    """把二维码内容渲染成 SVG data URL,前端 <img> 直接显示。
+
+    纯 Python SVG 路径(不依赖 pillow);缓存最近几张——同一 challenge 的
+    poll 每 1-2 秒来一次,内容不变时不必重复编码。
+    """
+    if not content:
+        return ""
+    img = qrcode.make(content, image_factory=qrcode.image.svg.SvgPathImage, box_size=12)
+    return "data:image/svg+xml;base64," + base64.b64encode(img.to_string()).decode()
 
 
 @router.get(
@@ -66,6 +84,7 @@ async def start_weixin_binding() -> ApiResponse[WeixinBindingStartView]:
         WeixinBindingStartView(
             challenge_id=challenge.challenge_id,
             qrcode_url=challenge.qrcode_url,
+            qrcode_image=_qrcode_data_url(challenge.qrcode_url),
             message=challenge.message,
         ),
         message="绑定已发起",
@@ -100,6 +119,7 @@ async def get_weixin_binding_status(
             status=challenge.status,
             message=challenge.message,
             qrcode_url=challenge.qrcode_url,
+            qrcode_image=_qrcode_data_url(challenge.qrcode_url),
             account=account_view,
         )
     )

@@ -8,6 +8,7 @@ import { AvatarBadge } from "@/components/avatar-badge";
 import { DownloaderConfigSection } from "@/components/downloader-config-section";
 import { ImportWatchSection } from "@/components/import-watch-section";
 import { LlmConfigSection } from "@/components/llm-config-section";
+import { WeixinBindingSection } from "@/components/weixin-binding-section";
 import { NetworkConfigSection } from "@/components/network-config-section";
 import { SiteConfigSection } from "@/components/site-config-section";
 import { SubscriptionSettingsSection } from "@/components/subscription-settings-section";
@@ -155,6 +156,8 @@ export function SettingsPanel({ active }: SettingsPanelProps) {
           <ImportWatchSection />
         ) : section.id === "llm" ? (
           <LlmConfigSection />
+        ) : section.id === "weixin" ? (
+          <WeixinBindingSection />
         ) : section.id === "network" ? (
           <NetworkConfigSection />
         ) : section.id === "logs" ? (

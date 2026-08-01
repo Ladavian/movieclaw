@@ -38,8 +38,10 @@ class WeixinBindingStartView(BaseModel):
     """发起绑定的返回:前端渲染二维码并开始 poll。"""
 
     challenge_id: str
-    #: 二维码内容链接(前端用它渲染二维码图)
+    #: 二维码内容链接(扫码目标;备用展示)
     qrcode_url: str
+    #: 服务端渲染好的二维码图(SVG data URL),前端 <img> 直接显示
+    qrcode_image: str
     message: str
 
 
@@ -56,6 +58,7 @@ class WeixinBindingStatusView(BaseModel):
     message: str
     #: 二维码可能中途刷新(过期自动换新),前端每次 poll 都以此为准重绘
     qrcode_url: str
+    qrcode_image: str
     account: WeixinAccountView | None = None
 
 

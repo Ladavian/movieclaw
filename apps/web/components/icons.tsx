@@ -325,3 +325,10 @@ export const RefreshIcon = (p: IconProps) => (
     <path d="M21 3v6h-6" />
   </Base>
 );
+
+export const ChatIcon = (p: IconProps) => (
+  <Base {...p}>
+    <path d="M21 11.5a7.5 7.5 0 0 1-7.5 7.5c-1.06 0-2.07-.2-3-.57L5 20l1.57-4.5A7.5 7.5 0 1 1 21 11.5Z" />
+    <path d="M9.5 11.5h.01M13.5 11.5h.01" />
+  </Base>
+);

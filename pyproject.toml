@@ -48,6 +48,8 @@ dependencies = [
   # qbittorrent-api 用日历版本号（YYYY.M.PATCH），按年份上限约束。
   "qbittorrent-api>=2025.1.0,<2027.0.0",
   "transmission-rpc>=7.0.0,<8.0.0",
+  # 微信绑定二维码：纯 Python 生成 SVG（不引 pillow），前端 <img> 直接渲染。
+  "qrcode>=8.0,<9.0",
   # LLM 接入层（movieclaw_llm）：官方 openai SDK 作为唯一协议客户端，
   # 通过自定义 base_url 覆盖所有 OpenAI 兼容端点（含阿里云百炼 compatible-mode）。
   "openai>=2.45.0,<3.0.0",
