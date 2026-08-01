@@ -3,16 +3,16 @@ movieclaw 的官方命令行工具。对本产品的一切操作——搜索资�
 可用服务（一级目录；参数细节用 --help 现查，如 args="sub --help"）：
 - appearance 外观背景图库
 - auth     账号、API 令牌管理
+- channels 通知渠道（微信扫码绑定与账号管理）
 - discover 影视元数据与榜单（media 搜索条目、拿 TMDB ID）
 - dl       下载器接入、默认下载器与路径映射
 - extension 浏览器插件 Cookie 同步令牌
-- fs       浏览服务器目录（选路径前先看有什么）
 - health   服务健康检查（一般用 status 即可）
 - lib      媒体库：库管理、scan 扫描、organize 整理、items 条目、unidentified 待识别认领、missing 缺失重下、review 身份复核
 - llm      AI 模型供应商配置
 - logs     系统日志（tail -f 可跟随）
 - net      网络与代理（show/set/test）
-- notices   
+- notices  系统待处理事项（list 查看活跃问题、dismiss 忽略）
 - people   影人档案（本地库）
 - rules    订阅过滤规则组（分辨率/制作组/体积等偏好）
 - search   站点资源搜索：search "关键词" 流式聚合出带行号的结果

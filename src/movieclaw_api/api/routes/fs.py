@@ -28,6 +28,9 @@ router = APIRouter(prefix="/fs", tags=["fs"])
     response_model=ApiResponse[FsBrowseView],
     summary="列出服务器上某目录的子目录（目录选择器数据源）",
     operation_id="fs.browse",
+    # 不进 CLI：Agent 已有 bash/read 等通用文件工具，再暴露一个只列目录的
+    # fs 命令只会干扰模型选工具；本接口仅服务 Web 端目录选择器
+    openapi_extra={"x-cli-hidden": True},
 )
 def browse_directory(
     path: str | None = Query(default=None, description="要浏览的绝对路径，缺省为根目录 /"),

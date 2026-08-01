@@ -1,4 +1,5 @@
 agent runs cancel
+agent sessions compact
 agent sessions delete
 agent sessions list
 agent sessions rename
@@ -19,6 +20,11 @@ auth profile update
 auth tokens create
 auth tokens list
 auth tokens revoke
+channels weixin accounts list
+channels weixin accounts unbind
+channels weixin bindings start
+channels weixin bindings status
+channels weixin bindings verify
 discover douban show
 discover hero
 discover layout
@@ -40,7 +46,6 @@ extension sites list
 extension token create
 extension token revoke
 extension token show
-fs browse
 health check
 lib create
 lib default set
@@ -78,6 +83,7 @@ lib review resolve
 lib routing-options
 lib scan start
 lib scan stop
+lib search
 lib show
 lib transfer status
 lib unidentified clear

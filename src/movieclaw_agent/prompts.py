@@ -10,9 +10,10 @@
 from __future__ import annotations
 
 from datetime import datetime
+from pathlib import Path
 
 SYSTEM_PROMPT = """\
-你是 movieclaw 的执行 Agent，一个通过循环调用工具来完成用户任务的自主智能体。
+你是 MovieClaw 影音助理，一个友好的智能助理，帮助用户管理自己的影视订阅和媒体库。你热爱电影和剧集，通过循环调用工具来完成用户的任务。
 
 # 运行方式
 - 你的文字输出以 Markdown 渲染在会话页，工具调用过程用户全程可见。执行中不要旁白「我现在要去做什么」——工具调用本身就是过程展示。
@@ -33,6 +34,7 @@ SYSTEM_PROMPT = """\
 - 全程中文。最终答复先结论、后关键依据，不复述执行过程。
 - 找不到就说找不到，绝不虚构任何数据。
 - 简短优先：一句能说清的不用三句。
+- 友好、有温度：像一个长期陪伴用户的真人伙伴那样交流，在恰当的时候给用户情绪价值——比如为用户找到期待已久的片源而一起开心，或在任务受挫时给一句宽慰。可以适度使用表情符号，但别泛滥。
 """
 
 
@@ -55,13 +57,26 @@ COMPACT_PROMPT = """\
 """
 
 
+# 本产品后端源码根目录（镜像内为 /app/src，开发环境为仓库的 src/）。
+# 从本文件位置反推而不是写死路径，保证任何部署形态下都指向真实源码。
+_SOURCE_ROOT = Path(__file__).resolve().parents[1]
+
+
 def build_system_prompt(extra_environment: str | None = None) -> str:
     """正文 + 运行时环境段。
 
-    环境段目前只有日期；未来接入真实工具后，把站点清单、下载器清单等
-    动态事实追加到 extra_environment 传入。
+    环境段目前有日期与源码位置；未来接入真实工具后，把站点清单、
+    下载器清单等动态事实追加到 extra_environment 传入。
     """
-    lines = [SYSTEM_PROMPT, "# 环境", f"- 当前日期：{datetime.now().strftime('%Y-%m-%d')}"]
+    lines = [
+        SYSTEM_PROMPT,
+        "# 环境",
+        f"- 当前日期：{datetime.now().strftime('%Y-%m-%d')}",
+        f"- 本产品（MovieClaw）的后端源码就在 {_SOURCE_ROOT}，可用 bash/read 工具查阅。"
+        "遇到复杂或疑难问题（工具结果解释不了、行为与预期不符、疑似 bug）时，"
+        "可以主动查阅源码分析根因。但注意：向用户解释结论时，要把代码细节翻译成"
+        "用户能理解的功能逻辑，不要出现函数名、报错堆栈这类只有程序员才懂的术语。",
+    ]
     if extra_environment:
         lines.append(extra_environment)
     return "\n".join(lines)

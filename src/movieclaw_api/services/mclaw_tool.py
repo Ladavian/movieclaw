@@ -21,6 +21,8 @@ logger = logging.getLogger("movieclaw_api.mclaw_tool")
 # 域 → 目录行（一行说明 + 关键子能力/入口提示）。新增域忘了补会被守护测试拦下，
 # 届时可先回落 DOMAIN_HELP 的短标签保证不漏。
 _DOMAIN_LINES = {
+    "channels": "channels 通知渠道（微信扫码绑定与账号管理）",
+    "notices": "notices  系统待处理事项（list 查看活跃问题、dismiss 忽略）",
     "search": 'search   站点资源搜索：search "关键词" 流式聚合出带行号的结果',
     "sub": "sub      订阅：sub create 一步完成消歧/预检/创建；list/show/update/pause/delete",
     "lib": "lib      媒体库：库管理、scan 扫描、organize 整理、items 条目、"
@@ -38,7 +40,6 @@ _DOMAIN_LINES = {
     "auth": "auth     账号、API 令牌管理",
     "appearance": "appearance 外观背景图库",
     "extension": "extension 浏览器插件 Cookie 同步令牌",
-    "fs": "fs       浏览服务器目录（选路径前先看有什么）",
     "health": "health   服务健康检查（一般用 status 即可）",
 }
 

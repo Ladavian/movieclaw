@@ -32,6 +32,7 @@ KNOWN_NON_GENERATED = {
     "auth.logout",  # 精选命令 mclaw logout 负责
     "search.stream",
     "agent.runs.stream",
+    "fs.browse",  # 仅 Web 端目录选择器用；CLI/Agent 有 bash 等通用工具，不再暴露
 }
 
 
