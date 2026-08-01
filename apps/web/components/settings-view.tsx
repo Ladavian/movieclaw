@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 
 import { LiquidGlassButton } from "@/vendor/liquid-glass";
 
+import { AppConfigSection } from "@/components/app-config-section";
 import { AvatarBadge } from "@/components/avatar-badge";
 import { DownloaderConfigSection } from "@/components/downloader-config-section";
 import { ImportWatchSection } from "@/components/import-watch-section";
@@ -158,6 +159,8 @@ export function SettingsPanel({ active }: SettingsPanelProps) {
           <LlmConfigSection />
         ) : section.id === "weixin" ? (
           <WeixinBindingSection />
+        ) : section.id === "app" ? (
+          <AppConfigSection />
         ) : section.id === "network" ? (
           <NetworkConfigSection />
         ) : section.id === "logs" ? (

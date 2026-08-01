@@ -15,6 +15,7 @@ from fastapi import APIRouter, Depends
 
 from movieclaw_api.api.deps import require_login
 from movieclaw_api.api.routes.agent import router as agent_router
+from movieclaw_api.api.routes.app_config import router as app_config_router
 from movieclaw_api.api.routes.appearance import router as appearance_router
 from movieclaw_api.api.routes.auth import router as auth_router
 from movieclaw_api.api.routes.channels import router as channels_router
@@ -69,6 +70,7 @@ _PROTECTED_ROUTERS = [
     logs_router,
     system_notices_router,
     network_router,
+    app_config_router,
     people_router,
     spec_router,
 ]
