@@ -34,6 +34,7 @@ from movieclaw_api.services.agent_sessions import (
 )
 from movieclaw_api.services.llm_config import acquire_llm_router
 from movieclaw_api.services.mclaw_tool import render_service_map
+from movieclaw_api.settings import AppServerSetting, get_setting_store
 from movieclaw_db.engine import get_session
 from movieclaw_db.repositories.agent_session_repo import (
     AgentSessionRepository,
@@ -59,19 +60,53 @@ def get_agent_tools(cli_env: dict[str, str]) -> list[AgentTool]:
     ]
 
 
-def _agent_system_prompt() -> str:
+# 前端页面路由表：模型拼可点击链接的唯一依据（(路径模式, 一行说明)）。
+# 与 apps/web/app/(app) 的真实页面结构由守护测试保持同步（见
+# tests/api/test_agent.py 的 test_page_routes_match_web_app_pages）——
+# 前端加页面、改路径时测试会拦下，这张表不会悄悄过期。
+_PAGE_ROUTES: list[tuple[str, str]] = [
+    ("/", "首页"),
+    ("/search", "站点资源搜索页"),
+    ("/discover/{movie|tv}", "发现页（电影/剧集的榜单与分类浏览）"),
+    ("/discover/movie/top250", "豆瓣电影 Top250 榜单"),
+    ("/media/{movie|tv}/{TMDB ID}", "影片/剧集详情页"),
+    ("/media/douban/{豆瓣ID}", "豆瓣词条详情页"),
+    ("/subscriptions", "订阅列表"),
+    ("/subscriptions/{订阅ID}", "订阅详情（ID 来自 sub list/show）"),
+    ("/library", "媒体库总览"),
+    ("/library/{库ID}", "某个媒体库的内容（库 ID 来自 lib list）"),
+    ("/library/{库ID}/item/{条目ID}", "库内条目详情（条目 ID 即 lib items 的 media_item_id）"),
+    ("/people/{影人ID}", "影人档案（ID 来自 people 域）"),
+    ("/settings", "设置页"),
+]
+
+
+async def _agent_system_prompt() -> str:
     """组装本次运行的系统提示词：通用正文 + 部署环境事实。
 
     日志目录是 API 层的配置（LOG_DIR），按 prompts.build_system_prompt 的
     设计走 extra_environment 传入——mclaw 已对 Agent 隐藏 logs 域（见
     services/mclaw_tool 的 _EXCLUDED_DOMAINS），排查问题靠这里给出的
     路径用 bash 直接检索。
+
+    外部访问地址来自「设置 → 应用设置」（保存即生效），因此每次运行时
+    现读设置存储，不做缓存；未配置时整块不输出——没有前缀，路由表也
+    拼不出有效链接，避免模型给用户无效地址。
     """
     log_dir = Path(get_settings().log_dir).resolve()
-    return build_system_prompt(
+    lines = [
         f"- 运行日志目录：{log_dir}，按天一个文件（movieclaw-YYYY-MM-DD.log）。"
         "排查问题时用 bash 的 grep/tail 直接检索日志。"
-    )
+    ]
+    external_url = (await get_setting_store().get(AppServerSetting)).external_url
+    if external_url:
+        routes = "\n".join(f"  {pattern}  {desc}" for pattern, desc in _PAGE_ROUTES)
+        lines.append(
+            f"- 本应用的外部访问地址：{external_url}。提到订阅、影片、库内条目等页面时，"
+            "尽量附上可点击的 Markdown 链接：以外部访问地址为前缀，路径按下表拼接。"
+            f"只拼表内路径，不要用容器内地址拼链接。\n{routes}"
+        )
+    return build_system_prompt("\n".join(lines))
 
 
 async def _cli_env(session_id: str) -> dict[str, str]:
@@ -159,7 +194,7 @@ async def start_agent(
         input=payload.input,
         history=history,
         model=payload.model,
-        system_prompt=_agent_system_prompt(),
+        system_prompt=await _agent_system_prompt(),
     )
     run_id = get_agent_run_registry().start(runner, params, on_terminal=recorder.on_terminal)
     await recorder.begin(run_id)
@@ -278,7 +313,7 @@ async def compact_agent_session(
         "",
     )
 
-    messages = [ChatMessage(role="system", content=_agent_system_prompt()), *history]
+    messages = [ChatMessage(role="system", content=await _agent_system_prompt()), *history]
     result = await compact(llm_router, model, messages, ModelSettings())
     if result is None:
         raise UpstreamServiceException("压缩失败：模型未能生成摘要，请稍后重试")
