@@ -159,7 +159,7 @@ async def test_tool_loop_two_steps(monkeypatch):
     # 第二步请求的上下文形态：system + user + assistant(带调用) + tool 结果
     round2 = _probe["requests"][1]
     assert [m.role for m in round2.messages] == ["system", "user", "assistant", "tool"]
-    assert round2.messages[0].text().startswith("你是 movieclaw 的执行 Agent")
+    assert round2.messages[0].text().startswith("你是 MovieClaw 影音助理")
     tool_msg = round2.messages[-1]
     assert tool_msg.tool_call_id == "c1"
     assert "找到 3 条资源" in tool_msg.text()
