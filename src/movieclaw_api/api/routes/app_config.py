@@ -3,7 +3,7 @@
 三个端点（实现全部在 services/app_config.py，本文件只做参数进出）：
 - GET  /app/config  —— 当前配置 + 端口生效状态（默认值/当前监听端口/是否需重启）；
 - PUT  /app/config  —— 保存；外部访问地址即时生效，端口改动需重启；
-- POST /app/restart —— 优雅重启应用（Docker 部署由容器自动拉起）。
+- POST /app/restart —— 优雅重启应用（Docker 镜像由 entrypoint 重启循环拉起）。
 """
 
 from __future__ import annotations
@@ -40,7 +40,7 @@ async def save_app_config(payload: AppConfigPayload) -> ApiResponse[AppConfigVie
 @router.post(
     "/restart",
     response_model=ApiResponse[None],
-    summary="重启应用（优雅停机后由 Docker 等进程守护拉起）",
+    summary="重启应用（优雅停机后由容器入口/进程守护拉起）",
     operation_id="app.restart",
 )
 async def restart_app() -> ApiResponse[None]:

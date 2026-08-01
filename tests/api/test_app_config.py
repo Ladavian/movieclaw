@@ -112,6 +112,36 @@ def test_restart_schedules_graceful_exit(client, monkeypatch):
     assert calls == [True]
 
 
+def test_graceful_exit_prefers_should_exit_over_signal(monkeypatch):
+    """已注册 Server 实例时：置 should_exit（signal-free）而不发 SIGTERM。"""
+
+    class FakeServer:
+        should_exit = False
+
+    fake = FakeServer()
+    monkeypatch.setattr(app_config, "_uvicorn_server", fake)
+    monkeypatch.setattr(app_config, "_restart_requested", False)
+    signals: list[int] = []
+    monkeypatch.setattr(app_config.os, "kill", lambda pid, sig: signals.append(sig))
+
+    app_config._request_graceful_exit()
+    assert fake.should_exit is True
+    assert signals == []
+    # main.run 停机后据此改用重启约定退出码（42）
+    assert app_config.restart_requested() is True
+
+
+def test_graceful_exit_falls_back_to_sigterm(monkeypatch):
+    """未注册 Server 实例（开发热重载）时：退回向自身发 SIGTERM。"""
+    monkeypatch.setattr(app_config, "_uvicorn_server", None)
+    monkeypatch.setattr(app_config, "_restart_requested", False)
+    signals: list[int] = []
+    monkeypatch.setattr(app_config.os, "kill", lambda pid, sig: signals.append(sig))
+
+    app_config._request_graceful_exit()
+    assert signals == [app_config.signal.SIGTERM]
+
+
 def test_resolve_boot_port_reads_db_setting(client, monkeypatch, tmp_path):
     """启动端口三级解析：APP_PORT 环境变量 > 落库设置 > 默认值。"""
     database_url = f"sqlite+aiosqlite:///{tmp_path / 'test.db'}"

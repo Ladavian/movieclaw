@@ -25,9 +25,9 @@ import { getHealth } from "@/lib/api/health";
  * 交互模型与「网络与代理」分区一致：输入框失焦自动落库，无「保存」按钮；
  * 端口改动落库后后端返回 restart_required，此处浮出「重启应用」横幅。
  *
- * 重启流程：调用 /app/restart → 后端优雅停机 → Docker 的 restart 策略拉起整个
- * 容器（裸进程部署需 systemd 等守护，提示文案有说明）→ 前端轮询 /health 直到
- * 服务恢复，然后整页刷新。
+ * 重启流程：调用 /app/restart → 后端优雅停机、以约定码 42 退出 → Docker 镜像
+ * 的 entrypoint 重启循环原地拉起新的后端进程（前端不中断，不依赖 restart 策略；
+ * 源码部署需 systemd 等守护）→ 前端轮询 /health 直到服务恢复，然后整页刷新。
  */
 
 type RestartPhase = "idle" | "confirming" | "waiting" | "timeout";
@@ -157,7 +157,7 @@ export function AppConfigSection() {
           <>
             <p className="text-body font-medium text-[var(--text)]">等待超时，应用尚未恢复</p>
             <p className="mt-2 text-sub text-[var(--text-muted)]">
-              Docker 部署会由容器自动拉起，请稍后手动刷新页面；裸进程部署且无
+              Docker 部署通常几秒内自动拉起，请稍后手动刷新页面；源码部署且无
               systemd 等守护时，需要到服务器上手动启动。
             </p>
             <button
@@ -285,9 +285,9 @@ export function AppConfigSection() {
               label="重启应用"
               help={
                 <>
-                  <p>优雅停机后重新启动整个应用，正在进行的任务会中断。</p>
+                  <p>优雅停机后重新启动后端服务，正在进行的任务会中断。</p>
                   <p className="mt-1.5">
-                    Docker 部署（restart: unless-stopped）会自动拉起容器；裸进程部署需有
+                    Docker 部署由容器入口自动拉起新进程，通常几秒内恢复；源码部署需有
                     systemd 等守护，否则退出后要到服务器上手动启动。
                   </p>
                 </>

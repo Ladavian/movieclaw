@@ -4,10 +4,16 @@
 - 配置视图装配：配置本体 + 端口生效状态（默认值 / 当前监听端口 / 是否被
   环境变量钉死 / 是否需重启）；
 - 保存编排：校验（端口区间、外部地址格式）→ 落库；
-- 重启调度：延迟片刻后向自身进程发 SIGTERM，uvicorn 优雅停机后由进程
-  守护方拉起——Docker 部署下任一进程退出即整容器退出，配合
-  ``restart: unless-stopped`` 自动重启；裸进程部署需 systemd 等守护，
-  否则退出后须手动再启动（设置页有相应提示文案）。
+- 重启调度：优雅停机后以约定退出码 ``RESTART_EXIT_CODE``（42）退出进程，
+  告知守护方「这是重启请求」——Docker 镜像的 entrypoint 内置重启循环，
+  见到 42 原地拉起新的后端进程（前端不中断，也不依赖用户的 restart 策略）；
+  其他退出码仍走「整容器退出」，保持故障外显。源码部署需 systemd 等守护
+  （42 非 0，Restart=on-failure 即可覆盖），否则退出后须手动再启动。
+
+优雅停机为什么不用信号：uvicorn 用 ``signal.signal`` 注册停机处理器，在
+uvloop 的 C 事件循环下信号处理可能长时间得不到执行（实测偶发悬挂）。
+故 main.run 启动时把 Server 实例注册进来，重启直接置 ``should_exit``
+（与收到 SIGTERM 的处理路径殊途同归），完全绕开信号投递。
 
 端口为何不能热切换：uvicorn 在启动时一次性绑定监听端口，运行期无法换绑，
 这是「改端口需重启」的根因；外部访问地址纯属落库数据，保存即生效。
@@ -20,7 +26,11 @@ import os
 import signal
 import threading
 import time
+from typing import TYPE_CHECKING
 from urllib.parse import urlsplit
+
+if TYPE_CHECKING:
+    import uvicorn
 
 from movieclaw_api.core.config import get_settings
 from movieclaw_api.exceptions import BadRequestException
@@ -32,10 +42,12 @@ logger = logging.getLogger("movieclaw_api.app_config")
 
 # 重启前的缓冲时间：留给 HTTP 响应写回客户端，避免前端拿不到「已开始重启」的确认
 _RESTART_DELAY_SECONDS = 1.0
-# 优雅停机的等待窗口：SIGTERM 后超过此时长仍未退出则强制退出。
-# 必须有这个兜底——uvicorn 用 signal.signal 注册停机处理器，在 uvloop 的 C 事件
-# 循环下信号处理可能长时间得不到执行（实测偶发），没有兜底重启会悬空。
+# 优雅停机的等待窗口：超过此时长仍未退出则强制退出，保证重启永不悬空
 _FORCE_EXIT_SECONDS = 10.0
+
+# 「设置页请求的应用重启」的约定退出码，entrypoint 的重启循环据此区分
+# 重启请求（原地拉起新进程）与真故障/停机（整容器退出）。
+RESTART_EXIT_CODE = 42
 
 
 # ---------------------------------------------------------------------------
@@ -103,15 +115,44 @@ async def save_config(payload: AppConfigPayload) -> AppConfigView:
 # ---------------------------------------------------------------------------
 
 
+# main.run 启动时注册的 uvicorn Server 实例（开发热重载模式下为 None）
+_uvicorn_server: uvicorn.Server | None = None
+# 本次进程退出是否为「设置页请求的重启」——main.run 停机后据此决定退出码
+_restart_requested = False
+
+
+def register_uvicorn_server(server: uvicorn.Server) -> None:
+    """由 main.run 在启动前调用，把 Server 实例交给重启服务。"""
+    global _uvicorn_server
+    _uvicorn_server = server
+
+
+def restart_requested() -> bool:
+    """main.run 在 Server 停机后查询：本次退出是否应使用重启约定退出码。"""
+    return _restart_requested
+
+
+def _request_graceful_exit() -> None:
+    """请求优雅停机：优先置 Server.should_exit，未注册实例时退回 SIGTERM。"""
+    global _restart_requested
+    _restart_requested = True
+    logger.info("正在按用户请求重启应用：优雅停机后由容器入口拉起新进程……")
+    if _uvicorn_server is not None:
+        # 与 uvicorn 收到 SIGTERM 后的处理路径殊途同归，但不经过信号投递
+        _uvicorn_server.should_exit = True
+    else:
+        # 开发热重载模式（reload 子进程里拿不到 Server 实例）：退回信号方案
+        os.kill(os.getpid(), signal.SIGTERM)
+
+
 def _terminate_self() -> None:
-    """向自身进程发 SIGTERM 触发 uvicorn 优雅停机；超时未退出则强制退出。"""
-    logger.info("正在按用户请求重启应用：优雅关闭当前进程，等待进程守护（Docker）拉起……")
-    os.kill(os.getpid(), signal.SIGTERM)
-    # 优雅停机成功时进程直接消失，走不到下面；只有信号被事件循环拖住才会兜底
+    """触发优雅停机；超时未退出则以重启约定退出码强制退出。"""
+    _request_graceful_exit()
+    # 优雅停机成功时进程直接消失，走不到下面；只有停机被拖住才会兜底
     time.sleep(_FORCE_EXIT_SECONDS)
     logger.warning("优雅停机超时（%.0f 秒），强制退出进程以完成重启", _FORCE_EXIT_SECONDS)
     logging.shutdown()  # 强制退出不走解释器清理，先冲刷日志缓冲，保住上面这行警告
-    os._exit(1)
+    os._exit(RESTART_EXIT_CODE)
 
 
 def schedule_restart() -> None:
