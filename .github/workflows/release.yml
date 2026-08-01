@@ -1,0 +1,63 @@
+# =============================================================================
+# 发版流水线（docs/design/in-app-update.md M1）
+#
+# 打 v* tag 时构建应用内更新产物并上传到 GitHub Release：
+#   app-web.tar.gz / app-backend.tar.gz / manifest.json
+#
+# 注意：这里只发「应用产物」（前后端代码，频繁发）。运行时依赖变了
+# （docker/runtime-version 被 bump）才需要另行构建发布 Docker 镜像。
+# =============================================================================
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release-artifacts:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: 安装前端依赖
+        run: pnpm install --frozen-lockfile
+
+      - name: 安装后端运行依赖（spec 导出需要拉起 FastAPI app）
+        run: |
+          python -c "import tomllib; deps = tomllib.load(open('pyproject.toml', 'rb'))['project']['dependencies']; open('requirements.txt', 'w').write('\n'.join(deps))"
+          pip install --no-cache-dir -r requirements.txt
+
+      - name: 构建更新产物（版本取自 tag，与 pyproject/__version__ 三方校验）
+        env:
+          NEXT_TELEMETRY_DISABLED: "1"
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}" ./scripts/build-release-artifacts.sh dist/release
+
+      - name: 上传 Release assets（Release 不存在则创建）
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if ! gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
+            gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" \
+              --title "$GITHUB_REF_NAME" --generate-notes
+          fi
+          gh release upload "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --clobber \
+            dist/release/app-web.tar.gz \
+            dist/release/app-backend.tar.gz \
+            dist/release/manifest.json

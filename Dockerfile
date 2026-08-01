@@ -146,6 +146,13 @@ COPY --from=ner-model /model ./models/torrent-ner
 COPY docker/entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 
+# 运行时版本（依赖集合的代号，docker/runtime-version 是唯一事实源）：
+# entrypoint 据此判断 data 卷上的应用内更新 overlay 与本镜像是否兼容，
+# Release 产物的 manifest.requires_runtime 也取自同一个文件（构建脚本读取）。
+# 凡是改动 pyproject dependencies、Node 大版本、系统包或 entrypoint 契约，
+# 必须 bump docker/runtime-version 并发布新镜像。
+COPY docker/runtime-version /etc/movieclaw-runtime
+
 # TMDB API Key 在构建时烧入镜像（部署者可用同名环境变量覆盖）
 ARG TMDB_API_KEY=""
 ENV TMDB_API_KEY=${TMDB_API_KEY}
