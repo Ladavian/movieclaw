@@ -48,6 +48,9 @@ _FORCE_EXIT_SECONDS = 10.0
 # 「设置页请求的应用重启」的约定退出码，entrypoint 的重启循环据此区分
 # 重启请求（原地拉起新进程）与真故障/停机（整容器退出）。
 RESTART_EXIT_CODE = 42
+# 「应用内更新/回退后的全量重启」约定码：entrypoint 见到它会把前端一并重启，
+# 并重新解析代码来源（data 卷上的 overlay 指针可能已切换，见 docker/entrypoint.sh）。
+FULL_RESTART_EXIT_CODE = 43
 
 
 # ---------------------------------------------------------------------------
@@ -117,8 +120,8 @@ async def save_config(payload: AppConfigPayload) -> AppConfigView:
 
 # main.run 启动时注册的 uvicorn Server 实例（开发热重载模式下为 None）
 _uvicorn_server: uvicorn.Server | None = None
-# 本次进程退出是否为「设置页请求的重启」——main.run 停机后据此决定退出码
-_restart_requested = False
+# 本次进程退出应使用的重启约定码（42 后端 / 43 全量）；None = 非重启退出
+_restart_exit_code: int | None = None
 
 
 def register_uvicorn_server(server: uvicorn.Server) -> None:
@@ -127,16 +130,16 @@ def register_uvicorn_server(server: uvicorn.Server) -> None:
     _uvicorn_server = server
 
 
-def restart_requested() -> bool:
-    """main.run 在 Server 停机后查询：本次退出是否应使用重启约定退出码。"""
-    return _restart_requested
+def restart_exit_code() -> int | None:
+    """main.run 在 Server 停机后查询：本次退出应使用的重启约定码（非重启为 None）。"""
+    return _restart_exit_code
 
 
-def _request_graceful_exit() -> None:
+def _request_graceful_exit(exit_code: int) -> None:
     """请求优雅停机：优先置 Server.should_exit，未注册实例时退回 SIGTERM。"""
-    global _restart_requested
-    _restart_requested = True
-    logger.info("正在按用户请求重启应用：优雅停机后由容器入口拉起新进程……")
+    global _restart_exit_code
+    _restart_exit_code = exit_code
+    logger.info("正在按请求重启应用（约定码 %d）：优雅停机后由容器入口拉起新进程……", exit_code)
     if _uvicorn_server is not None:
         # 与 uvicorn 收到 SIGTERM 后的处理路径殊途同归，但不经过信号投递
         _uvicorn_server.should_exit = True
@@ -145,18 +148,22 @@ def _request_graceful_exit() -> None:
         os.kill(os.getpid(), signal.SIGTERM)
 
 
-def _terminate_self() -> None:
+def _terminate_self(exit_code: int) -> None:
     """触发优雅停机；超时未退出则以重启约定退出码强制退出。"""
-    _request_graceful_exit()
+    _request_graceful_exit(exit_code)
     # 优雅停机成功时进程直接消失，走不到下面；只有停机被拖住才会兜底
     time.sleep(_FORCE_EXIT_SECONDS)
     logger.warning("优雅停机超时（%.0f 秒），强制退出进程以完成重启", _FORCE_EXIT_SECONDS)
     logging.shutdown()  # 强制退出不走解释器清理，先冲刷日志缓冲，保住上面这行警告
-    os._exit(RESTART_EXIT_CODE)
+    os._exit(exit_code)
 
 
-def schedule_restart() -> None:
-    """调度一次应用重启：延迟片刻（先让响应回到前端）后优雅退出进程。"""
-    timer = threading.Timer(_RESTART_DELAY_SECONDS, _terminate_self)
+def schedule_restart(exit_code: int = RESTART_EXIT_CODE) -> None:
+    """调度一次应用重启：延迟片刻（先让响应回到前端）后优雅退出进程。
+
+    exit_code 决定 entrypoint 的处理方式：42 只重启后端（默认，设置页重启），
+    43 前后端全量重启并重新解析代码来源（应用内更新/回退用）。
+    """
+    timer = threading.Timer(_RESTART_DELAY_SECONDS, _terminate_self, args=(exit_code,))
     timer.daemon = True
     timer.start()

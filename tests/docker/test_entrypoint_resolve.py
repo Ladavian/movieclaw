@@ -47,7 +47,9 @@ def _make_overlay(
         (vdir / "web" / "apps" / "web").mkdir(parents=True)
         (vdir / "web" / "apps" / "web" / "server.js").touch()
     if manifest_text is None:
-        manifest_text = json.dumps({"schema": 1, "version": version, "requires_runtime": requires_runtime})
+        manifest_text = json.dumps(
+            {"schema": 1, "version": version, "requires_runtime": requires_runtime}
+        )
     (vdir / "manifest.json").write_text(manifest_text, encoding="utf-8")
     return vdir
 

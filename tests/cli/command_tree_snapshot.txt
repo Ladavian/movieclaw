@@ -8,6 +8,11 @@ agent start
 app restart
 app set
 app show
+app update_apply
+app update_check
+app update_progress
+app update_rollback
+app update_status
 appearance active set
 appearance backdrops delete
 appearance backdrops download

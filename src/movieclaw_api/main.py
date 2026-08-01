@@ -8,9 +8,8 @@ from movieclaw_api.app import create_app
 from movieclaw_api.core.config import get_settings
 from movieclaw_api.core.logging import configure_logging
 from movieclaw_api.services.app_config import (
-    RESTART_EXIT_CODE,
     register_uvicorn_server,
-    restart_requested,
+    restart_exit_code,
 )
 from movieclaw_api.settings.app_server import RUNTIME_PORT_ENV, resolve_boot_port
 
@@ -64,8 +63,9 @@ def run() -> None:
     server = uvicorn.Server(config)
     register_uvicorn_server(server)
     server.run()
-    if restart_requested():
-        sys.exit(RESTART_EXIT_CODE)
+    exit_code = restart_exit_code()
+    if exit_code is not None:
+        sys.exit(exit_code)
 
 
 if __name__ == "__main__":
