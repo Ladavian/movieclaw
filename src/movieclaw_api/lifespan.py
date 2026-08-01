@@ -147,6 +147,11 @@ def build_lifespan(settings: Settings):
         from movieclaw_api.services.library.ingest import init_ingest_watcher
 
         await init_ingest_watcher()
+        # 微信通道:拉起所有已绑定账号的收发循环(getUpdates 长轮询)。
+        # 放在 Agent 注册表与 LLM 配置就绪之后——入站消息要驱动 Agent 运行。
+        from movieclaw_api.services.weixin_channel import init_weixin_channel
+
+        await init_weixin_channel()
         logger.info("应用启动完成，数据库就绪")
         try:
             yield
@@ -157,6 +162,10 @@ def build_lifespan(settings: Settings):
 
             await close_ingest_watcher()
             await close_library_watcher()
+            # 先停微信通道(掐断在飞长轮询、停会话 worker),再停 Agent 注册表。
+            from movieclaw_api.services.weixin_channel import close_weixin_channel
+
+            await close_weixin_channel()
             # 先停止 Agent，避免它在下游 HTTP 客户端和数据库开始释放后继续工作。
             await close_agent_run_registry()
             if settings.scheduler_enabled:

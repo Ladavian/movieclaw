@@ -12,6 +12,7 @@ from movieclaw_db.models.agent_session import AgentSession
 from movieclaw_db.models.app_setting import AppSetting
 from movieclaw_db.models.base import TimestampMixin, utcnow
 from movieclaw_db.models.cache_entry import CacheEntry
+from movieclaw_db.models.channel_account import ChannelAccount, ChannelAccountStatus
 from movieclaw_db.models.download_hint import DownloadHint
 from movieclaw_db.models.downloader_client import ClientType, DownloaderClient
 from movieclaw_db.models.import_watch import ImportWatch
@@ -52,6 +53,8 @@ __all__ = [
     "utcnow",
     "AgentSession",
     "CacheEntry",
+    "ChannelAccount",
+    "ChannelAccountStatus",
     "SiteCookie",
     "SiteCredential",
     "AuthType",
