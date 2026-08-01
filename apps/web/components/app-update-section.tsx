@@ -4,10 +4,13 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 import { RefreshIcon } from "@/components/icons";
 import {
+  type ModelUpdateCheckView,
   type UpdateCheckView,
   type UpdateProgressView,
   type UpdateStatusView,
+  applyModelUpdate,
   applyUpdate,
+  checkModelUpdate,
   checkUpdate,
   getUpdateProgress,
   getUpdateStatus,
@@ -38,6 +41,9 @@ export function AppUpdateSection() {
   const [checkError, setCheckError] = useState<string | null>(null);
   const [progress, setProgress] = useState<UpdateProgressView | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
+  const [modelCheck, setModelCheck] = useState<ModelUpdateCheckView | null>(null);
+  const [modelChecking, setModelChecking] = useState(false);
+  const [modelError, setModelError] = useState<string | null>(null);
   const [restartWait, setRestartWait] = useState<RestartWait>("idle");
   const [confirmRollback, setConfirmRollback] = useState(false);
   const pollTimer = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -113,6 +119,29 @@ export function AppUpdateSection() {
       pollProgress();
     } catch (e) {
       setActionError((e as Error).message);
+    }
+  };
+
+  const doModelCheck = async () => {
+    setModelChecking(true);
+    setModelError(null);
+    setModelCheck(null);
+    try {
+      setModelCheck(await checkModelUpdate());
+    } catch (e) {
+      setModelError((e as Error).message);
+    } finally {
+      setModelChecking(false);
+    }
+  };
+
+  const doModelApply = async () => {
+    setModelError(null);
+    try {
+      setProgress(await applyModelUpdate());
+      pollProgress();
+    } catch (e) {
+      setModelError((e as Error).message);
     }
   };
 
@@ -285,6 +314,63 @@ export function AppUpdateSection() {
           )}
         </div>
       </section>
+
+      {/* —— NER 模型 ——（独立于代码更新，更新只重启后端、页面不中断） */}
+      {status.can_update && (
+        <section>
+          <h3 className="group-label mb-2.5 px-1">NER 识别模型</h3>
+          <div className="css-glass !rounded-2xl px-5 py-4">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <p className="text-ui font-medium text-[var(--text)]">
+                  当前模型：{status.model_tag ?? "无法识别（较早的镜像）"}
+                </p>
+                <p className="mt-0.5 text-sub text-[var(--text-muted)]">
+                  种子名识别（NER）模型独立更新，无需升级镜像；更新后仅重启后端，页面不中断。
+                </p>
+              </div>
+              {!updating && (
+                <button
+                  type="button"
+                  onClick={doModelCheck}
+                  disabled={modelChecking}
+                  className="btn-glass px-3.5 py-1.5 text-sub font-medium disabled:opacity-50"
+                >
+                  {modelChecking ? "正在检查…" : "检查模型更新"}
+                </button>
+              )}
+            </div>
+            {modelCheck && (
+              <div className="mt-3 flex flex-wrap items-center gap-3">
+                {!modelCheck.update_available ? (
+                  <span className="text-sub text-emerald-300/90">
+                    模型已是最新（{modelCheck.latest_tag}）
+                  </span>
+                ) : !modelCheck.installable ? (
+                  <span className="text-sub text-amber-300/90">
+                    发现新模型 {modelCheck.latest_tag}，但该发布未携带更新清单，暂无法应用内安装
+                  </span>
+                ) : (
+                  <>
+                    <span className="text-sub text-[var(--text)]">
+                      发现新模型 {modelCheck.latest_tag}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={doModelApply}
+                      disabled={updating}
+                      className="btn-glass px-3.5 py-1.5 text-sub font-semibold text-[var(--accent)] disabled:opacity-50"
+                    >
+                      更新模型
+                    </button>
+                  </>
+                )}
+              </div>
+            )}
+            {modelError && <p className="mt-2 text-sub text-red-300">{modelError}</p>}
+          </div>
+        </section>
+      )}
 
       {/* —— 回退 ——（只在有更新历史时出现） */}
       {status.can_update && (status.has_previous || status.code_source === "overlay") && (

@@ -10,6 +10,8 @@ app set
 app show
 app update_apply
 app update_check
+app update_model_apply
+app update_model_check
 app update_progress
 app update_rollback
 app update_status

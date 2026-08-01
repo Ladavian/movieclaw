@@ -72,6 +72,8 @@ export interface UpdateStatusView {
   has_previous: boolean;
   /** 曾连续启动失败被自动回落的坏版本列表 */
   bad_versions: string[];
+  /** 当前生效的 NER 模型 Release tag（如 torrent-ner-v1）；无法识别时为 null */
+  model_tag: string | null;
 }
 
 /** 检查更新的结果（POST /app/update/check）。 */
@@ -124,4 +126,27 @@ export function getUpdateProgress(): Promise<UpdateProgressView> {
 export async function rollbackUpdate(): Promise<string> {
   const envelope = await request<ApiEnvelope<null>>("/app/update/rollback", { method: "POST" });
   return envelope.message;
+}
+
+/** 检查 NER 模型更新的结果（POST /app/update/model/check）。 */
+export interface ModelUpdateCheckView {
+  /** 当前生效的模型 Release tag；老镜像无记录时为 null（显示「无法识别」） */
+  current_tag: string | null;
+  latest_tag: string;
+  update_available: boolean;
+  /** 最新模型发布是否携带更新清单（没带则无法应用内安装） */
+  installable: boolean;
+  published_at: string;
+}
+
+export function checkModelUpdate(): Promise<ModelUpdateCheckView> {
+  return unwrap(
+    request<ApiEnvelope<ModelUpdateCheckView>>("/app/update/model/check", { method: "POST" }),
+  );
+}
+
+export function applyModelUpdate(): Promise<UpdateProgressView> {
+  return unwrap(
+    request<ApiEnvelope<UpdateProgressView>>("/app/update/model/apply", { method: "POST" }),
+  );
 }

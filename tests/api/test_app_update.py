@@ -240,3 +240,85 @@ async def test_start_update_rejected_outside_docker(updates_dir, monkeypatch):
     monkeypatch.delenv("MOVIECLAW_RUNTIME_VERSION")
     with pytest.raises(BadRequestException, match="不支持应用内更新"):
         await app_update.start_update()
+
+
+# ---------------------------------------------------------------------------
+# NER 模型更新
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def models_dir(tmp_path, monkeypatch, updates_dir):
+    models = tmp_path / "models"
+    monkeypatch.setenv("MOVIECLAW_MODELS_DIR", str(models))
+    get_settings.cache_clear()
+    return models
+
+
+def test_model_tag_ordering_and_latest_release():
+    releases = [
+        {"tag_name": "v0.2.0"},
+        {"tag_name": "torrent-ner-v2"},
+        {"tag_name": "torrent-ner-v10"},
+        {"tag_name": "torrent-ner-v1"},
+    ]
+    latest = app_update._latest_model_release(releases)
+    assert latest["tag_name"] == "torrent-ner-v10"
+    assert app_update._latest_model_release([{"tag_name": "v1.0.0"}]) is None
+    # 无法识别当前版本（老镜像无 tag 记录）时按 0 处理 → 一律视为可更新
+    assert app_update._model_tag_num(None) == 0
+
+
+def test_current_model_tag_reads_release_tag_file(tmp_path, monkeypatch):
+    model = tmp_path / "ner"
+    model.mkdir()
+    monkeypatch.setenv("MOVIECLAW_NER_DIR", str(model))
+    assert app_update._current_model_tag() is None
+    (model / ".release-tag").write_text("torrent-ner-v1\n")
+    assert app_update._current_model_tag() == "torrent-ner-v1"
+
+
+def test_install_model_files_switches_pointer_and_prunes(models_dir, tmp_path):
+    def make_download(tag: str) -> tuple[dict, Path]:
+        dl = tmp_path / f"dl-{tag}"
+        dl.mkdir()
+        files = {}
+        for name in app_update._MODEL_FILES:
+            data = f"{tag}:{name}".encode()
+            (dl / name).write_bytes(data)
+            files[name] = {"sha256": hashlib.sha256(data).hexdigest(), "size": len(data)}
+        return {"files": files}, dl
+
+    manifest, dl = make_download("torrent-ner-v2")
+    app_update._install_model_files("torrent-ner-v2", manifest, dl)
+    current = models_dir / "current"
+    assert current.is_symlink()
+    assert Path(current).resolve().name == "torrent-ner-v2"
+    assert (current / ".release-tag").read_text().strip() == "torrent-ner-v2"
+    assert (current / "model.int8.onnx").is_file()
+
+    # 安装更新版本后：指针切换、旧模型目录被清理
+    manifest3, dl3 = make_download("torrent-ner-v3")
+    app_update._install_model_files("torrent-ner-v3", manifest3, dl3)
+    assert Path(current).resolve().name == "torrent-ner-v3"
+    assert not (models_dir / "torrent-ner-v2").exists()
+
+
+def test_install_model_files_rejects_bad_checksum(models_dir, tmp_path):
+    dl = tmp_path / "dl"
+    dl.mkdir()
+    for name in app_update._MODEL_FILES:
+        (dl / name).write_bytes(b"data")
+    manifest = {
+        "files": {name: {"sha256": "0" * 64, "size": 4} for name in app_update._MODEL_FILES}
+    }
+    with pytest.raises(RuntimeError, match="校验和不匹配"):
+        app_update._install_model_files("torrent-ner-v2", manifest, dl)
+    assert not (models_dir / "current").exists()
+
+
+@pytest.mark.asyncio
+async def test_start_model_update_rejected_outside_docker(models_dir, monkeypatch):
+    monkeypatch.delenv("MOVIECLAW_RUNTIME_VERSION")
+    with pytest.raises(BadRequestException, match="不支持应用内更新模型"):
+        await app_update.start_model_update()

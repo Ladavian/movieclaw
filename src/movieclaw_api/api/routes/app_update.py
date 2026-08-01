@@ -5,7 +5,8 @@
 - POST /app/update/check     —— 查 GitHub 最新 Release 并比对；
 - POST /app/update/apply     —— 发起更新（后台执行，进度轮询下方接口）；
 - GET  /app/update/progress  —— 更新执行进度；
-- POST /app/update/rollback  —— 回退到上一版本（或镜像基线）。
+- POST /app/update/rollback  —— 回退到上一版本（或镜像基线）；
+- POST /app/update/model/check / /app/update/model/apply —— NER 模型独立更新。
 """
 
 from __future__ import annotations
@@ -13,6 +14,7 @@ from __future__ import annotations
 from fastapi import APIRouter
 
 from movieclaw_api.schemas.app_update import (
+    ModelUpdateCheckView,
     UpdateCheckView,
     UpdateProgressView,
     UpdateStatusView,
@@ -62,6 +64,27 @@ async def apply_update() -> ApiResponse[UpdateProgressView]:
 )
 async def get_update_progress() -> ApiResponse[UpdateProgressView]:
     return ok(app_update.get_progress())
+
+
+@router.post(
+    "/model/check",
+    response_model=ApiResponse[ModelUpdateCheckView],
+    summary="检查 NER 模型是否有新版本",
+    operation_id="app.update_model_check",
+)
+async def check_model_update() -> ApiResponse[ModelUpdateCheckView]:
+    return ok(await app_update.check_model_update())
+
+
+@router.post(
+    "/model/apply",
+    response_model=ApiResponse[UpdateProgressView],
+    summary="更新 NER 模型（下载校验后重启后端生效）",
+    operation_id="app.update_model_apply",
+)
+async def apply_model_update() -> ApiResponse[UpdateProgressView]:
+    view = await app_update.start_model_update()
+    return ok(view, message="模型更新已开始，可通过进度接口跟踪")
 
 
 @router.post(

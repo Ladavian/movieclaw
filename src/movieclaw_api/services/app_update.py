@@ -41,6 +41,7 @@ from movieclaw_api import __version__
 from movieclaw_api.core.config import get_settings
 from movieclaw_api.exceptions import BadRequestException
 from movieclaw_api.schemas.app_update import (
+    ModelUpdateCheckView,
     UpdateCheckView,
     UpdateProgressView,
     UpdateStatusView,
@@ -160,6 +161,7 @@ def build_status() -> UpdateStatusView:
         can_update=_runtime_version() is not None,
         has_previous=previous.exists() and (previous / _MANIFEST_NAME).is_file(),
         bad_versions=list(bad_versions),
+        model_tag=_current_model_tag(),
     )
 
 
@@ -440,6 +442,227 @@ async def start_update() -> UpdateProgressView:
         raise
     thread = threading.Thread(
         target=_download_and_apply, args=(manifest,), name="app-update", daemon=True
+    )
+    thread.start()
+    return _progress.view()
+
+
+# ---------------------------------------------------------------------------
+# NER 模型更新（独立于代码更新：模型 Release 单独发布，tag 形如 torrent-ner-vN；
+# 更新只切 data 卷上的 current 指针 + 重启后端进程，前端不中断）
+# ---------------------------------------------------------------------------
+
+_MODEL_TAG_RE = re.compile(r"^torrent-ner-v(\d+)$")
+_MODEL_FILES = ("model.int8.onnx", "tokenizer.json", "labels.json")
+
+
+def _models_dir() -> Path:
+    return Path(get_settings().models_dir).resolve()
+
+
+def _current_model_tag() -> str | None:
+    """当前生效模型的 Release tag：读模型目录里的 .release-tag 记录。
+
+    镜像构建与应用内安装都会写这个文件；老镜像没有该记录时返回 None
+    （UI 显示「无法识别」，检查更新按「可更新」处理）。
+    """
+    ner_dir = os.environ.get("MOVIECLAW_NER_DIR", "")
+    tag_file = Path(ner_dir) / ".release-tag" if ner_dir else None
+    if tag_file and tag_file.is_file():
+        tag = tag_file.read_text(encoding="utf-8").strip()
+        return tag or None
+    return None
+
+
+def _model_tag_num(tag: str | None) -> int:
+    match = _MODEL_TAG_RE.match(tag or "")
+    return int(match.group(1)) if match else 0
+
+
+def _latest_model_release(releases: list[dict]) -> dict | None:
+    """从 Release 列表挑出 tag 版本号最大的模型发布。"""
+    candidates = [r for r in releases if _MODEL_TAG_RE.match(r.get("tag_name") or "")]
+    if not candidates:
+        return None
+    return max(candidates, key=lambda r: _model_tag_num(r["tag_name"]))
+
+
+def _parse_model_manifest(raw: bytes) -> dict:
+    try:
+        manifest = json.loads(raw)
+        files = manifest["files"]
+        for name in _MODEL_FILES:
+            if not files[name]["sha256"]:
+                raise KeyError(name)
+    except Exception as exc:
+        raise BadRequestException(
+            "模型更新清单（manifest.json）格式异常，请稍后重试或反馈问题"
+        ) from exc
+    return {"files": files, "raw": raw}
+
+
+async def _fetch_latest_model_release() -> dict:
+    settings = get_settings()
+    api_url = f"{settings.update_api_base_url}/repos/{settings.update_repo}/releases?per_page=100"
+    headers = {"Accept": "application/vnd.github+json", "User-Agent": "movieclaw-updater"}
+    async with httpx.AsyncClient(
+        timeout=_HTTP_TIMEOUT, follow_redirects=True, headers=headers
+    ) as client:
+        try:
+            resp = await client.get(api_url)
+            resp.raise_for_status()
+        except httpx.HTTPError as exc:
+            raise BadRequestException(
+                "无法连接 GitHub 检查模型更新，"
+                "请确认网络可达（可配置代理或 UPDATE_API_BASE_URL 反代）"
+            ) from exc
+    release = _latest_model_release(resp.json())
+    if release is None:
+        raise BadRequestException("未找到任何模型发布（torrent-ner-v* 的 Release）")
+    return release
+
+
+def _model_manifest_asset(release: dict) -> dict | None:
+    return next(
+        (a for a in release.get("assets", []) if a.get("name") == _MANIFEST_NAME), None
+    )
+
+
+async def check_model_update() -> ModelUpdateCheckView:
+    release = await _fetch_latest_model_release()
+    latest_tag = release["tag_name"]
+    current = _current_model_tag()
+    return ModelUpdateCheckView(
+        current_tag=current,
+        latest_tag=latest_tag,
+        update_available=_model_tag_num(latest_tag) > _model_tag_num(current),
+        installable=_model_manifest_asset(release) is not None,
+        published_at=release.get("published_at") or "",
+    )
+
+
+def _install_model_files(tag: str, manifest: dict, download_dir: Path) -> None:
+    """校验并安装已下载的模型文件（纯本地流程，可独立测试）：
+    落盘到 models_dir/<tag>/ → 写 .release-tag → 原子切 current 指针 → 清旧目录。"""
+    for name in _MODEL_FILES:
+        _verify_sha256(download_dir / name, manifest["files"][name]["sha256"])
+    models = _models_dir()
+    final_dir = models / _sanitize(tag)
+    partial_dir = models / f"{_sanitize(tag)}.partial"
+    shutil.rmtree(partial_dir, ignore_errors=True)
+    partial_dir.mkdir(parents=True)
+    for name in _MODEL_FILES:
+        shutil.move(str(download_dir / name), partial_dir / name)
+    (partial_dir / ".release-tag").write_text(tag + "\n", encoding="utf-8")
+    shutil.rmtree(final_dir, ignore_errors=True)
+    os.replace(partial_dir, final_dir)
+    _atomic_symlink(final_dir, models / "current")
+    # 只保留 current 指向的模型目录，旧模型清掉
+    for entry in models.iterdir():
+        if entry.is_dir() and not entry.is_symlink() and entry.name != final_dir.name:
+            shutil.rmtree(entry, ignore_errors=True)
+    logger.info("NER 模型已安装：%s，即将重启后端生效", tag)
+
+
+def _download_and_apply_model(release: dict, manifest: dict) -> None:
+    """后台线程主体：下载模型文件 → 安装 → 重启后端（前端不中断）。"""
+    tag = release["tag_name"]
+    assets = {a.get("name"): a for a in release.get("assets", [])}
+    tmp_dir = _models_dir() / "tmp"
+    try:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+        tmp_dir.mkdir(parents=True, exist_ok=True)
+        total = sum(int(manifest["files"][n].get("size") or 0) for n in _MODEL_FILES)
+        done = 0
+        with httpx.Client(
+            timeout=_HTTP_TIMEOUT,
+            follow_redirects=True,
+            headers={"User-Agent": "movieclaw-updater"},
+        ) as client:
+            for name in _MODEL_FILES:
+                asset = assets.get(name)
+                if asset is None:
+                    raise RuntimeError(f"模型发布 {tag} 缺少文件 {name}，无法安装")
+                _progress.set(
+                    "downloading",
+                    f"正在下载模型文件 {name}……",
+                    percent=(done / total * 100) if total else None,
+                    target_version=tag,
+                )
+                with client.stream("GET", _mirror_url(asset["browser_download_url"])) as resp:
+                    resp.raise_for_status()
+                    with (tmp_dir / name).open("wb") as fh:
+                        for chunk in resp.iter_bytes(1024 * 256):
+                            fh.write(chunk)
+                            done += len(chunk)
+                            if total:
+                                _progress.set(
+                                    "downloading",
+                                    f"正在下载模型文件 {name}……",
+                                    percent=min(done / total * 100, 100.0),
+                                    target_version=tag,
+                                )
+        _progress.set("verifying", "正在校验模型文件的完整性……", target_version=tag)
+        _install_model_files(tag, manifest, tmp_dir)
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+        _progress.set(
+            "restarting",
+            f"模型 {tag} 安装完成，正在重启后端生效（页面无需刷新）……",
+            target_version=tag,
+        )
+        schedule_restart()  # 42：只重启后端，前端不中断
+    except httpx.HTTPError as exc:
+        logger.warning("模型更新下载失败：%s", exc)
+        _progress.set(
+            "failed",
+            "",
+            error="下载模型文件失败，请检查网络（可配置加速镜像 UPDATE_DOWNLOAD_MIRROR）后重试",
+            target_version=tag,
+        )
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+    except Exception as exc:
+        logger.exception("模型更新失败")
+        _progress.set("failed", "", error=str(exc), target_version=tag)
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
+async def start_model_update() -> UpdateProgressView:
+    """发起一次模型更新：前置校验后交给后台线程执行，立即返回当前进度。"""
+    if _runtime_version() is None:
+        raise BadRequestException(
+            "当前部署形态不支持应用内更新模型（仅 Docker 镜像部署支持）"
+        )
+    if _progress.busy():
+        raise BadRequestException("已有更新正在进行中，请等待其完成")
+    _progress.set("checking", "正在获取最新模型信息……", target_version=None)
+    try:
+        release = await _fetch_latest_model_release()
+        tag = release["tag_name"]
+        if _model_tag_num(tag) <= _model_tag_num(_current_model_tag()):
+            raise BadRequestException(f"当前模型已是最新（{_current_model_tag()}），无需更新")
+        manifest_asset = _model_manifest_asset(release)
+        if manifest_asset is None:
+            raise BadRequestException(
+                f"模型发布 {tag} 未携带更新清单（manifest.json），暂无法应用内安装"
+            )
+        headers = {"User-Agent": "movieclaw-updater"}
+        async with httpx.AsyncClient(
+            timeout=_HTTP_TIMEOUT, follow_redirects=True, headers=headers
+        ) as client:
+            resp = await client.get(_mirror_url(manifest_asset["browser_download_url"]))
+            resp.raise_for_status()
+        manifest = _parse_model_manifest(resp.content)
+    except httpx.HTTPError as exc:
+        _progress.set("idle", target_version=None)
+        raise BadRequestException("下载模型更新清单失败，请稍后重试") from exc
+    except BaseException:
+        _progress.set("idle", target_version=None)
+        raise
+    thread = threading.Thread(
+        target=_download_and_apply_model,
+        args=(release, manifest),
+        name="model-update",
+        daemon=True,
     )
     thread.start()
     return _progress.view()

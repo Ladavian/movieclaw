@@ -22,6 +22,8 @@ class UpdateStatusView(BaseModel):
     has_previous: bool
     #: 被标记为「连续启动失败」的坏版本列表（供 UI 外显兜底事件）
     bad_versions: list[str]
+    #: 当前生效的 NER 模型 Release tag（如 torrent-ner-v1）；无法识别时为 None
+    model_tag: str | None
 
 
 class UpdateCheckView(BaseModel):
@@ -38,6 +40,18 @@ class UpdateCheckView(BaseModel):
     #: Release 页的更新说明（GitHub Release body，Markdown）
     changelog: str
     #: Release 发布时间（ISO 8601）
+    published_at: str
+
+
+class ModelUpdateCheckView(BaseModel):
+    """「检查模型更新」的结果（NER 模型独立于代码更新，见设计文档）。"""
+
+    #: 当前生效的模型 Release tag；无法识别（老镜像无 tag 记录）时为 None
+    current_tag: str | None
+    latest_tag: str
+    update_available: bool
+    #: 最新模型 Release 是否携带更新清单（没带则无法应用内安装，需升级镜像获取）
+    installable: bool
     published_at: str
 
 

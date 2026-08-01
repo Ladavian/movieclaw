@@ -1,0 +1,58 @@
+# =============================================================================
+# runtime-version 守卫（docs/design/in-app-update.md M5）
+#
+# 应用内更新的兼容契约依赖 docker/runtime-version 诚实反映运行时依赖：
+# PR 改了 pyproject 的 dependencies、Dockerfile 的系统包/基础镜像，却没
+# bump runtime-version，就会出现「旧镜像装上依赖不满足的新代码」的事故。
+# 本守卫在 CI 拦下这种遗漏。
+# =============================================================================
+name: runtime-guard
+
+on:
+  pull_request:
+    paths:
+      - "pyproject.toml"
+      - "Dockerfile"
+      - "docker/runtime-version"
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: 校验 runtime-version 是否随依赖变化 bump
+        run: |
+          BASE="origin/${{ github.base_ref }}"
+          git fetch -q origin "${{ github.base_ref }}"
+
+          # pyproject 的 dependencies 数组是否有实质变化（注释/格式不算）
+          python3 - "$BASE" <<'PY'
+          import subprocess, sys, tomllib
+
+          def deps(ref: str | None):
+              raw = (
+                  subprocess.check_output(["git", "show", f"{ref}:pyproject.toml"])
+                  if ref
+                  else open("pyproject.toml", "rb").read()
+              )
+              return sorted(tomllib.loads(raw.decode())["project"]["dependencies"])
+
+          changed = deps(sys.argv[1]) != deps(None)
+          open("deps_changed", "w").write("1" if changed else "0")
+          PY
+
+          # Dockerfile 的系统包安装/基础镜像是否变化
+          docker_changed=$(git diff "$BASE"...HEAD -- Dockerfile \
+            | grep -cE '^[+-].*apt-get install|^[+-]FROM ' || true)
+          rv_changed=$(git diff "$BASE"...HEAD -- docker/runtime-version \
+            | grep -cE '^[+-][0-9]' || true)
+
+          if { [ "$(cat deps_changed)" = "1" ] || [ "$docker_changed" -gt 0 ]; } \
+              && [ "$rv_changed" -eq 0 ]; then
+            echo "::error::检测到运行时依赖变化（pyproject dependencies 或 Dockerfile 的系统包/基础镜像），但 docker/runtime-version 未 bump。旧镜像的应用内更新会因依赖不满足而启动失败——请把 docker/runtime-version +1，并在合并后发布新镜像。若确认本次变化向后兼容（如仅放宽版本上限），可由维护者说明后跳过本检查。"
+            exit 1
+          fi
+          echo "runtime-version 契约检查通过"

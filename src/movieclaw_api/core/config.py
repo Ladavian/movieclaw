@@ -167,6 +167,9 @@ class Settings(BaseSettings):
     # 设置后下载地址变为「前缀 + 原始 GitHub 地址」；manifest 的 sha256 校验
     # 是强制项，镜像被篡改的产物无法通过校验。
     update_download_mirror: str = Field(default="", alias="UPDATE_DOWNLOAD_MIRROR")
+    # NER 模型的应用内更新落盘目录（entrypoint 解析其中的 current 指针，
+    # 优先于镜像内置模型）。与 updates_dir 同在 data/ 卷上。
+    models_dir: str = Field(default="./data/models/ner", alias="MOVIECLAW_MODELS_DIR")
 
     # ------------------------------------------------------------------
     # 定时任务调度配置
