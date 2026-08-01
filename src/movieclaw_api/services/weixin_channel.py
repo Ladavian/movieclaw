@@ -9,22 +9,33 @@
 产品操作工具,不开 bash/read/write/edit 工作区工具。IM 是远程入口,
 即使有白名单,也不该让它拿到宿主机 shell。
 
-会话历史(P0):内存态 deque,进程重启即清空;每会话保留最近 40 条消息。
-持久化转录是后续迭代(复用 agent_sessions 存储)的事,不在本层内实现。
+会话持久化:微信对话与 Web「最近会话」共用同一套 Agent 会话体系
+(agent_session 索引 + JSONL 转录)。每个绑定账号持有一个「当前会话」
+(channel_account.agent_session_id),首条消息时创建、/reset 后换新;
+历史从转录重建,重启不丢,且在 Web 侧栏可见、可回放。
+
+体验:收到消息立即回执「思考中💭」,随后开启微信「正在输入」状态
+(getconfig 换 typing_ticket,sendtyping 每 5 秒保活),生成结束取消。
 """
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
 import logging
-from collections import deque
+import time
+import uuid
 from collections.abc import Awaitable, Callable
 from pathlib import Path
 
 from movieclaw_agent import AgentRunner, AgentStartParams
+from movieclaw_agent.events import AgentEvent
 from movieclaw_agent.tools import make_mclaw_tool
 from movieclaw_api.core.config import get_settings
 from movieclaw_api.exceptions import NotFoundException
 from movieclaw_api.services import auth as auth_service
+from movieclaw_api.services.agent_session_recorder import AgentSessionRecorder
+from movieclaw_api.services.agent_sessions import get_agent_session_store
 from movieclaw_api.services.llm_config import acquire_llm_router
 from movieclaw_api.services.mclaw_tool import render_service_map
 from movieclaw_channel import ChannelManager, InboundMessage
@@ -38,15 +49,19 @@ from movieclaw_channel.weixin import (
 from movieclaw_channel.weixin.adapter import CHANNEL_ID
 from movieclaw_db.engine import get_database
 from movieclaw_db.models.channel_account import ChannelAccount, ChannelAccountStatus
+from movieclaw_db.repositories.agent_session_repo import AgentSessionRepository
 from movieclaw_db.repositories.channel_account_repo import ChannelAccountRepository
-from movieclaw_llm import ChatMessage
 
 logger = logging.getLogger("movieclaw_api.weixin_channel")
 
-#: 每会话跨轮历史上限(条):IM 场景轻上下文,超出后滚动遗忘
-_HISTORY_MAX_MESSAGES = 40
 #: 微信侧 Agent 的步数上限:IM 对话不该跑出超长循环,收紧防失控
 _WEIXIN_MAX_STEPS = 40
+#: 收到消息后的即时回执文案(先让用户知道已收到,再慢慢生成)
+_ACK_TEXT = "思考中💭"
+#: 「正在输入」保活间隔(秒),对齐 openclaw 的 5s 续期
+_TYPING_KEEPALIVE_S = 5.0
+#: typing_ticket 缓存时长(秒):票据由服务端按用户发放,12 小时后重取
+_TYPING_TICKET_TTL_S = 12 * 60 * 60
 
 
 class WeixinChannelService:
@@ -58,10 +73,10 @@ class WeixinChannelService:
             on_confirmed=self._on_binding_confirmed,
             get_local_tokens=self._local_tokens,
         )
-        #: session_key → 跨轮对话历史(内存态)
-        self._histories: dict[str, deque[ChatMessage]] = {}
         #: 每账号一个持有连接池的 iLink 客户端,停账号时关闭
         self._clients: dict[str, WeixinClient] = {}
+        #: "account:user" → (typing_ticket, 过期时刻);失败不缓存,下条消息重试
+        self._typing_tickets: dict[str, tuple[str, float]] = {}
 
     # ------------------------------------------------------------------
     # 生命周期
@@ -111,7 +126,7 @@ class WeixinChannelService:
             # P0 白名单 = 扫码人本人;bound_user 缺失(异常数据)时拒绝所有人
             is_allowed=lambda uid, _bound=bound_user: bool(_bound) and uid == _bound,
             run_agent=self._run_agent,
-            reset_session=lambda key: self._histories.pop(key, None) and None,
+            reset_session=self._reset_session,
         )
 
         await self.manager.start_account(
@@ -169,23 +184,118 @@ class WeixinChannelService:
     # 账号管理(API 层调用)
     # ------------------------------------------------------------------
     async def unbind(self, account_id: str) -> bool:
-        """解绑:停收发循环、关客户端、删凭据行。"""
+        """解绑:停收发循环、关客户端、删凭据行。
+
+        历史 Agent 会话保留在「最近会话」里(只删通道凭据,不删对话记录)。
+        """
         await self.manager.stop_account(CHANNEL_ID, account_id)
         client = self._clients.pop(account_id, None)
         if client is not None:
             await client.aclose()
-        # 清掉该账号的全部会话历史
-        prefix = f"{CHANNEL_ID}:{account_id}:"
-        for key in [k for k in self._histories if k.startswith(prefix)]:
-            del self._histories[key]
         async with get_database().session() as session:
             return await ChannelAccountRepository(session).delete(account_id)
+
+    # ------------------------------------------------------------------
+    # 会话持久化(与 Web「最近会话」同一套体系)
+    # ------------------------------------------------------------------
+    async def _ensure_agent_session(self, msg: InboundMessage) -> str:
+        """取该账号当前的 Agent 会话 id;缺失或已失效则新建并落库。"""
+        store = get_agent_session_store()
+        async with get_database().session() as session:
+            account_repo = ChannelAccountRepository(session)
+            row = await account_repo.get(msg.account_id)
+            existing = (row.agent_session_id or "").strip() if row else ""
+            if existing:
+                # 索引行与转录文件都在才算有效;任一缺失(被手工删除等)则重建
+                session_row = await AgentSessionRepository(session).get(existing)
+                if session_row is not None and store.path(existing).exists():
+                    return existing
+                logger.warning(
+                    "微信会话已失效,将新建 account=%s session=%s", msg.account_id, existing
+                )
+
+            header = store.create()
+            await AgentSessionRepository(session).create(
+                header.session_id, title=f"微信 · {msg.user_id}"
+            )
+            await account_repo.set_agent_session(msg.account_id, header.session_id)
+            logger.info("微信会话已创建 account=%s session=%s", msg.account_id, header.session_id)
+            return header.session_id
+
+    async def _reset_session(self, session_key: str) -> None:
+        """/reset:清空账号的当前会话指针,下条消息自动新建。
+
+        旧会话及其转录完整保留在「最近会话」列表中,只是不再续写。
+        """
+        account_id = session_key.split(":", 2)[1]
+        async with get_database().session() as session:
+            await ChannelAccountRepository(session).set_agent_session(account_id, None)
+
+    # ------------------------------------------------------------------
+    # 「正在输入」状态
+    # ------------------------------------------------------------------
+    async def _get_typing_ticket(self, msg: InboundMessage) -> str:
+        """取该用户的 typing_ticket(带 12h 缓存);失败返回空串并降级。"""
+        key = f"{msg.account_id}:{msg.user_id}"
+        cached = self._typing_tickets.get(key)
+        now = time.monotonic()
+        if cached is not None and now < cached[1]:
+            return cached[0]
+        client = self._clients.get(msg.account_id)
+        if client is None:
+            return ""
+        try:
+            ticket = await client.get_config(msg.user_id, msg.reply.token.get("context_token"))
+        except Exception as exc:  # noqa: BLE001 -- typing 是锦上添花,失败只降级
+            logger.warning("getconfig 失败,本轮无「正在输入」状态:%s", exc)
+            return ""
+        if ticket:
+            self._typing_tickets[key] = (ticket, now + _TYPING_TICKET_TTL_S)
+        return ticket
+
+    async def _start_typing(self, msg: InboundMessage) -> Callable[[], Awaitable[None]]:
+        """开启「正在输入」并每 5s 保活;返回停止函数(取消保活并发送 CANCEL)。
+
+        任一环节失败都只记日志降级——typing 绝不能影响消息主链路。
+        """
+        ticket = await self._get_typing_ticket(msg)
+        client = self._clients.get(msg.account_id)
+        if not ticket or client is None:
+
+            async def noop() -> None:
+                return None
+
+            return noop
+
+        async def keepalive() -> None:
+            while True:
+                try:
+                    await client.send_typing(msg.user_id, ticket, typing=True)
+                except Exception as exc:  # noqa: BLE001
+                    logger.debug("sendtyping 保活失败(忽略):%s", exc)
+                await asyncio.sleep(_TYPING_KEEPALIVE_S)
+
+        task = asyncio.create_task(keepalive(), name=f"weixin-typing-{msg.user_id}")
+
+        async def stop() -> None:
+            task.cancel()
+            with contextlib.suppress(asyncio.CancelledError, Exception):
+                await task
+            try:
+                await client.send_typing(msg.user_id, ticket, typing=False)
+            except Exception as exc:  # noqa: BLE001
+                logger.debug("sendtyping 取消失败(忽略):%s", exc)
+
+        return stop
 
     # ------------------------------------------------------------------
     # Agent 装配与执行(dispatcher 的 run_agent 回调)
     # ------------------------------------------------------------------
     async def _run_agent(self, msg: InboundMessage, emit: Callable[[str], Awaitable[None]]) -> None:
         from movieclaw_channel.pusher import StepReplyPusher
+
+        # 1) 即时回执:先让用户知道消息已收到,再慢慢生成
+        await emit(_ACK_TEXT)
 
         try:
             async with get_database().session() as session:
@@ -194,30 +304,50 @@ class WeixinChannelService:
             await emit(f"⚠️ {exc.message}")
             return
 
-        history = self._histories.setdefault(msg.session_key, deque(maxlen=_HISTORY_MAX_MESSAGES))
+        # 2) 会话持久化:历史从转录重建;定稿消息经 recorder 持续追加
+        store = get_agent_session_store()
+        session_id = await self._ensure_agent_session(msg)
+        history = store.build_history(session_id)
+        recorder = AgentSessionRecorder(store, session_id, entry_count=len(history))
+        await recorder.record_user_input(msg.text)
+
         runner = AgentRunner(
             llm_router,
-            tools=await self._restricted_tools(msg.session_key),
+            tools=await self._restricted_tools(session_id),
             max_steps=_WEIXIN_MAX_STEPS,
+            on_message=recorder.on_message,
+            on_compaction=recorder.on_compaction,
         )
-        params = AgentStartParams(input=msg.text, history=list(history))
+        run_id = uuid.uuid4().hex[:12]
+        await recorder.begin(run_id)
+
+        # 3) 「正在输入」状态:生成期间每 5s 保活,结束取消
+        stop_typing = await self._start_typing(msg)
         pusher = StepReplyPusher(emit)
+        last_event: AgentEvent | None = None
+        try:
+            async for ev in runner.start(
+                AgentStartParams(input=msg.text, history=history), run_id=run_id
+            ):
+                last_event = ev
+                await pusher.feed(ev)
+        finally:
+            await stop_typing()
+            # /stop 取消时事件流没有终态事件,合成 cancelled 供收尾统一处理
+            terminal = (
+                last_event
+                if last_event is not None
+                and last_event.type in ("agent_done", "agent_error", "agent_cancelled")
+                else AgentEvent(type="agent_cancelled", run_id=run_id)
+            )
+            await recorder.on_terminal(terminal)
 
-        async for ev in runner.start(params):
-            await pusher.feed(ev)
-
-        # 跨轮记忆:只记「用户输入 + 终答」;工具轨迹不进历史(每轮重跑更可靠)
-        if not pusher.errored:
-            history.append(ChatMessage(role="user", content=msg.text))
-            if pusher.final_text:
-                history.append(ChatMessage(role="assistant", content=pusher.final_text))
-
-    async def _restricted_tools(self, session_key: str):
+    async def _restricted_tools(self, session_id: str):
         """微信侧的受限工具集:仅 mclaw 产品操作工具,不开工作区 shell。"""
         settings = get_settings()
         workdir = Path(settings.agent_workspace_dir).resolve() / "weixin"
         workdir.mkdir(parents=True, exist_ok=True)
-        token = await auth_service.issue_agent_token(session_key)
+        token = await auth_service.issue_agent_token(session_id)
         cli_env = {
             "MOVIECLAW_SERVER": f"http://127.0.0.1:{settings.port}",
             "MOVIECLAW_TOKEN": token,

@@ -174,6 +174,31 @@ class WeixinClient:
         _raise_for_business_error(payload, "sendmessage")
 
     # ------------------------------------------------------------------
+    # 「正在输入」状态(getconfig 换 typing_ticket → sendtyping)
+    # ------------------------------------------------------------------
+    async def get_config(self, ilink_user_id: str, context_token: str | None) -> str:
+        """拉取该用户的 bot 配置,返回 typing_ticket(空串 = 服务端未发放)。"""
+        payload = await self._post(
+            "ilink/bot/getconfig",
+            {"ilink_user_id": ilink_user_id, "context_token": context_token},
+            timeout_s=10,
+        )
+        _raise_for_business_error(payload, "getconfig")
+        return str(payload.get("typing_ticket") or "")
+
+    async def send_typing(self, ilink_user_id: str, typing_ticket: str, *, typing: bool) -> None:
+        """发送/取消「正在输入」指示(status: 1=输入中 2=取消)。"""
+        await self._post(
+            "ilink/bot/sendtyping",
+            {
+                "ilink_user_id": ilink_user_id,
+                "typing_ticket": typing_ticket,
+                "status": 1 if typing else 2,
+            },
+            timeout_s=10,
+        )
+
+    # ------------------------------------------------------------------
     # 生命周期通知(失败只告警,不阻断启停)
     # ------------------------------------------------------------------
     async def notify_start(self) -> None:
