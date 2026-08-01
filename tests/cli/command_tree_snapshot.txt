@@ -5,6 +5,9 @@ agent sessions list
 agent sessions rename
 agent sessions show
 agent start
+app restart
+app set
+app show
 appearance active set
 appearance backdrops delete
 appearance backdrops download
