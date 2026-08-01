@@ -82,9 +82,7 @@ async def test_serial_processing_and_reply():
         order.append(msg.text)
         await emit(f"回复:{msg.text}")
 
-    d = make_dispatcher(
-        adapter, is_allowed=lambda _u: True, run_agent=run_agent, reset_session=lambda _k: None
-    )
+    d = make_dispatcher(adapter, is_allowed=lambda _u: True, run_agent=run_agent)
     d.start()
     try:
         await d.submit_inbound(_msg("一", msg_id="m1"))
@@ -107,7 +105,6 @@ async def test_dedup_and_auth():
         adapter,
         is_allowed=lambda u: u == "owner@im.wechat",
         run_agent=run_agent,
-        reset_session=lambda _k: None,
     )
     d.start()
     try:
@@ -127,11 +124,14 @@ async def test_reset_command():
     async def run_agent(msg, emit):  # pragma: no cover - 命令不进 Agent
         raise AssertionError("命令消息不应进入 Agent")
 
+    async def reset_session(key: str) -> None:
+        resets.append(key)
+
     d = make_dispatcher(
         adapter,
         is_allowed=lambda _u: True,
         run_agent=run_agent,
-        reset_session=resets.append,
+        reset_session=reset_session,
     )
     d.start()
     try:
@@ -151,9 +151,7 @@ async def test_stop_cancels_running_agent():
         started.set()
         await asyncio.sleep(30)  # 模拟长任务,等着被 /stop 取消
 
-    d = make_dispatcher(
-        adapter, is_allowed=lambda _u: True, run_agent=run_agent, reset_session=lambda _k: None
-    )
+    d = make_dispatcher(adapter, is_allowed=lambda _u: True, run_agent=run_agent)
     d.start()
     try:
         await d.submit_inbound(_msg("跑个长任务", msg_id="m1"))
@@ -177,9 +175,7 @@ async def test_dead_worker_is_revived():
         calls.append(msg.text)
         await emit(f"回复:{msg.text}")
 
-    d = make_dispatcher(
-        adapter, is_allowed=lambda _u: True, run_agent=run_agent, reset_session=lambda _k: None
-    )
+    d = make_dispatcher(adapter, is_allowed=lambda _u: True, run_agent=run_agent)
     d.start()
     try:
         await d.submit_inbound(_msg("一", msg_id="m1"))
@@ -205,9 +201,7 @@ async def test_long_reply_is_chunked():
     async def run_agent(msg, emit):
         await emit("段落甲" * 10 + "\n\n" + "段落乙" * 10)  # 60 字,上限 50
 
-    d = make_dispatcher(
-        adapter, is_allowed=lambda _u: True, run_agent=run_agent, reset_session=lambda _k: None
-    )
+    d = make_dispatcher(adapter, is_allowed=lambda _u: True, run_agent=run_agent)
     d.start()
     try:
         await d.submit_inbound(_msg("hi", msg_id="m1"))

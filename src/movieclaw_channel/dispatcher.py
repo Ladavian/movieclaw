@@ -92,6 +92,10 @@ class _Session:
     current_run: asyncio.Task[None] | None = None
 
 
+async def _noop_reset(_key: str) -> None:
+    return None
+
+
 @dataclass(slots=True)
 class _DispatcherDeps:
     """服务层注入的回调集合。"""
@@ -100,8 +104,8 @@ class _DispatcherDeps:
     is_allowed: Callable[[str], bool]
     #: Agent 执行(见 RunAgentFn)
     run_agent: RunAgentFn
-    #: /reset 命令:清空该会话的跨轮历史
-    reset_session: Callable[[str], None] = field(default=lambda _key: None)
+    #: /reset 命令:重置该会话的跨轮上下文(实现方决定语义,如换新会话)
+    reset_session: Callable[[str], Awaitable[None]] = field(default=_noop_reset)
 
 
 class ChannelDispatcher:
@@ -214,7 +218,7 @@ class ChannelDispatcher:
             await self.push_outbound(OutboundEnvelope(reply=msg.reply, text=text, origin="system"))
             return True
         if cmd == "/reset":
-            self._deps.reset_session(msg.session_key)
+            await self._deps.reset_session(msg.session_key)
             await self.push_outbound(
                 OutboundEnvelope(
                     reply=msg.reply, text="会话已重置,我们重新开始吧。", origin="system"
@@ -300,10 +304,14 @@ def make_dispatcher(
     *,
     is_allowed: Callable[[str], bool],
     run_agent: RunAgentFn,
-    reset_session: Callable[[str], None],
+    reset_session: Callable[[str], Awaitable[None]] | None = None,
 ) -> ChannelDispatcher:
     """组装一个 dispatcher(隐藏 _DispatcherDeps 这个内部结构)。"""
     return ChannelDispatcher(
         adapter,
-        _DispatcherDeps(is_allowed=is_allowed, run_agent=run_agent, reset_session=reset_session),
+        _DispatcherDeps(
+            is_allowed=is_allowed,
+            run_agent=run_agent,
+            reset_session=reset_session or _noop_reset,
+        ),
     )

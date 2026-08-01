@@ -51,3 +51,9 @@ class ChannelAccount(TimestampMixin, table=True):
         default=ChannelAccountStatus.ACTIVE, description="账号状态(active/stale)"
     )
     last_error: str | None = Field(default=None, description="最近一次异常说明(中文)")
+    # 该账号当前对话对应的 Agent 会话 id(agent_session 表 + JSONL 转录):
+    # 微信里的对话与 Web「最近会话」共用同一套持久化,首条消息时创建,
+    # /reset 后清空、下条消息再建新会话(旧会话保留在列表里)。
+    agent_session_id: str | None = Field(
+        default=None, description="当前绑定的 Agent 会话 id(/reset 后换新)"
+    )

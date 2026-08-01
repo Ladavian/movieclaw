@@ -80,6 +80,16 @@ class ChannelAccountRepository:
         self._session.add(row)
         await self._session.commit()
 
+    async def set_agent_session(self, account_id: str, session_id: str | None) -> None:
+        """绑定/清空该账号当前的 Agent 会话(None = /reset,下条消息建新会话)。"""
+        row = await self.get(account_id)
+        if row is None:
+            return
+        row.agent_session_id = session_id
+        row.updated_at = utcnow()
+        self._session.add(row)
+        await self._session.commit()
+
     async def mark_stale(self, account_id: str, reason: str) -> None:
         """凭据失效:标记 stale,绑定页据此引导用户重新扫码。"""
         row = await self.get(account_id)
