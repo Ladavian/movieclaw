@@ -313,3 +313,79 @@ async def test_target_rule_coexists_with_auto_and_dispatch_chain(db, tmp_path):
         # auto 优先于路径规则
         rule = await resolve_dispatch_rule(session, tv_id, kind="tv")
         assert rule is not None and rule.id == auto_rule.id
+
+
+@pytest.mark.asyncio
+async def test_target_rule_skips_units_already_in_library(db, tmp_path, monkeypatch):
+    """季包补集的重处理：已回流入库的旧集不再搬进中转（防外部工具重复上传）。"""
+    from movieclaw_db.models import FileSource
+
+    tv_root, watch, staging = tmp_path / "tv", tmp_path / "watch", tmp_path / "staging"
+    watch.mkdir()
+    staging.mkdir()
+    tv_id = await _make_library(db, name="剧集库", root=tv_root)
+    item = await _make_item(db, title="某日剧", year=2023)
+    # 第 1 集已作为 strm 回流入库（任一库在位即视为闭环完成）
+    async with db.session() as session:
+        session.add(
+            LibraryFile(
+                library_id=tv_id,
+                media_item_id=item.id,
+                season_number=1,
+                episode_number=1,
+                file_path=str(tv_root / "某日剧 (2023)" / "某日剧 (2023) - S01E01.strm"),
+                size_bytes=1,
+                source=FileSource.IMPORTED,
+            )
+        )
+        await session.commit()
+
+    monkeypatch.setattr(ingest_mod, "probe_media", lambda p: _FAKE_SPEC)
+    monkeypatch.setattr(
+        ingest_mod, "_unit", lambda file, entry: (1, int(file.stem.removeprefix("ep")))
+    )
+
+    async def identify(session, kind, watch_root, main, spec):
+        return item
+
+    monkeypatch.setattr(ingest_mod, "_identify", identify)
+
+    entry = watch / "某日剧 (2023)"
+    entry.mkdir()
+    (entry / "ep1.mkv").write_bytes(b"video")
+    (entry / "ep2.mkv").write_bytes(b"video")
+
+    for _ in range(2):
+        await ingest_mod._sweep_dir(_target_rule(watch, staging), None)
+
+    # 只有未回流的第 2 集进了中转；第 1 集被跳过
+    season_dir = staging / "某日剧 (2023)" / "Season 01"
+    assert (season_dir / "某日剧 (2023) - S01E02.mkv").exists()
+    assert not (season_dir / "某日剧 (2023) - S01E01.mkv").exists()
+    async with db.session() as session:
+        record = (await session.execute(select(IngestEntry))).scalar_one()
+    assert record.status == IngestStatus.IMPORTED
+    assert "跳过" in (record.message or "")
+
+
+@pytest.mark.asyncio
+async def test_library_root_cannot_overlap_rule_target_path(db, tmp_path):
+    """库侧反向校验：根路径不得落在监听导入自定义目录之内（或包含它）。"""
+    from movieclaw_api.services.library.config import LibraryConfigService
+    from movieclaw_media.models import MediaKind
+
+    watch, staging = tmp_path / "watch", tmp_path / "staging"
+    watch.mkdir()
+    staging.mkdir()
+    async with db.session() as session:
+        await ImportWatchConfigService(session).create(
+            source_path=str(watch),
+            strategy="copy",
+            library_id=None,
+            kind="tv",
+            target_path=str(staging),
+        )
+        with pytest.raises(BadRequestException, match="自定义目录重叠"):
+            await LibraryConfigService(session).create(
+                name="剧集库", kind=MediaKind.TV, root_paths=[str(staging / "sub")]
+            )

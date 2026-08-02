@@ -496,7 +496,13 @@ async def _ingest_entry(
     if kind is MediaKind.MOVIE and len(snap.videos) > 1:
         notes.append(f"已取最大文件为正片，忽略其余 {len(snap.videos) - 1} 个视频")
 
+    # 自定义目录的幂等靠库存：中转文件上传后会被删除，无法像库目标那样按
+    # 落点文件去重——季包补集触发的重处理会把旧集重新搬进中转、被外部工具
+    # 重复上传。已回流入库（任一库在位）的单元视为闭环完成，跳过
+    owned_units = await repo.owned_units(item.id) if staging is not None else set()
+
     imported = 0
+    skipped_owned = 0
     for file in files:
         if kind is MediaKind.MOVIE:
             season, episode = 0, 0
@@ -508,6 +514,9 @@ async def _ingest_entry(
             if season is None:
                 notes.append(f"「{file.name}」解析不出季号，未入库")
                 continue
+        if staging is not None and (season, episode) in owned_units:
+            skipped_owned += 1
+            continue
         ext = file.suffix.lower()
         if kind is MediaKind.MOVIE:
             target = Path(dest_dir) / f"{base}{ext}"
@@ -586,11 +595,16 @@ async def _ingest_entry(
         message += f"，{verb} {imported} 个文件到 {dest_dir}"
         if staging is not None:
             message += "；文件进入媒体库根目录后将自动入账"
+        if skipped_owned:
+            message += f"；{skipped_owned} 个文件的内容已在媒体库，跳过"
         if notes:
             message += "；" + "；".join(notes)
         await conclude(IngestStatus.IMPORTED, message, imported)
     elif notes:
         await conclude(IngestStatus.FAILED, "；".join(notes))
+    elif skipped_owned:
+        # 自定义目录条目的全部单元都已回流入库：链路闭环完成，不再搬运
+        await conclude(IngestStatus.IMPORTED, f"《{item.title}》的内容已在媒体库，无需整理")
     elif staging is not None:
         await conclude(IngestStatus.IMPORTED, f"《{item.title}》的内容已全部在目标目录，无需搬运")
     else:

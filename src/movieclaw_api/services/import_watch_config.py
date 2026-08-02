@@ -56,7 +56,8 @@ def rule_target_label(rule: ImportWatch, library_name: str | None) -> str:
     if rule.library_id is not None:
         return f"「{library_name or '?'}」"
     if rule.target_path:
-        return f"自定义目录（{rule.target_path}）"
+        kind_label = _KIND_LABELS.get(rule.kind or "", rule.kind or "?")
+        return f"自定义目录（{kind_label} · {rule.target_path}）"
     return f"自动路由（{_KIND_LABELS.get(rule.kind or '', rule.kind or '?')}）"
 
 

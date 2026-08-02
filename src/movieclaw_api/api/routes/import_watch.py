@@ -73,7 +73,7 @@ class ImportWatchView(BaseModel):
         if row.library_id is not None:
             label = library_name or "?"
         elif row.target_path:
-            label = f"自定义目录（{row.target_path}）"
+            label = f"自定义目录（{'电影' if row.kind == 'movie' else '剧集'} · {row.target_path}）"
         else:
             label = f"自动路由（{'电影' if row.kind == 'movie' else '剧集'}）"
         return cls(
