@@ -167,6 +167,10 @@ def build_lifespan(settings: Settings):
         from movieclaw_api.services.weixin_channel import init_weixin_channel
 
         await init_weixin_channel()
+        # Telegram / Discord 通道:配对码绑定,同一套 Agent 会话体系
+        from movieclaw_api.services.im_channel import init_im_channels
+
+        await init_im_channels()
         logger.info("应用启动完成，数据库就绪")
         try:
             yield
@@ -181,6 +185,9 @@ def build_lifespan(settings: Settings):
             from movieclaw_api.services.weixin_channel import close_weixin_channel
 
             await close_weixin_channel()
+            from movieclaw_api.services.im_channel import close_im_channels
+
+            await close_im_channels()
             # 先停止 Agent，避免它在下游 HTTP 客户端和数据库开始释放后继续工作。
             await close_agent_run_registry()
             if settings.scheduler_enabled:

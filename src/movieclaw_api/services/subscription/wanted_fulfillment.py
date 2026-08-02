@@ -82,6 +82,10 @@ async def close_fulfilled_wanted(session: AsyncSession, media_item_id: int) -> i
             )
         )
         await recompute_subscription_status(session, subscription, item)
+        # IM 通道推送(微信/TG/Discord;fire-and-forget,失败不影响对账链路)
+        from movieclaw_api.services.channel_push import notify_channels
+
+        notify_channels(f"🎬 已入库:《{item.title}》{units_text(wanted_rows)}", event="imported")
         # 内容已进库，该订阅在途种子的落点告警（若有）自动熄灭
         from movieclaw_api.services.system_notice import resolve_notices
 

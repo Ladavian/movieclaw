@@ -57,6 +57,13 @@ class ChannelManager:
         rt = self._accounts.get(self._key(channel_id, account_id))
         return rt is not None and rt.task is not None and not rt.task.done()
 
+    def get_dispatcher(self, channel_id: str, account_id: str) -> ChannelDispatcher | None:
+        """取运行中账号的 dispatcher(主动推送用);未运行返回 None。"""
+        rt = self._accounts.get(self._key(channel_id, account_id))
+        if rt is None or rt.task is None or rt.task.done():
+            return None
+        return rt.dispatcher
+
     def is_stale(self, channel_id: str, account_id: str) -> bool:
         rt = self._accounts.get(self._key(channel_id, account_id))
         return rt.stale if rt else False

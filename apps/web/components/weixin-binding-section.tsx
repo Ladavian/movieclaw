@@ -34,7 +34,7 @@ import { useVisiblePolling } from "@/lib/use-visible-polling";
  * 前置门禁:微信侧对话完全由 AI 模型驱动,未接入模型供应商时不自动出码、
  * 隐藏绑定入口,并展示引导提醒(判定与 useLlmConfigured / 后端同口径)。
  */
-export function WeixinBindingSection() {
+export function WeixinBindingSection({ hideIntro = false }: { hideIntro?: boolean } = {}) {
   // null = 探测中(不出码也不提醒,避免闪烁);false = 未配置(拦下并引导)
   const llmConfigured = useLlmConfigured();
   const confirm = useConfirm();
@@ -172,6 +172,7 @@ export function WeixinBindingSection() {
         </div>
       )}
 
+      {!hideIntro && (
       <p className="text-sub text-[var(--text-muted)]">
         绑定后，用你的微信给 AI 助手发消息即可对话（仅扫码人本人可用）。发送
         <span className="mx-1 rounded bg-white/[0.08] px-1.5 py-0.5 text-caption">/reset</span>
@@ -179,6 +180,7 @@ export function WeixinBindingSection() {
         <span className="mx-1 rounded bg-white/[0.08] px-1.5 py-0.5 text-caption">/stop</span>
         取消正在进行的处理。
       </p>
+      )}
 
       {justConfirmed && (
         <div className="rounded-xl border border-[#4ade80]/30 bg-[#4ade80]/10 px-4 py-3 text-body text-[#4ade80]">
@@ -187,7 +189,7 @@ export function WeixinBindingSection() {
       )}
 
       {/* 前置门禁:未接入 AI 模型时给出引导,并隐藏所有绑定入口 */}
-      {llmConfigured === false && (
+      {!hideIntro && llmConfigured === false && (
         <div className="rounded-xl border border-[#f5c451]/30 bg-[#f5c451]/10 px-4 py-3 text-body text-[#f5c451]">
           微信绑定需要先完成 AI 模型配置——微信里的对话完全由模型驱动。请先前往
           <Link

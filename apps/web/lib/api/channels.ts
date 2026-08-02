@@ -90,3 +90,95 @@ export function unbindWeixinAccount(accountId: string): Promise<Record<string, n
     ),
   );
 }
+
+// ---------------------------------------------------------------------------
+// Telegram / Discord（配对码绑定，见 api/routes/channels_im.py）
+// ---------------------------------------------------------------------------
+
+export type ImChannelId = "telegram" | "discord";
+
+/** 已绑定的 TG/Discord bot 账号（见 schemas.channels.ImAccountView）。 */
+export interface ImAccount {
+  channel_id: string;
+  account_id: string;
+  /** 完成配对的用户 id（白名单，同时是推送目标） */
+  bound_user_id: string | null;
+  status: "active" | "stale";
+  running: boolean;
+  last_error: string | null;
+  bound_at: string;
+}
+
+/** 配对绑定状态（发起返回与轮询同一结构）。 */
+export interface ImBinding {
+  challenge_id: string;
+  status: "pending" | "confirmed" | "expired" | "failed";
+  /** 面板展示的 6 位配对码：用户私聊 bot 发这串数字完成绑定 */
+  pair_code: string;
+  bot_name: string;
+  message: string;
+  account: ImAccount | null;
+}
+
+export function listImAccounts(channel: ImChannelId): Promise<ImAccount[]> {
+  return unwrap(request<ApiEnvelope<ImAccount[]>>(`/channels/im/${channel}/accounts`));
+}
+
+export function startImBinding(channel: ImChannelId, token: string): Promise<ImBinding> {
+  return unwrap(
+    request<ApiEnvelope<ImBinding>>(`/channels/im/${channel}/bindings`, {
+      method: "POST",
+      body: JSON.stringify({ token }),
+    }),
+  );
+}
+
+export function getImBindingStatus(channel: ImChannelId, challengeId: string): Promise<ImBinding> {
+  return unwrap(
+    request<ApiEnvelope<ImBinding>>(
+      `/channels/im/${channel}/bindings/${encodeURIComponent(challengeId)}`,
+    ),
+  );
+}
+
+export function unbindImAccount(
+  channel: ImChannelId,
+  accountId: string,
+): Promise<Record<string, never>> {
+  return unwrap(
+    request<ApiEnvelope<Record<string, never>>>(
+      `/channels/im/${channel}/accounts/${encodeURIComponent(accountId)}`,
+      { method: "DELETE" },
+    ),
+  );
+}
+
+export function sendChannelPushTest(text?: string): Promise<{ sent: number }> {
+  return unwrap(
+    request<ApiEnvelope<{ sent: number }>>(`/channels/im/push-test`, {
+      method: "POST",
+      body: JSON.stringify({ text: text ?? "" }),
+    }),
+  );
+}
+
+/** 推送内容开关（哪些系统事件会推送到已绑定通道）。 */
+export interface ChannelPushConfig {
+  /** 订阅命中并投递下载时推送 */
+  push_dispatch: boolean;
+  /** 下载完成整理入库时推送 */
+  push_imported: boolean;
+}
+
+export function getChannelPushConfig(): Promise<ChannelPushConfig> {
+  return unwrap(request<ApiEnvelope<ChannelPushConfig>>(`/channels/im/push-config`));
+}
+
+export function updateChannelPushConfig(config: ChannelPushConfig): Promise<ChannelPushConfig> {
+  return unwrap(
+    request<ApiEnvelope<ChannelPushConfig>>(`/channels/im/push-config`, {
+      method: "PUT",
+      body: JSON.stringify(config),
+    }),
+  );
+}
