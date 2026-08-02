@@ -40,6 +40,19 @@ def sanitize_folder_name(name: str) -> str:
     return cleaned or "未命名"
 
 
+def derive_entry_dir(root: str, *, title: str, year: int | None) -> str:
+    """由根路径推导条目目录：``{root}/{title} ({year})``。
+
+    库入库与监听导入的自定义目录目标共用同一命名规范——命名同源是
+    "整理输出 → 外部流转 → 库根回流"链路的唯一衔接机制
+    （docs/design/strm-workflow.md）。路径用 POSIX 分隔符拼接。
+    """
+    folder = sanitize_folder_name(title)
+    if year is not None:
+        folder = f"{folder} ({year})"
+    return posixpath.join(root.rstrip("/"), folder)
+
+
 def derive_save_path(library: Library, *, title: str, year: int | None) -> str | None:
     """由库推导入库保存路径：``{主根}/{title} ({year})``。
 
@@ -51,10 +64,7 @@ def derive_save_path(library: Library, *, title: str, year: int | None) -> str |
     root = library.primary_root
     if not root:
         return None
-    folder = sanitize_folder_name(title)
-    if year is not None:
-        folder = f"{folder} ({year})"
-    return posixpath.join(root.rstrip("/"), folder)
+    return derive_entry_dir(root, title=title, year=year)
 
 
 class LibraryConfigService:
@@ -113,11 +123,13 @@ class LibraryConfigService:
         return cleaned
 
     async def _assert_roots_clear_of_import_watch(self, roots: list[str]) -> None:
-        """根路径不得与任何监听导入规则的源目录前缀重叠。
+        """根路径不得与任何监听导入规则的源目录或自定义目录前缀重叠。
 
         源目录在库根之下会被扫描当存量原地入账，库根在源目录之下会把
-        整库当"下载完成的条目"搬运，两个方向都是双头管理的灾难。
-        监听导入侧建规则时做同样的反向校验（import_watch_config）。
+        整库当"下载完成的条目"搬运，两个方向都是双头管理的灾难；
+        自定义目录（target_path）里是等待外部流转的"过客"文件，被库
+        扫描收编等于绕过了流转语义。监听导入侧建规则时做同样的反向
+        校验（import_watch_config）。
         """
         from sqlmodel import select
 
@@ -131,6 +143,12 @@ class LibraryConfigService:
                 if r == s or r.startswith(s + "/") or s.startswith(r + "/"):
                     raise BadRequestException(
                         f"根路径与监听导入的源目录重叠：{root} ↔ {rule.source_path}；"
+                        "请先调整「监听导入」配置"
+                    )
+                t = (rule.target_path or "").rstrip("/")
+                if t and (r == t or r.startswith(t + "/") or t.startswith(r + "/")):
+                    raise BadRequestException(
+                        f"根路径与监听导入的自定义目录重叠：{root} ↔ {rule.target_path}；"
                         "请先调整「监听导入」配置"
                     )
 

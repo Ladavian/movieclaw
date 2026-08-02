@@ -424,11 +424,21 @@ export function SubscribeDialog({
                     (dispatchPreview.ok ? (
                       <p className="mt-1.5 text-caption leading-relaxed text-[var(--text-faint)]">
                         {dispatchPreview.mode === "watch" ? (
-                          <>
-                            将投递到监听导入目录{" "}
-                            <span className="font-mono">{dispatchPreview.path}</span>
-                            ，下载完成后自动整理入库
-                          </>
+                          dispatchPreview.staging_path ? (
+                            <>
+                              将投递到监听导入目录{" "}
+                              <span className="font-mono">{dispatchPreview.path}</span>
+                              ，下载完成后整理到{" "}
+                              <span className="font-mono">{dispatchPreview.staging_path}</span>
+                              ，文件进入媒体库根目录后自动入账
+                            </>
+                          ) : (
+                            <>
+                              将投递到监听导入目录{" "}
+                              <span className="font-mono">{dispatchPreview.path}</span>
+                              ，下载完成后自动整理入库
+                            </>
+                          )
                         ) : (
                           (() => {
                             const folder = prepared.media

@@ -79,15 +79,20 @@ async def dispatch(
     # entry_level = 投递目录就是库内条目目录：可以安全锚定副标题线索，
     # 帮扫描器收敛拼音命名的种子内容（监听目录/默认目录锚线索会波及无关内容）
     entry_level = decision.entry_level
-    if library is not None and decision.mode == "watch":
+    # 自定义目录规则：落点由规则声明决定（不入库），文案陈述事实——
+    # 整理到该目录后由外部流转，文件回到库根时才入账关单
+    staging = getattr(decision.rule, "target_path", None)
+    if library is not None and decision.mode == "watch" and staging:
+        target_text = (
+            f"；已投递到监听导入目录，下载完成后将整理到 {staging}，文件进入媒体库根目录后自动入账"
+        )
+    elif library is not None and decision.mode == "watch":
         target_text = (
             f"；已投递到监听导入目录，下载完成后将整理入库到「{library.name}」："
             f"{decision.entry_dir}"
         )
     elif library is not None and decision.mode == "inplace":
-        target_text = (
-            f"；将直接下载到「{library.name}」库内目录：{decision.path}，完成后自动入账"
-        )
+        target_text = f"；将直接下载到「{library.name}」库内目录：{decision.path}，完成后自动入账"
     elif library is not None:
         target_text = f"；媒体库「{library.name}」未配置根路径，将落至下载器默认目录，不会自动入库"
     else:
@@ -172,6 +177,7 @@ async def dispatch(
                 "units": [[w.season_number, w.episode_number] for w in claimed],
                 "library_id": library.id if library else None,
                 "save_path": decision.entry_dir,
+                "staging_path": staging,
                 "dispatch_dir": dispatch_dir,
             },
         )
@@ -237,17 +243,21 @@ async def preview_dispatch_route(
         warning = "没有可用的默认下载器，请先在「设置 → 下载器」添加并确保连接测试通过"
     elif base is None:
         ok = False
-        warning = (
-            "没有可用的媒体库（或库未配置根路径），下载会落到下载器默认目录且不会自动入库"
-        )
+        warning = "没有可用的媒体库（或库未配置根路径），下载会落到下载器默认目录且不会自动入库"
     elif library is None:
-        # 无库但存在同类型 auto 监听规则：种子有目录可投，但完成后无库可
-        # 路由、无法入库——不能因为"投得出去"就报可行
+        # 无库但存在同类型 auto/路径监听规则：种子有目录可投，但订阅闭环
+        # 需要库承接——不能因为"投得出去"就报可行
         ok = False
-        warning = (
-            "没有可用的媒体库——种子会投到监听导入目录，但下载完成后无法自动入库；"
-            "请先到「媒体库」创建"
-        )
+        if getattr(decision.rule, "target_path", None):
+            warning = (
+                "没有可用的媒体库——下载完成后会整理到自定义目录，但没有库可承接"
+                "回流入账，订阅无法闭环；请先到「媒体库」创建"
+            )
+        else:
+            warning = (
+                "没有可用的媒体库——种子会投到监听导入目录，但下载完成后无法自动入库；"
+                "请先到「媒体库」创建"
+            )
     elif downloader.path_mappings and not mapping_covers(base, downloader.path_mappings):
         ok = False
         warning = (
@@ -258,6 +268,7 @@ async def preview_dispatch_route(
     return {
         "mode": mode,
         "path": base,
+        "staging_path": getattr(decision.rule, "target_path", None),
         "library_id": library.id if library else None,
         "library_name": library.name if library else None,
         "downloader_name": downloader.name if downloader else None,

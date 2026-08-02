@@ -173,6 +173,13 @@ class DispatchPreviewView(BaseModel):
         description="投递路由：监听导入目录 / 直接下载进库 / 下载器默认目录"
     )
     path: str | None = Field(default=None, description="movieclaw 视角的投递基底目录")
+    staging_path: str | None = Field(
+        default=None,
+        description=(
+            "命中自定义目录规则时的整理落点：下载完成后整理到该目录（不直接入库），"
+            "文件外部流转回库根后才入账"
+        ),
+    )
     library_id: int | None = Field(default=None, description="解析出的目标库（前端预选用）")
     library_name: str | None = None
     downloader_name: str | None = None
@@ -405,6 +412,10 @@ class LibraryPipelineView(BaseModel):
     mode: Literal["watch", "inplace", "downloader_default"]
     path: str | None = Field(default=None, description="投递基底目录（movieclaw 视角）")
     library_root: str | None = Field(default=None, description="库主根（入库节点的落点）")
+    staging_path: str | None = Field(
+        default=None,
+        description="命中自定义目录规则时的整理落点（非空时转移段不直接入库，外部流转后回库根入账）",
+    )
     status: Literal["ok", "warn", "error"] = Field(description="全链路最坏状态")
     narrative: str = Field(
         default="", description="「订阅命中本库会发生什么」的一句话叙事（正向可预期）"

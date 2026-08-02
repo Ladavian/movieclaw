@@ -58,6 +58,9 @@ class LibraryPipeline:
     path: str | None  # 投递基底目录（movieclaw 视角）
     library_root: str | None  # 库主根（入库节点的落点展示）
     status: str  # 全链路最坏状态
+    # 命中自定义目录规则时的整理落点（strm-workflow）：非空时转移段落到
+    # 该目录、之后是"外部流转"节点，入账靠库根扫描收尾
+    staging_path: str | None = None
     narrative: str = ""  # 「订阅命中本库会发生什么」的一句话叙事（全绿时的正向可预期）
     checks: list[HealthCheck] = field(default_factory=list)
 
@@ -160,11 +163,18 @@ def _watched_dirs() -> frozenset[str]:
 def _check_transfer(
     rule: ImportWatch, library: Library, watched: frozenset[str]
 ) -> list[HealthCheck]:
-    """watch 模式的「转移」段：硬链同盘 + 监听是否实际生效。"""
+    """watch 模式的「转移」段：硬链同盘 + 监听是否实际生效。
+
+    自定义目录规则的整理落点是 ``target_path`` 而非库主根——同盘检测的
+    锚点跟着落点走（口径与真实搬运同源）。
+    """
     checks: list[HealthCheck] = []
-    if rule.strategy == "hardlink" and library.primary_root:
+    # 硬链同盘的锚点 = 整理落点：自定义目录规则为 target_path，否则库主根
+    anchor = rule.target_path or library.primary_root
+    anchor_label = "整理目标目录" if rule.target_path else "库主根"
+    if rule.strategy == "hardlink" and anchor:
         try:
-            same = os.stat(rule.source_path).st_dev == os.stat(library.primary_root).st_dev  # type: ignore[arg-type]
+            same = os.stat(rule.source_path).st_dev == os.stat(anchor).st_dev
         except OSError:
             checks.append(
                 HealthCheck(
@@ -172,7 +182,7 @@ def _check_transfer(
                     label="硬链接同盘",
                     status="warn",
                     detail=(
-                        f"目录暂不可达（{rule.source_path} 或库主根未挂载），无法检测；"
+                        f"目录暂不可达（{rule.source_path} 或{anchor_label}未挂载），无法检测；"
                         "挂载就绪后重新体检"
                     ),
                     fix_section="import-watch",
@@ -185,17 +195,22 @@ def _check_transfer(
                         key="transfer_disk",
                         label="硬链接同盘",
                         status="ok",
-                        detail="源目录与库主根在同一文件系统，硬链接零占用可用",
+                        detail=f"源目录与{anchor_label}在同一文件系统，硬链接零占用可用",
                     )
                 )
             else:
+                target_text = (
+                    f"整理目标目录 {rule.target_path}"
+                    if rule.target_path
+                    else f"「{library.name}」的主根"
+                )
                 checks.append(
                     HealthCheck(
                         key="transfer_disk",
                         label="硬链接同盘",
                         status="error",
                         detail=(
-                            f"源目录与「{library.name}」的主根不在同一文件系统，"
+                            f"源目录与{target_text}不在同一文件系统，"
                             "硬链接会失败——请把监听导入规则的策略改为「复制」，"
                             "或调整存储布局"
                         ),
@@ -234,6 +249,15 @@ def _narrative(mode: str, base: str | None, library: Library, rule: ImportWatch 
     的结论常驻到每个库卡片上，全绿时用户也能对订阅后的行为有明确预期。
     """
     root = library.primary_root
+    if mode == "watch" and rule is not None and rule.target_path:
+        verb = "硬链接" if rule.strategy == "hardlink" else "复制"
+        tail = (
+            f"；文件后续出现在 {root} 时自动扫描入账" if root else "；库没有根路径，回流后无法入账"
+        )
+        return (
+            f"订阅命中本库的影片会投递到 {base}，下载完成后自动识别改名并{verb}到 "
+            f"{rule.target_path}（不直接入库，外部流转由你的工具完成）{tail}。"
+        )
     if mode == "watch" and rule is not None:
         if not root:
             return f"投递到监听导入目录 {base}，但库没有根路径，下载完成后无法入库。"
@@ -479,12 +503,18 @@ async def pipeline_health(session: AsyncSession) -> dict:
                 )
             )
         elif mode == "watch":
+            staging = getattr(rule, "target_path", None)
+            detail = (
+                f"投递到监听导入目录 {base}，下载完成后整理到 {staging}（外部流转后回库根入账）"
+                if staging
+                else f"投递到监听导入目录 {base}，下载完成后自动整理入库"
+            )
             checks.append(
                 HealthCheck(
                     key="dispatch_dir",
                     label="投递目录",
                     status="ok",
-                    detail=f"投递到监听导入目录 {base}，下载完成后自动整理入库",
+                    detail=detail,
                 )
             )
         else:
@@ -542,6 +572,7 @@ async def pipeline_health(session: AsyncSession) -> dict:
                 path=base,
                 library_root=library.primary_root,
                 status=status,
+                staging_path=getattr(rule, "target_path", None),
                 narrative=_narrative(mode, base, library, rule),  # type: ignore[arg-type]
                 checks=checks,
             )

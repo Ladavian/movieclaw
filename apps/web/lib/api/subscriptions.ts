@@ -160,6 +160,8 @@ export interface DispatchPreview {
   mode: "watch" | "inplace" | "downloader_default";
   /** movieclaw 视角的投递基底目录 */
   path: string | null;
+  /** 命中自定义目录规则时的整理落点：完成后整理到该目录（不直接入库），外部流转回库根后入账 */
+  staging_path: string | null;
   /** 解析出的目标库（未选库时=收藏范围路由的结论，弹窗据此预选） */
   library_id: number | null;
   library_name: string | null;
@@ -215,6 +217,8 @@ export interface LibraryPipeline {
   path: string | null;
   /** 库主根（入库节点的落点展示） */
   library_root: string | null;
+  /** 命中自定义目录规则时的整理落点：非空时转移段不直接入库，外部流转后回库根入账 */
+  staging_path: string | null;
   status: "ok" | "warn" | "error";
   /** 「订阅命中本库会发生什么」的一句话叙事（全绿时的正向可预期） */
   narrative: string;

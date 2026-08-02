@@ -26,19 +26,25 @@ router = APIRouter(prefix="/import-watch", tags=["import-watch"])
 class ImportWatchPayload(BaseModel):
     """创建/更新监听导入规则的请求体。
 
-    目标二选一：``library_id`` 指定库；为 null 即**自动路由**（识别出作品后
-    按各库收藏范围选库），此时 ``kind`` 必填（识别链需要 movie/tv 先验）。
+    目标三态：``library_id`` 指定库；``target_path`` 自定义目录（识别改名后
+    落该目录、不进任何媒体库——整理结果需外部流转再进库的场景，此时
+    ``kind`` 必填）；两者都为 null 即**自动路由**（识别出作品后按各库收藏
+    范围选库，``kind`` 同样必填）。``library_id`` 与 ``target_path`` 互斥。
     """
 
     source_path: str = Field(description="源目录（绝对路径，不得与任何库根路径重叠）")
     strategy: Literal["hardlink", "copy"] = Field(
-        description="搬运策略：hardlink（零占用需与目标库主根同盘）/ copy（可跨盘）"
+        description="搬运策略：hardlink（零占用需与落点同盘）/ copy（可跨盘）"
     )
     library_id: int | None = Field(
-        default=None, description="目标媒体库；null=自动路由（按收藏范围选库）"
+        default=None, description="目标媒体库；null=自动路由或自定义目录"
+    )
+    target_path: str | None = Field(
+        default=None,
+        description="自定义目录目标（绝对路径，不得与库根/监听源重叠）；与 library_id 互斥",
     )
     kind: Literal["movie", "tv"] | None = Field(
-        default=None, description="自动路由的媒体类型；指定库时忽略"
+        default=None, description="自动路由/自定义目录的媒体类型；指定库时忽略"
     )
 
 
@@ -48,12 +54,15 @@ class ImportWatchView(BaseModel):
     id: int
     source_path: str
     strategy: Literal["hardlink", "copy"]
-    library_id: int | None = Field(default=None, description="null=自动路由")
+    library_id: int | None = Field(default=None, description="null=自动路由或自定义目录")
     library_name: str | None = None
+    target_path: str | None = Field(default=None, description="自定义目录目标（其余目标为 null）")
     kind: Literal["movie", "tv"] | None = Field(
-        default=None, description="自动路由的媒体类型（指定库时为 null）"
+        default=None, description="自动路由/自定义目录的媒体类型（指定库时为 null）"
     )
-    target_label: str = Field(description="目标展示名：库名或「自动路由（电影/剧集）」")
+    target_label: str = Field(
+        description="目标展示名：库名 /「自动路由（电影/剧集）」/「自定义目录 …」"
+    )
     created_at: datetime
 
     @classmethod
@@ -63,6 +72,8 @@ class ImportWatchView(BaseModel):
             created = created.replace(tzinfo=UTC)
         if row.library_id is not None:
             label = library_name or "?"
+        elif row.target_path:
+            label = f"自定义目录（{'电影' if row.kind == 'movie' else '剧集'} · {row.target_path}）"
         else:
             label = f"自动路由（{'电影' if row.kind == 'movie' else '剧集'}）"
         return cls(
@@ -71,6 +82,7 @@ class ImportWatchView(BaseModel):
             strategy=row.strategy,  # type: ignore[arg-type]
             library_id=row.library_id,
             library_name=library_name,
+            target_path=row.target_path,
             kind=row.kind,  # type: ignore[arg-type]
             target_label=label,
             created_at=created,
@@ -111,6 +123,7 @@ async def create_rule(
         strategy=payload.strategy,
         library_id=payload.library_id,
         kind=payload.kind,
+        target_path=payload.target_path,
     )
     views = await _views(session, [row])
     return ok(views[0], message=f"已创建监听导入规则：{row.source_path}")
@@ -134,6 +147,7 @@ async def update_rule(
         strategy=payload.strategy,
         library_id=payload.library_id,
         kind=payload.kind,
+        target_path=payload.target_path,
     )
     views = await _views(session, [row])
     return ok(views[0], message="已更新")

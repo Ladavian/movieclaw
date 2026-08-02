@@ -14,18 +14,24 @@ class ImportWatch(TimestampMixin, table=True):
     是本模块的职责。每条规则声明：监听哪个源目录、完成的内容硬链/复制
     到哪里。
 
-    目标二选一（docs/design/library-routing.md 2.3）：
+    目标三态（docs/design/library-routing.md 2.3、docs/design/strm-workflow.md）：
     - **指定库**：``library_id`` 非空，内容固定进该库（识别按库类型走）；
-    - **自动路由**：``library_id`` 为 NULL 且 ``kind`` 必填——识别出作品后
-      按各库的收藏范围声明（library_routing.route）决定目标库；kind 仍须
-      先验，因为识别链的语义按 movie/tv 分叉（条目名解析、季集分配不同）。
-      每 kind 至多一条 auto 规则（多条会让投递落点歧义）。
+    - **自动路由**：``library_id`` 与 ``target_path`` 均为 NULL 且 ``kind``
+      必填——识别出作品后按各库的收藏范围声明（library_routing.route）决定
+      目标库；kind 仍须先验，因为识别链的语义按 movie/tv 分叉（条目名解析、
+      季集分配不同）。每 kind 至多一条 auto 规则（多条会让投递落点歧义）；
+    - **自定义目录**：``target_path`` 非空 + ``kind`` 必填——识别改名后落
+      该目录、**不进入任何媒体库**（不写库台账、不生成资产）。适合整理
+      结果还需外部流转（上传网盘、转存、人工确认）再进库的场景：文件
+      后续出现在某个库根时由扫描自动入账。每 kind 至多一条（同 auto 理由）。
 
     约束（写入侧校验，import_watch_config）：
+    - ``library_id`` 与 ``target_path`` 互斥；
     - 源目录全局唯一，且不得与**任何**库的根路径前缀重叠——落在库根下
-      会被那个库当存量扫走，双头管理必乱；
+      会被那个库当存量扫走，双头管理必乱；``target_path`` 同理，还不得
+      与任何监听源目录重叠（整理输出落回监听区会被再次消费）；
     - 策略 hardlink 时保存即做同盘检测（指定库对其主根；auto 对该 kind
-      全部可能目标库的主根逐一检测）。
+      全部可能目标库的主根逐一检测；自定义目录对 ``target_path``）。
     """
 
     __tablename__ = "import_watch"
@@ -49,5 +55,10 @@ class ImportWatch(TimestampMixin, table=True):
     )
     kind: str | None = Field(
         default=None,
-        description="自动路由的媒体类型（movie/tv）；指定库时为 NULL（由库推导）",
+        description="自动路由/自定义目录的媒体类型（movie/tv）；指定库时为 NULL（由库推导）",
+    )
+    target_path: str | None = Field(
+        default=None,
+        sa_column=Column(Text, nullable=True),
+        description="自定义目录目标（绝对路径）；与 library_id 互斥，非空时 kind 必填",
     )
