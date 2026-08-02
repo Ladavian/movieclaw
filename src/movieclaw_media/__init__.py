@@ -21,6 +21,7 @@ from movieclaw_media.douban import (
     DoubanDiscoverService,
     DoubanError,
     DoubanNetworkError,
+    DoubanNotFoundError,
 )
 from movieclaw_media.library import (
     DoubanResolution,
@@ -66,6 +67,7 @@ __all__ = [
     "DoubanDiscoverService",
     "DoubanError",
     "DoubanNetworkError",
+    "DoubanNotFoundError",
     "DoubanResolution",
     "MediaProfile",
     "ResolveCandidate",

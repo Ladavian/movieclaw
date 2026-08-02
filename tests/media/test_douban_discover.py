@@ -13,6 +13,7 @@ from movieclaw_media.douban import (
     DoubanClient,
     DoubanDiscoverService,
     DoubanError,
+    DoubanNotFoundError,
 )
 from movieclaw_media.models import MediaKind, MediaSource
 
@@ -35,9 +36,15 @@ class StubDoubanClient:
         self.responses = responses
         self.calls: list[tuple[str, int]] = []
 
-    async def collection(self, collection_id: str, *, count: int = 30) -> dict[str, Any]:
-        self.calls.append((collection_id, count))
-        value = self.responses.get(collection_id, {"subject_collection_items": []})
+    async def collection(
+        self, collection_id: str, *, count: int = 30, start: int = 0
+    ) -> dict[str, Any]:
+        self.calls.append((collection_id, start, count))
+        # 分页场景按 (榜单 ID, start) 精确布桩；普通场景仍只按榜单 ID
+        value = self.responses.get(
+            (collection_id, start),
+            self.responses.get(collection_id, {"subject_collection_items": []}),
+        )
         if isinstance(value, Exception):
             raise value
         return value
@@ -205,18 +212,70 @@ async def test_single_collection_failure_is_isolated() -> None:
     assert [row.id for row in page.rows] == ["douban-movie_weekly_best"]
 
 
-async def test_top250_requests_and_returns_full_collection() -> None:
-    """Top 250 不沿用普通榜单 30 条上限，应请求并保留全部 250 条。"""
-    items = [_item(i) for i in range(1, 251)]
+async def test_discover_rows_request_first_page_only() -> None:
+    """发现页横滚行统一只取首屏 30 条；全量浏览由「看全部」落地页按需承担。"""
     client = StubDoubanClient(
-        {"movie_top250": {"subject_collection_items": items}}
+        {"movie_real_time_hotest": {"subject_collection_items": [_item(i) for i in range(1, 6)]}}
     )
-    page = await DoubanDiscoverService(client).discover_page(MediaKind.MOVIE)  # type: ignore[arg-type]
+    await DoubanDiscoverService(client).discover_page(MediaKind.MOVIE)  # type: ignore[arg-type]
+    assert ("movie_top250", 0, 30) in client.calls
+    assert ("movie_real_time_hotest", 0, 30) in client.calls
 
-    top250 = next(row for row in page.rows if row.id == "douban-movie_top250")
-    assert len(top250.items) == 250
-    assert ("movie_top250", 250) in client.calls
-    assert ("movie_real_time_hotest", 30) in client.calls
+
+async def test_full_collection_single_shot_when_upstream_returns_all() -> None:
+    """Top 250 上游支持单次全量返回：聚合循环应一次取满，不再发多余分页请求。"""
+    items = [_item(i) for i in range(1, 251)]
+    client = StubDoubanClient({"movie_top250": {"subject_collection_items": items}})
+    row = await DoubanDiscoverService(client).full_collection("movie_top250")  # type: ignore[arg-type]
+
+    assert row.id == "douban-movie_top250"
+    assert row.ranked
+    assert len(row.items) == 250
+    assert client.calls == [("movie_top250", 0, 250)]
+
+
+async def test_full_collection_aggregates_paginated_pages_and_dedups() -> None:
+    """豆瓣多数榜单强制约 50 条/页：应按实际返回量推进游标聚合，并按 ID 去重。"""
+    def page(lo: int, hi: int) -> dict[str, Any]:
+        return {"subject_collection_items": [_item(i) for i in range(lo, hi)]}
+
+    client = StubDoubanClient(
+        {
+            # 第二页首条与第一页尾条重复，模拟分页间隙的榜单位次变动
+            ("movie_high_score", 0): page(1, 51),
+            ("movie_high_score", 50): page(50, 100),
+            ("movie_high_score", 100): page(100, 120),
+        }
+    )
+    row = await DoubanDiscoverService(client).full_collection("movie_high_score")  # type: ignore[arg-type]
+
+    assert [call[1] for call in client.calls] == [0, 50, 100, 120]
+    assert client.calls[0] == ("movie_high_score", 0, 500)
+    assert client.calls[1] == ("movie_high_score", 50, 450)
+    assert len(row.items) == 119
+    assert [card.id for card in row.items] == [str(i) for i in range(1, 120)]
+
+
+async def test_full_collection_returns_partial_when_tail_page_fails() -> None:
+    """后续分页失败只截断：已取得的部分照常返回，首页失败才整体报错。"""
+    client = StubDoubanClient(
+        {
+            ("movie_high_score", 0): {"subject_collection_items": [_item(i) for i in range(1, 51)]},
+            ("movie_high_score", 50): DoubanError("模拟失败"),
+        }
+    )
+    row = await DoubanDiscoverService(client).full_collection("movie_high_score")  # type: ignore[arg-type]
+    assert len(row.items) == 50
+
+    failing = StubDoubanClient({"movie_high_score": DoubanError("豆瓣不可用")})
+    with pytest.raises(DoubanError, match="豆瓣不可用"):
+        await DoubanDiscoverService(failing).full_collection("movie_high_score")  # type: ignore[arg-type]
+
+
+async def test_full_collection_rejects_unlisted_id() -> None:
+    """白名单外的榜单 ID 一律 404，避免接口沦为豆瓣任意榜单的开放代理。"""
+    with pytest.raises(DoubanNotFoundError):
+        await DoubanDiscoverService(StubDoubanClient({})).full_collection("EC7Q5H2QI")  # type: ignore[arg-type]
 
 
 async def test_tv_page_requests_all_configured_collections_in_order() -> None:

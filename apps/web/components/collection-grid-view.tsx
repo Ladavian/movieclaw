@@ -5,17 +5,26 @@ import { useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 import { PageNav } from "@/components/page-nav";
 import { SearchIcon } from "@/components/icons";
 import { PosterCard } from "@/components/poster-card";
-import { fetchDiscoverPage } from "@/lib/api/discover";
+import { fetchDoubanCollection } from "@/lib/api/discover";
 import type { MediaItem } from "@/lib/media-types";
 
 const PAGE_SIZE = 50;
-const TOP250_ROW_ID = "douban-movie_top250";
 
 /**
- * 豆瓣 Top 250 完整榜单：用纵向网格承载大量条目，避免 250 张海报挤在一条横滚行。
- * 数据仍复用发现接口和后端缓存；前端只分批挂载图片节点，控制首屏开销。
+ * 豆瓣完整榜单落地页（「看全部」的目的地）：用纵向网格承载大量条目，
+ * 避免几百张海报挤在一条横滚行。Top 250 与豆瓣高分等榜单共用本组件，
+ * 数据来自后端的榜单聚合接口（服务端分页聚合并缓存）；前端只分批挂载
+ * 图片节点，控制首屏开销。
  */
-export function Top250View() {
+export function CollectionGridView({
+  collectionId,
+  title,
+}: {
+  /** 后端白名单内的豆瓣榜单 ID，如 movie_top250 / movie_high_score */
+  collectionId: string;
+  /** 榜单展示名，用于标题与返回导航 */
+  title: string;
+}) {
   const [items, setItems] = useState<MediaItem[] | null>(null);
   const [query, setQuery] = useState("");
   const [selectedGenres, setSelectedGenres] = useState<string[]>([]);
@@ -25,10 +34,8 @@ export function Top250View() {
 
   useEffect(() => {
     let cancelled = false;
-    fetchDiscoverPage("movie", "douban")
-      .then((page) => {
-        const row = page.rows.find((candidate) => candidate.id === TOP250_ROW_ID);
-        if (!row) throw new Error("豆瓣 Top 250 榜单暂不可用");
+    fetchDoubanCollection(collectionId)
+      .then((row) => {
         if (!cancelled) setItems(row.items);
       })
       .catch((reason: Error) => {
@@ -37,7 +44,7 @@ export function Top250View() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [collectionId]);
 
   const genres = useMemo(() => {
     if (!items) return [];
@@ -48,7 +55,7 @@ export function Top250View() {
     return [...counts].sort((a, b) => b[1] - a[1]);
   }, [items]);
 
-  // 排名查表：渲染时用 items.indexOf 是每格 O(n) 的线性扫描，250 格一轮渲染
+  // 排名查表：渲染时用 items.indexOf 是每格 O(n) 的线性扫描，数百格一轮渲染
   // 就是数万次比较；榜单加载后排名固定，建一次 Map 终身使用
   const rankById = useMemo(
     () => new Map((items ?? []).map((item, index) => [item.id, index + 1])),
@@ -118,7 +125,7 @@ export function Top250View() {
       <PageNav
         items={[
           { label: "发现电影", href: "/discover/movie?source=douban" },
-          { label: "豆瓣电影 Top 250" },
+          { label: title },
         ]}
         className="-mx-6 max-md:-mx-4"
       />
@@ -129,7 +136,7 @@ export function Top250View() {
               DOUBAN RANKING
             </p>
             <h1 className="mt-1 text-3xl font-bold tracking-[-0.03em] text-[var(--text)]">
-              豆瓣电影 Top 250
+              {title}
             </h1>
             <p className="mt-2 text-body text-[var(--text-muted)]">
               {items ? `完整收录 ${items.length} 部影片` : "正在读取完整榜单…"}
@@ -141,7 +148,7 @@ export function Top250View() {
               value={query}
               onChange={(event) => updateQuery(event.target.value)}
               placeholder="搜索片名"
-              aria-label="搜索 Top 250 片名"
+              aria-label="搜索榜单片名"
               className="min-w-0 flex-1 bg-transparent text-body text-[var(--text)] outline-none placeholder:text-[var(--text-muted)]"
             />
           </label>
@@ -196,7 +203,7 @@ export function Top250View() {
         </div>
       )}
 
-      {!items && !error && <Top250Skeleton />}
+      {!items && !error && <CollectionSkeleton />}
 
       {items && (
         <main className="mx-auto mt-8 max-w-[1500px]">
@@ -253,7 +260,7 @@ function RankBadge({ rank }: { rank: number }) {
   );
 }
 
-function Top250Skeleton() {
+function CollectionSkeleton() {
   return (
     <div className="mx-auto mt-8 grid max-w-[1500px] grid-cols-2 gap-x-4 gap-y-7 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 2xl:grid-cols-8">
       {Array.from({ length: 24 }, (_, index) => (

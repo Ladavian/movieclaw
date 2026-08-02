@@ -63,6 +63,10 @@ class DoubanNetworkError(DoubanError):
     """网络层面无法连通豆瓣（连接失败/超时/熔断），与"豆瓣可达但返回错误"区分。"""
 
 
+class DoubanNotFoundError(DoubanError):
+    """请求的豆瓣资源不存在（如未开放完整浏览的榜单 ID），API 层译为 404。"""
+
+
 def _translate_httpx_error(exc: Exception, what: str) -> DoubanError:
     """httpx 异常 → 豆瓣领域错误：传输层失败给网络引导，其余给通用重试提示。"""
     if isinstance(exc, httpx.TransportError):
@@ -101,15 +105,17 @@ class DoubanClient:
         )
         self._limiter = AsyncLimiter(1, 1)
 
-    async def collection(self, collection_id: str, *, count: int = 30) -> dict[str, Any]:
-        """读取一份榜单；不自动翻页，发现页一行只需要首批高排名条目。"""
+    async def collection(
+        self, collection_id: str, *, count: int = 30, start: int = 0
+    ) -> dict[str, Any]:
+        """读取榜单的一段；发现页只取首批，「看全部」落地页从这里分页聚合。"""
 
         async def fetch() -> dict[str, Any]:
             try:
                 async with self._limiter:
                     response = await self._client.get(
                         f"/subject_collection/{collection_id}/items",
-                        params={"start": 0, "count": count, "items_only": 1, "for_mobile": 1},
+                        params={"start": start, "count": count, "items_only": 1, "for_mobile": 1},
                     )
                 response.raise_for_status()
                 return response.json()
@@ -117,8 +123,14 @@ class DoubanClient:
                 logger.warning("豆瓣榜单请求失败：%s（%s）", collection_id, exc)
                 raise _translate_httpx_error(exc, "榜单") from exc
 
+        # start=0 沿用旧键格式，避免升级后既有持久缓存整体失效
+        key = (
+            f"collection:{collection_id}:{start}:{count}"
+            if start
+            else f"collection:{collection_id}:{count}"
+        )
         return await self._swr.get_or_fetch(
-            f"collection:{collection_id}:{count}",
+            key,
             fresh_ttl=_COLLECTION_FRESH_TTL,
             stale_ttl=_COLLECTION_STALE_TTL,
             factory=fetch,
@@ -268,9 +280,8 @@ _MOVIE_COLLECTIONS = (
     _Collection("movie_soon", "即将上映"),
     _Collection("movie_hot_gaia", "豆瓣热门电影"),
     _Collection("movie_weekly_best", "豆瓣一周口碑电影榜", True),
-    _Collection("EC7Q5H2QI", "近期高分电影"),
-    # 豆瓣接口支持单次返回完整 250 条；普通榜单仍只取首屏 30 条，避免无谓传输。
-    _Collection("movie_top250", "豆瓣电影 Top 250", True, 250),
+    _Collection("movie_high_score", "豆瓣高分电影"),
+    _Collection("movie_top250", "豆瓣电影 Top 250", True),
     _Collection("movie_classic", "经典电影"),
     _Collection("movie_scifi", "高分经典科幻片榜"),
     _Collection("movie_comedy", "高分经典喜剧片榜"),
@@ -295,6 +306,20 @@ _TV_COLLECTIONS = (
     _Collection("show_foreign", "近期热门国外综艺"),
 )
 
+# 「看全部」落地页开放的完整榜单：发现页横滚行统一只取首屏 30 条，落地页经
+# full_collection 按需分页聚合到 count 上限。豆瓣多数榜单强制约 50 条/页，
+# 仅 Top 250 支持单次全量返回——聚合循环按实际返回量推进，对两者自适应。
+_FULL_COLLECTIONS: dict[str, tuple[_Collection, MediaKind]] = {
+    "movie_top250": (
+        _Collection("movie_top250", "豆瓣电影 Top 250", True, 250),
+        MediaKind.MOVIE,
+    ),
+    "movie_high_score": (
+        _Collection("movie_high_score", "豆瓣高分电影", False, 500),
+        MediaKind.MOVIE,
+    ),
+}
+
 
 class DoubanDiscoverService:
     """把豆瓣榜单转换为项目统一的发现页模型，不提供条目详情。"""
@@ -306,6 +331,60 @@ class DoubanDiscoverService:
     async def discover_page(self, kind: MediaKind) -> DiscoverPage:
         return await self._cache.get_or_set(
             f"douban-page:{kind.value}", _PAGE_TTL, lambda: self._build_page(kind)
+        )
+
+    async def full_collection(self, collection_id: str) -> MediaRow:
+        """返回一份「看全部」落地页的完整榜单；未开放的榜单 ID 一律 404。"""
+        if collection_id not in _FULL_COLLECTIONS:
+            raise DoubanNotFoundError("该榜单不存在或未开放完整浏览")
+        return await self._cache.get_or_set(
+            f"douban-full:{collection_id}",
+            _PAGE_TTL,
+            lambda: self._build_full_collection(collection_id),
+        )
+
+    async def _build_full_collection(self, collection_id: str) -> MediaRow:
+        """分页聚合完整榜单，直到取满 count 上限或上游返回空页。
+
+        每次都请求「剩余全量」，由上游按自身单页上限截断（Top 250 一次给全，
+        其余榜单约 50 条/页），再按实际返回量推进游标。受全局 1 次/秒限速，
+        冷缓存时 500 条约需十秒；分页各段与聚合结果都有缓存，之后即时返回。
+        首页失败直接报错；后续页失败只截断，已取得的部分照常可浏览。
+        """
+        spec, kind = _FULL_COLLECTIONS[collection_id]
+        items: list[MediaCard] = []
+        seen: set[str] = set()
+        start = 0
+        while start < spec.count:
+            try:
+                data = await self._client.collection(
+                    spec.collection_id, count=spec.count - start, start=start
+                )
+            except DoubanError:
+                if not items:
+                    raise
+                logger.warning(
+                    "豆瓣榜单「%s」第 %d 条起的分页失败，先返回已取得的 %d 条",
+                    spec.title, start, len(items),
+                )
+                break
+            raw_items = data.get("subject_collection_items") or []
+            if not raw_items:
+                break
+            # 榜单可能在两次分页之间发生位次变动，按 ID 去重防止重复上墙
+            for raw in raw_items:
+                card = self._to_card(raw, kind)
+                if card is not None and card.id not in seen:
+                    seen.add(card.id)
+                    items.append(card)
+            start += len(raw_items)
+        if not items:
+            raise DoubanError("豆瓣暂未返回该榜单数据，请稍后重试")
+        return MediaRow(
+            id=f"douban-{spec.collection_id}",
+            title=spec.title,
+            ranked=spec.ranked,
+            items=items,
         )
 
     async def search(self, keyword: str) -> list[MediaSearchItem]:

@@ -45,6 +45,12 @@ function originTrailOf(pathname: string, search: string): PageNavItem[] | null {
       { label: "豆瓣电影 Top 250", href: here },
     ];
   }
+  if (pathname === "/discover/movie/high-score") {
+    return [
+      { label: "发现电影", href: "/discover/movie" },
+      { label: "豆瓣高分电影", href: here },
+    ];
+  }
   if (pathname === "/search") {
     const keyword = new URLSearchParams(search).get("q")?.trim();
     return keyword ? [{ label: `搜索“${keyword}”`, href: here }] : null;

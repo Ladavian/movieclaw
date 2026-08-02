@@ -145,6 +145,20 @@ export async function fetchDiscoverPage(
 }
 
 /**
+ * 拉取一份「看全部」落地页的完整豆瓣榜单（如 Top 250、豆瓣高分电影）。
+ * 后端按白名单聚合分页并缓存；冷缓存时受豆瓣限速影响可能需要数秒。
+ */
+export async function fetchDoubanCollection(
+  collectionId: string,
+  init?: RequestInit,
+): Promise<MediaRowData> {
+  const dto = await unwrap(
+    request<ApiEnvelope<MediaRowDto>>(`/discover/douban/collection/${collectionId}`, init),
+  );
+  return toRow(dto);
+}
+
+/**
  * 搜索豆瓣轻量影视候选；年份和类型需要后续详情/匹配阶段补齐。
  * options.history=true 时后端记录搜索历史并留存结果快照（统一搜索入口用；
  * 发现页工具栏等场景不传，不产生历史）。
