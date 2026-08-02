@@ -19,6 +19,8 @@ import {
 } from "@/lib/api/search";
 import {
   DownloadTargetDialog,
+  readRememberedTarget,
+  submitRememberedTarget,
   type DownloadTargetRequest,
 } from "@/components/download-target-dialog";
 import { getSubscription, grabForSubscription } from "@/lib/api/subscriptions";
@@ -573,6 +575,14 @@ export function SearchResults({ query, onResearch, grabForSubscriptionId }: Sear
   // 工具栏右侧的分段可随时切换，只影响展示，不写回任何设置。
   const [view, setView] = useState<ResultView>(() => initialView(query.scope.posterMode));
 
+  // 分页（各站独立分页，后端 page 参数早已支持）：page = 已加载到第几页；
+  // exhausted = 上一次「加载更多」全站都没有新结果，按钮就此收起
+  const [page, setPage] = useState(1);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [exhausted, setExhausted] = useState(false);
+  // 补充流（单站重试 / 加载更多）的中止句柄：新搜索发起时一并中止
+  const auxAbortsRef = useRef<Set<AbortController>>(new Set());
+
   // 视图态（排序 / 展示视图）实时同步进地址栏：让「点一下就变」的操作也能刷新保留、分享还原。
   // 用原生 replaceState 而非 router.replace——只改地址不触发 Next 路由/useSearchParams 更新，
   // 因此不会误判为新搜索而重新发起流式请求；默认值（做种降序 / 分组视图）不写入，保持地址简洁。
@@ -605,6 +615,12 @@ export function SearchResults({ query, onResearch, grabForSubscriptionId }: Sear
     setTotalElapsedMs(null);
     setSnapshotAt(null);
     setFilters(emptyFilters());
+    setPage(1);
+    setLoadingMore(false);
+    setExhausted(false);
+    // 上一轮搜索的补充流（单站重试/加载更多）随主流一起作废
+    for (const aux of auxAbortsRef.current) aux.abort();
+    auxAbortsRef.current.clear();
     // 图览跟随新搜索的范围预设；列表/分组是跨搜索保留的用户偏好（同排序），
     // 从图览预设离开时回到默认的分组视图
     setView((prev) =>
@@ -690,6 +706,99 @@ export function SearchResults({ query, onResearch, grabForSubscriptionId }: Sear
     });
     return () => controller.abort();
   }, [query]);
+
+  /**
+   * 单站重试（站点状态弹层的「重试」）：清掉该站旧结果，仅对它重发一次流。
+   * 只搜当前第 1 页——重试的典型场景是修完 Cookie 回来验证，不必追平
+   * 「加载更多」的页深。结果就地并入当前筛选/排序视图。
+   */
+  const retrySite = (siteId: string) => {
+    setItems((prev) => prev.filter((h) => h.site_id !== siteId));
+    setSiteProgress((prev) =>
+      prev.map((s) =>
+        s.site_id === siteId
+          ? { ...s, phase: "searching", count: 0, error: null, elapsed_ms: null }
+          : s,
+      ),
+    );
+    const controller = new AbortController();
+    auxAbortsRef.current.add(controller);
+    streamSearchTorrents(
+      { keyword: query.keyword, scope: { ...query.scope, siteIds: [siteId] } },
+      (event) => {
+        if (event.type === "site_result") {
+          const d = event.data;
+          setItems((prev) => [...prev, ...d.items]);
+          setSiteProgress((prev) =>
+            prev.map((s) =>
+              s.site_id === d.site_id
+                ? { ...s, phase: "ok", count: d.count, error: null, elapsed_ms: d.elapsed_ms }
+                : s,
+            ),
+          );
+        } else if (event.type === "site_error") {
+          const d = event.data;
+          setSiteProgress((prev) =>
+            prev.map((s) =>
+              s.site_id === d.site_id
+                ? { ...s, phase: "error", error: d.error, elapsed_ms: d.elapsed_ms }
+                : s,
+            ),
+          );
+        }
+      },
+      { signal: controller.signal },
+    )
+      .catch(() => {
+        if (controller.signal.aborted) return;
+        setSiteProgress((prev) =>
+          prev.map((s) =>
+            s.site_id === siteId && s.phase === "searching"
+              ? { ...s, phase: "error", error: "重试失败，请稍后再试" }
+              : s,
+          ),
+        );
+      })
+      .finally(() => auxAbortsRef.current.delete(controller));
+  };
+
+  /**
+   * 加载更多（各站独立分页）：以 page+1 重发一次全范围流，新结果去重后追加。
+   * 全部站点都没有带来新条目 → 视为到底，按钮收起。
+   */
+  const loadMore = () => {
+    if (loadingMore || exhausted) return;
+    const next = page + 1;
+    setLoadingMore(true);
+    const controller = new AbortController();
+    auxAbortsRef.current.add(controller);
+    let added = 0;
+    streamSearchTorrents(
+      { keyword: query.keyword, scope: query.scope, page: next },
+      (event) => {
+        if (event.type !== "site_result") return;
+        const d = event.data;
+        setItems((prev) => {
+          // 站点忽略 page 参数时会原样重发第一页，按 (站点, 种子) 去重兜住
+          const seen = new Set(prev.map((h) => `${h.site_id}/${h.torrent_id}`));
+          const fresh = d.items.filter((h) => !seen.has(`${h.site_id}/${h.torrent_id}`));
+          added += fresh.length;
+          return fresh.length > 0 ? [...prev, ...fresh] : prev;
+        });
+      },
+      { signal: controller.signal },
+    )
+      .then(() => {
+        if (controller.signal.aborted) return;
+        setPage(next);
+        if (added === 0) setExhausted(true);
+      })
+      .catch(() => undefined)
+      .finally(() => {
+        auxAbortsRef.current.delete(controller);
+        setLoadingMore(false);
+      });
+  };
 
   const facets = useMemo(() => aggregateFacets(items, filters), [items, filters]);
   const entities = useMemo(() => collectEntities(items), [items]);
@@ -830,6 +939,7 @@ export function SearchResults({ query, onResearch, grabForSubscriptionId }: Sear
             <SiteStatusSummary
               sites={siteProgress}
               streaming={streaming}
+              onRetrySite={snapshotAt ? undefined : retrySite}
               totalElapsedMs={totalElapsedMs}
             />
           </div>
@@ -902,6 +1012,25 @@ export function SearchResults({ query, onResearch, grabForSubscriptionId }: Sear
             hint="换个关键词，或检查已配置站点是否验证通过。"
           />
         ) : null}
+
+        {/* 加载更多：各站独立分页取下一页；快照回放没有"更深的页"可取，不出现 */}
+        {phase === "done" && !snapshotAt && items.length > 0 && !exhausted && (
+          <div className="mt-4 flex justify-center">
+            <button
+              type="button"
+              disabled={loadingMore}
+              onClick={loadMore}
+              className="btn-glass px-5 py-2 text-sub font-medium disabled:opacity-50"
+            >
+              {loadingMore ? "正在加载…" : `加载更多（第 ${page + 1} 页）`}
+            </button>
+          </div>
+        )}
+        {phase === "done" && exhausted && items.length > 0 && (
+          <p className="mt-4 text-center text-caption text-[var(--text-faint)]">
+            已加载全部 {page} 页结果
+          </p>
+        )}
       </div>
 
     </div>
@@ -1724,10 +1853,13 @@ function SiteStatusSummary({
   sites,
   streaming,
   totalElapsedMs,
+  onRetrySite,
 }: {
   sites: SiteProgress[];
   streaming: boolean;
   totalElapsedMs: number | null;
+  /** 单站重试（失败行的行动出口）；不传则失败行只读 */
+  onRetrySite?: (siteId: string) => void;
 }) {
   const [open, setOpen] = useState(false);
 
@@ -1818,6 +1950,28 @@ function SiteStatusSummary({
                     >
                       {s.error}
                     </p>
+                  )}
+                  {/* 失败行的行动出口：就地重试 / 去站点设置修凭据——此前只能
+                      读完错误自己记住站名再去设置里翻（订阅体检早有 fix 跳转，
+                      这里拉齐同一标准） */}
+                  {s.phase === "error" && (
+                    <div className="mt-1 flex gap-2 pl-3.5">
+                      {onRetrySite && (
+                        <button
+                          type="button"
+                          onClick={() => onRetrySite(s.site_id)}
+                          className="rounded-md bg-white/[0.08] px-2 py-0.5 text-caption font-medium text-white/80 transition hover:bg-white/[0.15]"
+                        >
+                          重试该站
+                        </button>
+                      )}
+                      <Link
+                        href={"/settings/sites" as Route}
+                        className="rounded-md bg-white/[0.08] px-2 py-0.5 text-caption font-medium text-white/80 transition hover:bg-white/[0.15]"
+                      >
+                        去站点设置 ›
+                      </Link>
+                    </div>
                   )}
                 </li>
               ))}
@@ -2069,6 +2223,7 @@ const DOWNLOAD_LABEL: Record<DownloadState, string> = {
  * 供手选。提交结果回填在按钮文字上；失败可悬停看原因、点击重试。
  */
 function DownloadButton({ hit, className }: { hit: TorrentHit; className: string }) {
+  const toast = useToast();
   const [state, setState] = useState<DownloadState>("idle");
   const [error, setError] = useState<string | null>(null);
   const [request, setRequest] = useState<DownloadTargetRequest | null>(null);
@@ -2085,7 +2240,7 @@ function DownloadButton({ hit, className }: { hit: TorrentHit; className: string
     const title = attrs?.titles_zh?.[0] ?? attrs?.titles_en?.[0];
     const mediaType =
       attrs?.media_type === "movie" || attrs?.media_type === "tv" ? attrs.media_type : null;
-    setRequest({
+    const req: DownloadTargetRequest = {
       site_id: hit.site_id,
       download_url: hit.download_url,
       identity:
@@ -2093,7 +2248,35 @@ function DownloadButton({ hit, className }: { hit: TorrentHit; className: string
           ? { kind: mediaType, title, year: attrs.year }
           : null,
       subtitle: hit.subtitle || null,
-    });
+    };
+    // 快速通道：记住过保存位置就直接提交，不再弹窗（批量下载 20 次点击 → 10 次）。
+    // toast 带「更改」回到弹窗；目标失效（库被删等）自动回落弹窗
+    const remembered = readRememberedTarget(req);
+    if (remembered) {
+      setState("submitting");
+      submitRememberedTarget(req, remembered)
+        .then((result) => {
+          if (result === null) {
+            setState("idle");
+            setRequest(req);
+            return;
+          }
+          setState(result.already_exists ? "exists" : "done");
+          toast.success(
+            result.already_exists
+              ? "该种子已在下载器中，未重复添加"
+              : `已提交到「${result.downloader_name}」${result.save_path ? ` · ${result.save_path}` : ""}`,
+            { action: { label: "更改", onClick: () => setRequest(req) } },
+          );
+        })
+        .catch((err) => {
+          setState("error");
+          setError(err instanceof Error ? err.message : "提交失败");
+          toast.error(err instanceof Error ? err.message : "提交失败，请重试");
+        });
+      return;
+    }
+    setRequest(req);
   }
 
   return (

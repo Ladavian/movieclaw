@@ -41,16 +41,27 @@ import { Modal } from "@/components/modal";
 
 type ToastTone = "success" | "error" | "info";
 
+/** 可选的行动按钮：点击后 toast 立即消失（如「已提交 → 更改」） */
+interface ToastAction {
+  label: string;
+  onClick: () => void;
+}
+
 interface ToastItem {
   id: number;
   tone: ToastTone;
   message: string;
+  action?: ToastAction;
+}
+
+interface ToastOptions {
+  action?: ToastAction;
 }
 
 interface ToastApi {
-  success: (message: string) => void;
-  error: (message: string) => void;
-  info: (message: string) => void;
+  success: (message: string, options?: ToastOptions) => void;
+  error: (message: string, options?: ToastOptions) => void;
+  info: (message: string, options?: ToastOptions) => void;
 }
 
 // 错误多留两秒：用户需要读完并可能要转述/截图；成功回执扫一眼即可
@@ -135,12 +146,13 @@ export function FeedbackProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const push = useCallback(
-    (tone: ToastTone, message: string) => {
+    (tone: ToastTone, message: string, options?: ToastOptions) => {
       const id = ++idRef.current;
-      setToasts((rows) => [...rows.slice(-3), { id, tone, message }]);
+      setToasts((rows) => [...rows.slice(-3), { id, tone, message, action: options?.action }]);
       timersRef.current.set(
         id,
-        window.setTimeout(() => dismiss(id), TOAST_DURATION_MS[tone]),
+        // 带行动按钮的多留两秒：用户需要时间注意到并点击
+        window.setTimeout(() => dismiss(id), TOAST_DURATION_MS[tone] + (options?.action ? 2000 : 0)),
       );
     },
     [dismiss],
@@ -158,9 +170,9 @@ export function FeedbackProvider({ children }: { children: ReactNode }) {
   const api = useMemo<FeedbackApi>(
     () => ({
       toast: {
-        success: (message) => push("success", message),
-        error: (message) => push("error", message),
-        info: (message) => push("info", message),
+        success: (message, options) => push("success", message, options),
+        error: (message, options) => push("error", message, options),
+        info: (message, options) => push("info", message, options),
       },
       confirm: (options) =>
         new Promise<boolean>((resolve) => setDialog({ kind: "confirm", options, resolve })),
@@ -202,6 +214,26 @@ export function FeedbackProvider({ children }: { children: ReactNode }) {
                   className={`mt-[7px] h-1.5 w-1.5 shrink-0 rounded-full ${TONE_DOT[t.tone]}`}
                 />
                 <span className="min-w-0 text-sub leading-6 text-white/90">{t.message}</span>
+                {t.action && (
+                  <span
+                    role="button"
+                    tabIndex={0}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      dismiss(t.id);
+                      t.action?.onClick();
+                    }}
+                    onKeyDown={(e) => {
+                      if (e.key !== "Enter" && e.key !== " ") return;
+                      e.stopPropagation();
+                      dismiss(t.id);
+                      t.action?.onClick();
+                    }}
+                    className="mt-0.5 shrink-0 rounded-md bg-white/[0.1] px-2 py-0.5 text-caption font-medium text-white transition hover:bg-white/[0.18]"
+                  >
+                    {t.action.label}
+                  </span>
+                )}
               </button>
             ))}
           </div>,

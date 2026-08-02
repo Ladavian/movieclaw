@@ -147,6 +147,8 @@ export interface DownloadSubmitPayload {
   subtitle?: string | null;
   /** 下载弹窗手选的保存目录（movieclaw 视角，优先于库推导） */
   save_path?: string | null;
+  /** 指定投递到哪台下载器（配了多台按需分流）；缺省用默认下载器 */
+  downloader_id?: number | null;
 }
 
 /** 手动提交下载的结果（见 schemas.downloader.DownloadSubmitView）。 */

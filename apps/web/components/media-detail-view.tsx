@@ -1,6 +1,8 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import Link from "next/link";
+import type { Route } from "next";
 
 import {
   ArrowLeftIcon,
@@ -9,6 +11,7 @@ import {
   ChevronRightIcon,
   PhotoIcon,
   BellIcon,
+  SearchIcon,
   StarIcon,
 } from "@/components/icons";
 import { CastRow } from "@/components/cast-row";
@@ -301,6 +304,14 @@ export function MediaDetailView({
                 订阅追踪
               </button>
             )}
+            {/* 搜索资源：不订阅、只想手动找种子下一次的直达口（此前只能回 ⌘K 重打片名） */}
+            <Link
+              href={`/search?q=${encodeURIComponent(item.title)}` as Route}
+              className="btn-glass flex h-10 items-center gap-2 bg-white/10 px-5 text-ui font-medium backdrop-blur-md transition hover:bg-white/15"
+            >
+              <SearchIcon className="size-4" />
+              搜索资源
+            </Link>
             {sub && (
               <span className="text-on-image flex items-center gap-1.5 text-sub text-[var(--text-muted)]">
                 <span

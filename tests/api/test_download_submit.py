@@ -406,6 +406,34 @@ def test_submit_with_disabled_default_downloader(client) -> None:
     assert "默认下载器" in r.json()["message"]
 
 
+def test_submit_with_specified_downloader(client) -> None:
+    """指定 downloader_id：投给指定台而非默认台。"""
+    _add_default_downloader(client)
+    second = _add_default_downloader(
+        client, name="NAS 上的 qBittorrent", url="http://192.168.1.20:8080", save_path="/dl2"
+    )
+    r = client.post("/api/v1/downloaders/submit", json={**_SUBMIT, "downloader_id": second})
+    assert r.status_code == 200
+    assert r.json()["data"]["downloader_name"] == "NAS 上的 qBittorrent"
+    assert _captured_requests[-1].save_path == "/dl2"
+
+
+def test_submit_with_specified_downloader_unavailable(client) -> None:
+    """指定的下载器停用/不存在：指向明确的中文错误，不静默回落默认台。"""
+    _add_default_downloader(client)
+    second = _add_default_downloader(
+        client, name="备用机", url="http://192.168.1.30:8080"
+    )
+    client.patch(f"/api/v1/downloaders/{second}/status", json={"enabled": False})
+    r = client.post("/api/v1/downloaders/submit", json={**_SUBMIT, "downloader_id": second})
+    assert r.status_code == 400
+    assert "备用机" in r.json()["message"]
+
+    r = client.post("/api/v1/downloaders/submit", json={**_SUBMIT, "downloader_id": 9999})
+    assert r.status_code == 400
+    assert "不存在" in r.json()["message"]
+
+
 def test_submit_site_unavailable(client) -> None:
     _add_default_downloader(client)
     r = client.post("/api/v1/downloaders/submit", json={**_SUBMIT, "site_id": "nosite"})

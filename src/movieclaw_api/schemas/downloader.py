@@ -165,6 +165,8 @@ class DownloadSubmitPayload(BaseModel):
     # 用户在下载弹窗里手选的保存目录（movieclaw 视角）：给出时优先于库推导，
     # 提交前照常过路径映射翻译与覆盖守门
     save_path: str | None = Field(default=None, description="手选保存目录（覆盖库推导）")
+    # 指定投递到哪台下载器（配了多台按需分流）；缺省走默认下载器
+    downloader_id: int | None = Field(default=None, description="指定下载器；缺省用默认下载器")
 
     @field_validator("save_path")
     @classmethod

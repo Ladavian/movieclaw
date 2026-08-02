@@ -103,8 +103,9 @@ async def submit_torrent(
     tags: list[str],
     save_path: str | None = None,
     subtitle: str | None = None,
+    downloader_id: int | None = None,
 ) -> tuple[SubmitResult, DownloaderClient]:
-    """从站点取回种子并提交到默认下载器，返回（提交结果, 所用下载器记录）。
+    """从站点取回种子并提交到下载器，返回（提交结果, 所用下载器记录）。
 
     tags 用于区分来源（如手动 movieclaw-manual / 订阅 movieclaw-sub），
     方便用户在下载器里筛选。save_path 由调用方按媒体库推导（缺省回落
@@ -112,19 +113,32 @@ async def submit_torrent(
     同时在场时落一条 download_hint，供扫描器识别时取用（副标题里的中文
     片名是拼音命名种子唯一可用的查询词）——调用方只在 save_path 为
     **条目级**目录时传入，锚到库主根会波及根下所有文件。
+    downloader_id 指定投递目标（手动下载配了多台按需分流用）；缺省仍走
+    默认下载器——订阅投递路径不传该参数，行为不变。
     """
     if not download_url:
         raise BadRequestException("该种子没有可用的下载入口（download_url 缺失）")
 
-    # 1. 选默认可用下载器（先于取种：注定投不出去时不白打站点请求）
-    result = await session.execute(
-        select(DownloaderClient).where(
-            DownloaderClient.is_default.is_(True),  # type: ignore[attr-defined]
-            DownloaderClient.enabled.is_(True),  # type: ignore[attr-defined]
-            DownloaderClient.status == ConfigStatus.ACTIVE,
+    # 1. 选下载器（先于取种：注定投不出去时不白打站点请求）。
+    # 指定 id 时要求该台"启用 + 验证通过"，否则给指向明确的中文错误
+    if downloader_id is not None:
+        row = await session.get(DownloaderClient, downloader_id)
+        if row is None:
+            raise BadRequestException(f"下载器不存在：#{downloader_id}")
+        if not row.enabled or row.status != ConfigStatus.ACTIVE:
+            raise BadRequestException(
+                f"下载器「{row.name}」当前不可用（已停用或连接验证未通过），"
+                "请在「设置 → 下载器」里检查后重试，或改用其他下载器"
+            )
+    else:
+        result = await session.execute(
+            select(DownloaderClient).where(
+                DownloaderClient.is_default.is_(True),  # type: ignore[attr-defined]
+                DownloaderClient.enabled.is_(True),  # type: ignore[attr-defined]
+                DownloaderClient.status == ConfigStatus.ACTIVE,
+            )
         )
-    )
-    row = result.scalars().first()
+        row = result.scalars().first()
     if row is None:
         raise BadRequestException("没有可用的默认下载器（请在「设置 → 下载器」里添加并设为默认）")
 

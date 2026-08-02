@@ -38,6 +38,79 @@ export interface DownloadTargetRequest {
   subtitle: string | null;
 }
 
+/* —— 「记住选择」：高频批量下载不必每次都过弹窗 —— */
+
+/** 记住的目标按内容类型分桶：电影/剧集常进不同的库或目录，other = 身份未识别 */
+type RememberKind = "movie" | "tv" | "other";
+
+export interface RememberedTarget {
+  /** smart = 自动入库（需要身份 + 默认库）；dir = 固定目录；default = 下载器默认目录 */
+  kind: "smart" | "dir" | "default";
+  savePath: string | null;
+  /** 指定的下载器；null = 默认下载器 */
+  downloaderId: number | null;
+}
+
+const REMEMBER_KEY = "movieclaw.download-target";
+
+function rememberKindOf(request: DownloadTargetRequest): RememberKind {
+  return request.identity?.kind ?? "other";
+}
+
+export function readRememberedTarget(request: DownloadTargetRequest): RememberedTarget | null {
+  try {
+    const store = JSON.parse(window.localStorage.getItem(REMEMBER_KEY) ?? "{}");
+    const target = store[rememberKindOf(request)] as RememberedTarget | undefined;
+    if (!target || typeof target !== "object" || !target.kind) return null;
+    // 记住的是"自动入库"但这条种子没解析出身份：套不上，回落弹窗
+    if (target.kind === "smart" && !request.identity) return null;
+    return target;
+  } catch {
+    return null;
+  }
+}
+
+function writeRememberedTarget(kind: RememberKind, target: RememberedTarget | null): void {
+  try {
+    const store = JSON.parse(window.localStorage.getItem(REMEMBER_KEY) ?? "{}");
+    if (target === null) delete store[kind];
+    else store[kind] = target;
+    window.localStorage.setItem(REMEMBER_KEY, JSON.stringify(store));
+  } catch {
+    // localStorage 不可用（隐私模式等）：静默降级为每次都弹窗
+  }
+}
+
+/**
+ * 按记住的目标直接提交（下载按钮的快速通道），不经弹窗。
+ * smart 目标需要现查默认库；查不到（库被删）返回 null 让调用方回落弹窗。
+ */
+export async function submitRememberedTarget(
+  request: DownloadTargetRequest,
+  target: RememberedTarget,
+): Promise<DownloadSubmitResult | null> {
+  const identity = request.identity;
+  let libraryPart = {};
+  if (target.kind === "smart") {
+    if (!identity) return null;
+    const lib = await defaultLibraryFor(identity.kind).catch(() => null);
+    if (!lib) return null;
+    libraryPart = {
+      library_id: lib.id,
+      title: identity.title,
+      year: identity.year,
+      subtitle: request.subtitle,
+    };
+  }
+  return submitTorrentDownload({
+    site_id: request.site_id,
+    download_url: request.download_url,
+    ...libraryPart,
+    ...(target.kind === "dir" ? { save_path: target.savePath } : {}),
+    ...(target.downloaderId != null ? { downloader_id: target.downloaderId } : {}),
+  });
+}
+
 /** 与后端 translate_save_path 同规则的前端版（仅用于展示下载器视角）。 */
 function toRemoteView(path: string, mappings: PathMapping[] | null): string {
   if (!mappings) return path;
@@ -100,24 +173,36 @@ function DialogContent({
   onClose: () => void;
   onSubmitted: (result: DownloadSubmitResult) => void;
 }) {
-  const [downloader, setDownloader] = useState<ConfiguredDownloader | null>(null);
+  // 可用（启用 + 验证通过）的全部下载器：≥2 台时出现下载器选择
+  const [downloaders, setDownloaders] = useState<ConfiguredDownloader[]>([]);
+  const [downloaderId, setDownloaderId] = useState<number | null>(null);
   const [library, setLibrary] = useState<MediaLibrary | null>(null);
   const [preview, setPreview] = useState<DispatchPreview | null>(null);
   const [loading, setLoading] = useState(true);
   const [selected, setSelected] = useState<string | null>(null);
+  // 记住选择：默认勾选态跟随已有记忆（勾着提交=保存/刷新，取消勾选提交=清除）
+  const [remember, setRemember] = useState<boolean>(() => readRememberedTarget(request) !== null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // 挂载时并行拉取：默认下载器（目录候选）、默认库 + 投递预检（智能入库项）
+  // 挂载时并行拉取：下载器清单（目录候选 + 分流选择）、默认库 + 投递预检（智能入库项）
   useEffect(() => {
     let cancelled = false;
     const identity = request.identity;
     void Promise.all([
       listDownloaders().catch(() => [] as ConfiguredDownloader[]),
       identity ? defaultLibraryFor(identity.kind).catch(() => null) : Promise.resolve(null),
-    ]).then(async ([downloaders, lib]) => {
+    ]).then(async ([rows, lib]) => {
       if (cancelled) return;
-      setDownloader(downloaders.find((d) => d.is_default) ?? null);
+      const usable = rows.filter((d) => d.usable);
+      setDownloaders(usable);
+      const remembered = readRememberedTarget(request);
+      const fallback = usable.find((d) => d.is_default) ?? usable[0] ?? null;
+      const rememberedRow =
+        remembered?.downloaderId != null
+          ? usable.find((d) => d.id === remembered.downloaderId)
+          : undefined;
+      setDownloaderId((rememberedRow ?? fallback)?.id ?? null);
       setLibrary(lib);
       if (identity && lib) {
         const p = await getDispatchPreview(identity.kind, lib.id).catch(() => null);
@@ -129,6 +214,11 @@ function DialogContent({
       cancelled = true;
     };
   }, [request]);
+
+  const downloader = useMemo(
+    () => downloaders.find((d) => d.id === downloaderId) ?? null,
+    [downloaders, downloaderId],
+  );
 
   const options = useMemo<TargetOption[]>(() => {
     const result: TargetOption[] = [];
@@ -182,14 +272,32 @@ function DialogContent({
     return result;
   }, [request, library, preview, downloader]);
 
-  // 默认选中：智能入库可用且预检通过 > 第一个目录 > 下载器默认
+  // 换下载器后目录候选整组换血：选中的目录项若已不存在，退回未选中让下方
+  // 默认选中逻辑重新挑一个
+  useEffect(() => {
+    setSelected((prev) => (prev && options.some((o) => o.key === prev) ? prev : null));
+  }, [options]);
+
+  // 默认选中：已记住的目标 > 智能入库可用且预检通过 > 第一个目录 > 下载器默认
   useEffect(() => {
     if (loading || options.length === 0 || selected !== null) return;
+    const remembered = readRememberedTarget(request);
+    if (remembered) {
+      const match = options.find((o) =>
+        remembered.kind === "dir"
+          ? o.kind === "dir" && o.savePath === remembered.savePath
+          : o.kind === remembered.kind,
+      );
+      if (match) {
+        setSelected(match.key);
+        return;
+      }
+    }
     const smart = options.find((o) => o.kind === "smart");
     if (smart && !smart.warning) setSelected(smart.key);
     // 智能入库不可用或有警示时，回落到第一个非智能项（目录 > 下载器默认）
     else setSelected((options.find((o) => o.kind !== "smart") ?? options[0]).key);
-  }, [loading, options, selected]);
+  }, [loading, options, selected, request]);
 
   const submit = () => {
     const option = options.find((o) => o.key === selected);
@@ -197,6 +305,9 @@ function DialogContent({
     setBusy(true);
     setError(null);
     const identity = request.identity;
+    // 只在非默认下载器时显式带 downloader_id：默认台走后端原有语义
+    const pickedDownloaderId =
+      downloader && !downloader.is_default ? downloader.id : null;
     void submitTorrentDownload({
       site_id: request.site_id,
       download_url: request.download_url,
@@ -209,8 +320,16 @@ function DialogContent({
           }
         : {}),
       ...(option.kind === "dir" ? { save_path: option.savePath } : {}),
+      ...(pickedDownloaderId != null ? { downloader_id: pickedDownloaderId } : {}),
     })
       .then((result) => {
+        // 记住/清除选择（按内容类型分桶）：勾着=保存本次目标，取消勾选=清除
+        writeRememberedTarget(
+          rememberKindOf(request),
+          remember
+            ? { kind: option.kind, savePath: option.savePath, downloaderId: pickedDownloaderId }
+            : null,
+        );
         onSubmitted(result);
         onClose();
       })
@@ -264,6 +383,37 @@ function DialogContent({
               ))}
             </div>
           )}
+
+          {/* 下载器分流：≥2 台可用才出现（单台用户界面零变化），默认预选默认台 */}
+          {downloaders.length >= 2 && (
+            <div className="flex items-center gap-2.5">
+              <span className="shrink-0 text-sub text-[var(--text-muted)]">下载器</span>
+              <select
+                value={downloaderId ?? undefined}
+                onChange={(e) => setDownloaderId(Number(e.target.value))}
+                className="min-w-0 flex-1 rounded-lg border border-white/[0.08] bg-white/[0.04] px-3 py-1.5 text-sub text-white/90 outline-none focus:border-white/25 [&>option]:bg-[#181c28]"
+              >
+                {downloaders.map((d) => (
+                  <option key={d.id} value={d.id}>
+                    {d.name}
+                    {d.is_default ? "（默认）" : ""}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
+
+          {/* 记住选择：批量下载的快速通道——之后点「下载」直接提交，
+              toast 上有「更改」可随时回到本弹窗 */}
+          <label className="flex cursor-pointer items-center gap-2 text-sub text-[var(--text-muted)]">
+            <input
+              type="checkbox"
+              checked={remember}
+              onChange={(e) => setRemember(e.target.checked)}
+              className="size-3.5 accent-[var(--accent-2)]"
+            />
+            记住本次选择，下次点「下载」直接提交（按电影/剧集分别记忆）
+          </label>
 
           <p className="text-caption leading-relaxed text-[var(--text-faint)]">
             movieclaw 与下载器不在同一容器/主机、看到的路径不同？到
