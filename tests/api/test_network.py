@@ -54,11 +54,11 @@ def test_get_config_returns_defaults_and_catalog(client):
     resp = client.get("/api/v1/network/config")
     assert resp.status_code == 200
     data = resp.json()["data"]
-    # 默认：跟随环境变量，TMDB 与图片回源走代理
+    # 默认：跟随环境变量，TMDB、图片回源与 GitHub 更新走代理
     assert data["proxy_mode"] == "env"
-    assert sorted(data["proxy_services"]) == ["image", "tmdb"]
+    assert sorted(data["proxy_services"]) == ["github", "image", "tmdb"]
     service_ids = [item["id"] for item in data["services"]]
-    assert {"tmdb", "image", "douban", "llm"} <= set(service_ids)
+    assert {"tmdb", "image", "douban", "llm", "github"} <= set(service_ids)
     # 镜像默认值供前端 placeholder 展示
     assert data["mirror_defaults"]["tmdb_api_base_url"].startswith("http")
 
@@ -81,6 +81,28 @@ def test_save_manual_proxy_takes_effect_immediately(client):
     data = client.get("/api/v1/network/config").json()["data"]
     assert data["proxy_mode"] == "manual"
     assert data["proxy_url"] == "socks5://192.168.1.2:7891"
+
+
+def test_github_service_routes_through_proxy(client):
+    """GitHub 更新流量按服务标签独立控制：开则走代理，关则直连。"""
+    client.put(
+        "/api/v1/network/config",
+        json={
+            "proxy_mode": "manual",
+            "proxy_url": "http://192.168.1.2:7890",
+            "proxy_services": ["github"],
+        },
+    )
+    assert resolve_proxy_url("github") == "http://192.168.1.2:7890"
+    client.put(
+        "/api/v1/network/config",
+        json={
+            "proxy_mode": "manual",
+            "proxy_url": "http://192.168.1.2:7890",
+            "proxy_services": ["tmdb"],
+        },
+    )
+    assert resolve_proxy_url("github") is None
 
 
 def test_save_rejects_bad_proxy_scheme(client):

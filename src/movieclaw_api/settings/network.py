@@ -32,6 +32,12 @@ BUILTIN_EGRESS_SERVICES: list[dict[str, str]] = [
     },
     {"id": "douban", "label": "豆瓣", "description": "豆瓣榜单与搜索（国内网络通常可直连）"},
     {"id": "llm", "label": "AI 模型", "description": "大语言模型供应商接口"},
+    {
+        "id": "github",
+        "label": "GitHub 更新",
+        "description": "应用内更新的检查与产物下载（api.github.com / github.com），"
+        "国内网络常需代理；也可配 UPDATE_DOWNLOAD_MIRROR 加速镜像替代",
+    },
 ]
 
 
@@ -42,11 +48,12 @@ BUILTIN_EGRESS_SERVICES: list[dict[str, str]] = [
     secret_fields=["proxy_url"],
 )
 class NetworkEgressSetting(SettingSchema):
-    """统一网络出口配置。默认值 = 跟随环境变量，仅 TMDB 与图片回源走代理。
+    """统一网络出口配置。默认值 = 跟随环境变量，TMDB、图片回源与 GitHub
+    更新走代理。
 
     这样 Docker 部署者只要 ``-e HTTPS_PROXY=...`` 就能解决最常见的
-    「TMDB 被墙」问题，而 PT 站/豆瓣保持直连（国内直连通常更快，且部分
-    PT 站风控在意出口 IP）。
+    「TMDB / GitHub 被墙」问题，而 PT 站/豆瓣保持直连（国内直连通常更快，
+    且部分 PT 站风控在意出口 IP）。
     """
 
     proxy_mode: Literal["off", "env", "manual"] = Field(
@@ -58,7 +65,7 @@ class NetworkEgressSetting(SettingSchema):
         description="手动模式的代理地址，支持 http:// 与 socks5://（如 socks5://192.168.1.2:7891）",
     )
     proxy_services: list[str] = Field(
-        default_factory=lambda: ["tmdb", "image"],
+        default_factory=lambda: ["tmdb", "image", "github"],
         description="走代理的服务标签列表；PT 站用 site:<站点id> 形式按站独立控制",
     )
     tmdb_api_base_url: str = Field(
