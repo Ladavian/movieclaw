@@ -1,7 +1,10 @@
 "use client";
 
-import { memo, useEffect, useMemo, useRef, useState } from "react";
+import { createContext, memo, useContext, useEffect, useMemo, useRef, useState } from "react";
+import Link from "next/link";
+import type { Route } from "next";
 
+import { useToast } from "@/components/feedback";
 import { ImageLightbox } from "@/components/image-lightbox";
 import { LayersIcon, ListIcon, PhotoIcon } from "@/components/icons";
 import { PosterImage } from "@/components/poster-image";
@@ -18,6 +21,7 @@ import {
   DownloadTargetDialog,
   type DownloadTargetRequest,
 } from "@/components/download-target-dialog";
+import { getSubscription, grabForSubscription } from "@/lib/api/subscriptions";
 import { cachedImageUrl } from "@/lib/image-proxy";
 import { formatDateTime, formatRelativeTime } from "@/lib/time";
 
@@ -56,7 +60,13 @@ export interface SearchResultsProps {
   query: SearchQuery;
   /** 发起实时搜索（快照提示条的「重新搜索」按钮）；不传则不渲染该按钮。 */
   onResearch?: (keyword: string, scope: SearchScope) => void;
+  /** 手动选种模式（URL 的 for_sub 参数）：每条资源多一颗「投给订阅」按钮，
+   *  点击直接投给该订阅（跳过规则组过滤，身份匹配照常）。 */
+  grabForSubscriptionId?: number | null;
 }
+
+/** 手动选种上下文：SearchResults 顶层拉取订阅标题后灌入，行组件按需消费。 */
+const GrabContext = createContext<{ id: number; title: string } | null>(null);
 
 /**
  * 整页搜索阶段：connecting=流尚未建立（start 事件未到），streaming=站点结果陆续
@@ -524,8 +534,25 @@ function collectEntities(items: TorrentHit[]): Map<string, EntityGroup> {
   return groups;
 }
 
-export function SearchResults({ query, onResearch }: SearchResultsProps) {
+export function SearchResults({ query, onResearch, grabForSubscriptionId }: SearchResultsProps) {
   const [phase, setPhase] = useState<Phase>("connecting");
+  // 手动选种模式：拉一次订阅标题供横幅与按钮提示；订阅不存在则静默退出该模式
+  const [grabTarget, setGrabTarget] = useState<{ id: number; title: string } | null>(null);
+  useEffect(() => {
+    if (!grabForSubscriptionId) {
+      setGrabTarget(null);
+      return;
+    }
+    let cancelled = false;
+    getSubscription(grabForSubscriptionId)
+      .then((d) => {
+        if (!cancelled) setGrabTarget({ id: d.id, title: d.media.title });
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, [grabForSubscriptionId]);
   const [fatalError, setFatalError] = useState<string | null>(null);
   // 结果按 site_result 事件到达顺序累加——快站先上屏，排序视图实时并入新结果
   const [items, setItems] = useState<TorrentHit[]>([]);
@@ -721,7 +748,23 @@ export function SearchResults({ query, onResearch }: SearchResultsProps) {
   const streaming = phase === "connecting" || phase === "streaming";
 
   return (
+    <GrabContext.Provider value={grabTarget}>
     <div className="relative flex h-full flex-col">
+      {/* 手动选种横幅：从订阅详情页跳来时说明当前模式与退出方式 */}
+      {grabTarget && (
+        <div className="mx-6 mt-3 flex flex-wrap items-center gap-x-3 gap-y-1 rounded-xl border border-[#6aa7ff]/30 bg-[#6aa7ff]/12 px-4 py-2.5 text-sub text-[#b9d4ff] backdrop-blur-sm max-md:mx-4">
+          <span className="min-w-0">
+            正在为《{grabTarget.title}》手动选种——点资源上的「投给订阅」直接下载并计入该订阅
+            （跳过规则组限制）
+          </span>
+          <Link
+            href={`/subscriptions/${grabTarget.id}` as Route}
+            className="ml-auto shrink-0 font-medium text-white/85 hover:underline"
+          >
+            返回订阅 ›
+          </Link>
+        </div>
+      )}
       {/* 顶部（常驻两行 + 按需一行）：
           状态行 = 搜索词/计数（左）+ 快照药丸/站点状态聚合 chip（右）
           工具栏 = 类型分段/分辨率（左）+ 筛选/排序/视图（右）
@@ -862,6 +905,7 @@ export function SearchResults({ query, onResearch }: SearchResultsProps) {
       </div>
 
     </div>
+    </GrabContext.Provider>
   );
 }
 
@@ -1981,6 +2025,10 @@ const TorrentPosterCard = memo(function TorrentPosterCard({ hit }: { hit: Torren
                 详情
               </a>
             )}
+            <GrabButton
+              hit={hit}
+              className="rounded-lg border border-[#6aa7ff]/50 bg-[#6aa7ff]/25 px-2.5 py-1 text-caption font-medium text-white backdrop-blur-sm transition-colors hover:bg-[#6aa7ff]/40"
+            />
             <DownloadButton
               hit={hit}
               className="btn-accent rounded-lg px-2.5 py-1 text-caption font-medium"
@@ -2067,6 +2115,69 @@ function DownloadButton({ hit, className }: { hit: TorrentHit; className: string
         onSubmitted={(result) => setState(result.already_exists ? "exists" : "done")}
       />
     </>
+  );
+}
+
+/** 「投给订阅」按钮的提交状态：done 终态不可再点，error 可点重试。 */
+type GrabState = "idle" | "submitting" | "done" | "error";
+
+const GRAB_LABEL: Record<GrabState, string> = {
+  idle: "投给订阅",
+  submitting: "投递中…",
+  done: "已投递",
+  error: "失败·重试",
+};
+
+/**
+ * 手动选种按钮：仅在选种模式（GrabContext 非空）出现在下载按钮旁。
+ * 把当前搜索结果行原样回传给 sub.grab——跳过规则组过滤直接投递；
+ * 身份对不上/没有可满足缺口时后端给可读中文错误，进 toast 并可重试。
+ */
+function GrabButton({ hit, className }: { hit: TorrentHit; className: string }) {
+  const grabFor = useContext(GrabContext);
+  const toast = useToast();
+  const [state, setState] = useState<GrabState>("idle");
+  if (!grabFor || !hit.download_url) return null;
+
+  const grab = async (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (state === "submitting" || state === "done") return;
+    setState("submitting");
+    try {
+      const { units } = await grabForSubscription(grabFor.id, {
+        site_id: hit.site_id,
+        torrent_id: hit.torrent_id,
+        title: hit.title,
+        subtitle: hit.subtitle,
+        category: hit.category,
+        attrs: (hit.attrs as unknown as Record<string, unknown>) ?? null,
+        download_url: hit.download_url,
+        size_bytes: hit.size_bytes,
+        seeders: hit.seeders,
+        is_free: hit.free,
+        hit_and_run: hit.hit_and_run,
+        publish_time: hit.upload_time,
+      });
+      setState("done");
+      toast.success(`已投给《${grabFor.title}》，覆盖 ${units.length} 个追踪单元`);
+    } catch (err) {
+      setState("error");
+      toast.error(err instanceof Error ? err.message : "投递失败，请稍后重试");
+    }
+  };
+
+  return (
+    <button
+      type="button"
+      onClick={(e) => void grab(e)}
+      disabled={state === "submitting"}
+      title={`直接投给《${grabFor.title}》（跳过规则组限制）`}
+      className={`${className}${state === "done" ? " cursor-default opacity-75" : ""}${
+        state === "submitting" ? " cursor-wait opacity-75" : ""
+      }`}
+    >
+      {GRAB_LABEL[state]}
+    </button>
   );
 }
 
@@ -2230,6 +2341,10 @@ const TorrentRow = memo(function TorrentRow({
                 详情
               </a>
             )}
+            <GrabButton
+              hit={hit}
+              className="flex h-7 items-center rounded-full border border-[#6aa7ff]/50 bg-[#6aa7ff]/20 px-3 text-caption font-medium text-[#b9d4ff] transition-colors hover:bg-[#6aa7ff]/35"
+            />
             <DownloadButton
               hit={hit}
               className="btn-accent flex h-7 items-center rounded-full px-3 text-caption font-medium"

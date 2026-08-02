@@ -506,8 +506,9 @@ export function SubscribeDialog({
   );
 }
 
-/** 季选择行：季名 + 播出进度；未播季弱化显示但可勾（勾了=要整季）。 */
-function SeasonRow({
+/** 季选择行：季名 + 播出进度；未播季弱化显示但可勾（勾了=要整季）。
+ *  订阅弹窗与调整订阅弹窗（subscription-adjust-dialog）共用。 */
+export function SeasonRow({
   season,
   checked,
   onToggle,

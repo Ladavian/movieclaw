@@ -228,6 +228,51 @@ class SubscriptionPausePayload(BaseModel):
     paused: bool = Field(description="true=暂停（停止抓种与投递）；false=恢复追踪")
 
 
+class DownloadUnitView(BaseModel):
+    """追踪单元（电影为 0/0）——下载快照与手动选种结果共用。"""
+
+    season_number: int
+    episode_number: int
+
+
+class SearchNowView(BaseModel):
+    """立即搜索（sub.search-now）的结果。"""
+
+    reset_count: int = Field(description="跳过冷却、重新排队的缺口工单数")
+
+
+class GrabPayload(BaseModel):
+    """手动选种（sub.grab）：把搜索结果里的一条种子直接投给本订阅。
+
+    字段即搜索结果行（TorrentHit）原样回传——交互式搜索现算现返、不落
+    种子索引，只能由前端带回。attrs 同样回传（它本就是搜索链路里服务端
+    enrich 的产物，用户按它筛选后选中了这条）；缺失时服务端重新推导兜底。
+    """
+
+    site_id: str
+    torrent_id: str
+    title: str
+    subtitle: str = ""
+    category: str | None = Field(default=None, description="站点分类（movie/tv/…）")
+    attrs: dict | None = Field(
+        default=None, description="搜索结果里的结构化属性（TorrentAttrs）；缺失时服务端重算"
+    )
+    download_url: str | None = None
+    size_bytes: int | None = None
+    seeders: int | None = None
+    is_free: bool | None = None
+    hit_and_run: bool | None = None
+    imdb_id: str | None = None
+    douban_id: str | None = None
+    publish_time: datetime | None = None
+
+
+class GrabResultView(BaseModel):
+    """手动选种的投递结果。"""
+
+    units: list[DownloadUnitView] = Field(description="本次投递满足的追踪单元")
+
+
 class ProgressView(BaseModel):
     """列表页进度：total = 工单总数，wanted 子集是缺口，imported 是已入库终态。"""
 
@@ -341,13 +386,6 @@ class SubscriptionDetailView(SubscriptionView):
             **base.model_dump(),
             wanted=[WantedView.from_model(w) for w in wanted_rows],
         )
-
-
-class DownloadUnitView(BaseModel):
-    """进度组覆盖的追踪单元（电影为 0/0）。"""
-
-    season_number: int
-    episode_number: int
 
 
 class SubscriptionDownloadView(BaseModel):

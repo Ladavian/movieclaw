@@ -1,10 +1,11 @@
 "use client";
 
 import Link from "next/link";
+import type { Route } from "next";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
-import { useConfirm } from "@/components/feedback";
+import { useConfirm, useToast } from "@/components/feedback";
 import { ArrowLeftIcon } from "@/components/icons";
 import { Modal } from "@/components/modal";
 import { PageNav } from "@/components/page-nav";
@@ -12,6 +13,7 @@ import { usePageTitle } from "@/lib/use-page-title";
 import { PosterImage } from "@/components/poster-image";
 import { specSummary } from "@/components/rule-sets-panel";
 import { useSubscribeEntry } from "@/components/subscribe-entry";
+import { SubscriptionAdjustDialog } from "@/components/subscription-adjust-dialog";
 import {
   deleteSubscription,
   getSubscription,
@@ -19,6 +21,7 @@ import {
   listSubscriptionActivities,
   listSubscriptionDownloads,
   pauseSubscription,
+  searchSubscriptionNow,
   updateSubscription,
   type RuleSet,
   type SubscriptionActivity,
@@ -61,7 +64,9 @@ export function SubscriptionInspectorView({ id }: { id: number }) {
   const [failed, setFailed] = useState(false);
   const [busy, setBusy] = useState(false);
   const [switchingRule, setSwitchingRule] = useState(false);
+  const [adjusting, setAdjusting] = useState(false);
   const [tab, setTab] = useState<"wanted" | "activity">("wanted");
+  const toast = useToast();
 
   const [downloads, setDownloads] = useState<SubscriptionDownload[]>([]);
 
@@ -154,6 +159,21 @@ export function SubscriptionInspectorView({ id }: { id: number }) {
       await pauseSubscription(detail.id, detail.status !== "paused");
       reload();
       refreshSubscriptions();
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  // 立即搜索：缺口跳过冷却重新排队。后端对"暂停中/没有可搜缺口"给可读错误，
+  // 原样进 toast——按钮不做前置禁用判断，语义由唯一实现（服务端）说了算
+  const searchNow = async () => {
+    setBusy(true);
+    try {
+      const { reset_count } = await searchSubscriptionNow(detail.id);
+      toast.success(`${reset_count} 个缺口已重新排队，正在搜索`);
+      reload();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "触发搜索失败，请稍后重试");
     } finally {
       setBusy(false);
     }
@@ -255,12 +275,43 @@ export function SubscriptionInspectorView({ id }: { id: number }) {
               >
                 规则组「{ruleSetName}」<span className="ml-0.5 text-white/50">更换 ›</span>
               </button>
+              {/* 调整订阅：季选择/追新/入库库（后端 diff 重算工单，无需取消重订） */}
+              <button
+                type="button"
+                onClick={() => setAdjusting(true)}
+                title={isMovie ? "更换入库目标库" : "修改季选择、持续追新或入库目标库"}
+                className="rounded-full bg-white/[0.09] px-2.5 py-1 text-caption text-white/75 backdrop-blur-sm transition hover:bg-white/[0.18] hover:text-white"
+              >
+                调整订阅<span className="ml-0.5 text-white/50">›</span>
+              </button>
             </div>
 
             <ProgressStrip progress={detail.progress} />
           </div>
 
-          <div className="flex shrink-0 gap-2.5 pt-0.5 max-md:w-full">
+          <div className="flex shrink-0 flex-wrap gap-2.5 pt-0.5 max-md:w-full">
+            {/* 缺口存在且未暂停时才有意义；其余情况后端会给可读错误，按钮直接隐藏更干净 */}
+            {detail.progress.wanted > 0 && detail.status !== "paused" && (
+              <button
+                type="button"
+                disabled={busy}
+                onClick={() => void searchNow()}
+                className="btn-accent h-9 rounded-full px-4 text-sub font-semibold disabled:opacity-40"
+              >
+                立即搜索
+              </button>
+            )}
+            {detail.progress.wanted > 0 && (
+              <Link
+                href={
+                  `/search?q=${encodeURIComponent(detail.media.title)}&for_sub=${detail.id}` as Route
+                }
+                className="btn-glass h-9 bg-white/10 px-4 text-sub font-medium backdrop-blur-md"
+                title="到站点资源搜索里挑一条种子，直接投给本订阅（跳过规则组限制）"
+              >
+                手动选种
+              </Link>
+            )}
             <button
               type="button"
               disabled={busy || detail.status === "completed"}
@@ -310,6 +361,18 @@ export function SubscriptionInspectorView({ id }: { id: number }) {
           <ActivityTimeline activities={activities} />
         )}
       </div>
+
+      {adjusting && (
+        <SubscriptionAdjustDialog
+          detail={detail}
+          onClose={() => setAdjusting(false)}
+          onSaved={() => {
+            setAdjusting(false);
+            reload();
+            refreshSubscriptions();
+          }}
+        />
+      )}
 
       {switchingRule && (
         <RuleSetSwitchDialog

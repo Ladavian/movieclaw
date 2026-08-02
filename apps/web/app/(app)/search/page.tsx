@@ -50,6 +50,10 @@ export default function SearchPage() {
     () => parseSearchQuery(new URLSearchParams(torrentKey)),
     [torrentKey],
   );
+  // 手动选种模式（订阅详情页「手动选种」跳入）：for_sub = 目标订阅 id
+  const forSubRaw = params.get("for_sub");
+  const grabForSubscriptionId =
+    forSubRaw != null && /^\d+$/.test(forSubRaw) ? Number(forSubRaw) : null;
   usePageTitle(query ? `搜索“${query.keyword}”` : null);
 
   if (!query) {
@@ -89,6 +93,7 @@ export default function SearchPage() {
       key={torrentKey}
       query={query}
       vertical={vertical}
+      grabForSubscriptionId={grabForSubscriptionId}
       onSwitch={switchVertical}
       onScopeSwitch={switchScope}
       onResearch={handleResearch}
@@ -106,12 +111,14 @@ const VERTICAL_TABS: { id: SearchVertical; label: string }[] = [
 function SearchVerticals({
   query,
   vertical,
+  grabForSubscriptionId,
   onSwitch,
   onScopeSwitch,
   onResearch,
 }: {
   query: SearchQuery;
   vertical: SearchVertical;
+  grabForSubscriptionId: number | null;
   onSwitch: (target: SearchVertical) => void;
   onScopeSwitch: (scope: SearchScope) => void;
   onResearch: (keyword: string, scope: SearchScope) => void;
@@ -200,7 +207,11 @@ function SearchVerticals({
       )}
       {visited.torrent && (
         <div className={vertical === "torrent" ? "min-h-0 flex-1" : "hidden"}>
-          <SearchResults query={query} onResearch={onResearch} />
+          <SearchResults
+            query={query}
+            onResearch={onResearch}
+            grabForSubscriptionId={grabForSubscriptionId}
+          />
         </div>
       )}
       {visited.library && (

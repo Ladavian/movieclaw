@@ -332,6 +332,44 @@ export function updateSubscription(
   );
 }
 
+/** 立即搜索：缺口工单跳过冷却重新排队（暂停中/无可搜缺口时后端报可读错误）。 */
+export function searchSubscriptionNow(id: number): Promise<{ reset_count: number }> {
+  return unwrap(
+    request<ApiEnvelope<{ reset_count: number }>>(`/subscriptions/${id}/search-now`, {
+      method: "POST",
+    }),
+  );
+}
+
+/** 手动选种的种子字段（搜索结果行原样回传，attrs 即搜索链路的服务端解析）。 */
+export interface GrabPayload {
+  site_id: string;
+  torrent_id: string;
+  title: string;
+  subtitle?: string;
+  category?: string | null;
+  attrs?: Record<string, unknown> | null;
+  download_url?: string | null;
+  size_bytes?: number | null;
+  seeders?: number | null;
+  is_free?: boolean | null;
+  hit_and_run?: boolean | null;
+  publish_time?: string | null;
+}
+
+/** 手动选种：把一条搜索结果直接投给订阅（跳过规则组过滤；身份匹配照常）。 */
+export function grabForSubscription(
+  id: number,
+  payload: GrabPayload,
+): Promise<{ units: { season_number: number; episode_number: number }[] }> {
+  return unwrap(
+    request<ApiEnvelope<{ units: { season_number: number; episode_number: number }[] }>>(
+      `/subscriptions/${id}/grab`,
+      { method: "POST", body: JSON.stringify(payload) },
+    ),
+  );
+}
+
 /** 暂停 / 恢复订阅。 */
 export function pauseSubscription(id: number, paused: boolean): Promise<SubscriptionDetail> {
   return unwrap(
