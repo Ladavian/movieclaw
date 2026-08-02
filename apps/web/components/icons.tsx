@@ -301,6 +301,15 @@ export const DownloadIcon = (p: IconProps) => (
   </Base>
 );
 
+/** 升级：DownloadIcon 的垂直镜像（底座不动、箭头朝上），与「下载」成对 */
+export const UpgradeIcon = (p: IconProps) => (
+  <Base {...p}>
+    <path d="M12 16V5" />
+    <path d="m7 9 5-4 5 4" />
+    <path d="M4 19h16" />
+  </Base>
+);
+
 export const ExpandIcon = (p: IconProps) => (
   <Base {...p}>
     <path d="M15 4h5v5" />

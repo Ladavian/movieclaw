@@ -5,6 +5,7 @@ import { useEffect, useRef, useState } from "react";
 import { LiquidGlassButton } from "@/vendor/liquid-glass";
 
 import { AppConfigSection } from "@/components/app-config-section";
+import { AppUpdateDot, usePendingUpdate } from "@/components/app-update-entry";
 import { AppUpdateSection } from "@/components/app-update-section";
 import { AvatarBadge } from "@/components/avatar-badge";
 import { DownloaderConfigSection } from "@/components/downloader-config-section";
@@ -42,6 +43,9 @@ export function SettingsSidebar({ active, onSelect, onBack }: SettingsSidebarPro
   // 这块面板就是实时预览的对象。
   const { prefs } = useUiPrefs();
   const glass = sidebarGlass(prefs.sidebar);
+  // 有可用更新时给「应用」分区行点一颗小蓝点：从别的入口进了设置，也能
+  // 一眼看出更新在哪一栏（与侧栏更新入口同一份快照数据）
+  const pendingUpdate = usePendingUpdate();
   return (
     <GlassPanel
       backgroundImage={backdrop}
@@ -88,9 +92,10 @@ export function SettingsSidebar({ active, onSelect, onBack }: SettingsSidebarPro
                     className="glass-row nav-item gap-2.5 px-2.5 py-[7px]"
                   >
                     <Icon className="size-4 shrink-0" />
-                    <span className="truncate text-ui font-medium">
+                    <span className="flex-1 truncate text-ui font-medium">
                       {section.label}
                     </span>
+                    {section.id === "app" && pendingUpdate && <AppUpdateDot />}
                   </button>
                 );
               })}
@@ -161,13 +166,7 @@ export function SettingsPanel({ active }: SettingsPanelProps) {
         ) : section.id === "weixin" ? (
           <WeixinBindingSection />
         ) : section.id === "app" ? (
-          // 「应用」一个分区收拢应用自身的一切：版本与更新（AppUpdateSection：
-          // 版本/更新/模型/回退）在前，网络与维护（AppConfigSection：外部访问
-          // 地址/重启）在后——重启这类危险操作按惯例垫底
-          <div className="space-y-7">
-            <AppUpdateSection />
-            <AppConfigSection />
-          </div>
+          <AppSection />
         ) : section.id === "network" ? (
           <NetworkConfigSection />
         ) : section.id === "logs" ? (
@@ -445,6 +444,50 @@ function ChangePasswordCard() {
           {busy ? "提交中…" : "修改密码"}
         </button>
       </div>
+    </div>
+  );
+}
+
+/**
+ * —— 应用分区：两类设置，胶囊标签切换（与外观分区同一交互语言） ——
+ *
+ *   - 版本与更新：当前版本、检查/执行更新、NER 模型、回退（AppUpdateSection）；
+ *   - 网络与维护：外部访问地址、重启应用（AppConfigSection）。
+ *
+ * 为什么「版本与更新」是默认标签：这一页的高频入口是侧栏的更新徽标（有新版
+ * 才出现），用户带着"来更新"的意图落地，第一屏就该是更新卡片；外部访问地址
+ * 与重启是装完起初配一次/出问题才碰的低频项，收进第二个标签，不再和更新流程
+ * 挤在一条长页里。有可用更新时标签上点一颗小蓝点，与设置侧栏的「应用」行同款。
+ */
+function AppSection() {
+  const [tab, setTab] = useState<"update" | "maintain">("update");
+  const pendingUpdate = usePendingUpdate();
+  const tabs = [
+    { id: "update" as const, label: "版本与更新" },
+    { id: "maintain" as const, label: "网络与维护" },
+  ] as const;
+
+  return (
+    <div className="space-y-5">
+      <div className="flex gap-1.5">
+        {tabs.map((t) => (
+          <button
+            key={t.id}
+            type="button"
+            aria-pressed={t.id === tab}
+            onClick={() => setTab(t.id)}
+            className={`flex items-center gap-1.5 rounded-full px-3.5 py-1.5 text-sub font-medium transition-colors ${
+              t.id === tab
+                ? "bg-white/[0.14] text-white"
+                : "text-[var(--text-muted)] hover:bg-white/[0.07] hover:text-[var(--text)]"
+            }`}
+          >
+            {t.label}
+            {t.id === "update" && pendingUpdate && <AppUpdateDot />}
+          </button>
+        ))}
+      </div>
+      {tab === "update" ? <AppUpdateSection /> : <AppConfigSection />}
     </div>
   );
 }

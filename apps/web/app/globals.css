@@ -500,6 +500,22 @@ a {
   color: var(--text);
   word-break: break-word;
 }
+/*
+ * 紧凑档：Markdown 嵌在卡片里当"说明文字"用时（更新说明等），阅读正文档
+ * 会比周边的 text-sub 大出一大截、显得喧宾夺主。只压字号与行高，排版规则
+ * （标题层级、列表缩进、代码块）完全复用上面那套，两处不会走样。
+ */
+.markdown--compact {
+  font-size: var(--text-sub);
+  line-height: 1.75;
+  color: var(--text-muted);
+}
+.markdown--compact h1,
+.markdown--compact h2,
+.markdown--compact h3,
+.markdown--compact h4 {
+  color: var(--text);
+}
 .markdown > * + * {
   margin-top: 0.75em;
 }

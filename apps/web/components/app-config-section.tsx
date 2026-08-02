@@ -231,11 +231,10 @@ export function AppConfigSection() {
               </div>
             </div>
             {urlError && <p className="mt-1.5 text-right text-caption text-red-300">{urlError}</p>}
-            {/* 未设置时的引导小字：说清设置的收益 */}
+            {/* 未设置时的引导小字：一句话说清动作与收益，完整说明在 ⓘ 里 */}
             {!view.external_url && !urlError && (
               <p className="mt-1.5 text-right text-caption leading-5 text-[var(--text-faint)]">
-                尚未设置：点输入框内的「使用」即可采用当前地址；设置后 AI
-                助手的回复和通知才能带上指向本应用的可点击页面链接
+                点「使用」采用当前地址，通知与 AI 回复才能带上页面链接
               </p>
             )}
           </div>

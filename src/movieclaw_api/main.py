@@ -7,6 +7,7 @@ from movieclaw_api.app import create_app
 from movieclaw_api.core.config import get_settings
 from movieclaw_api.core.logging import configure_logging
 from movieclaw_api.services.app_config import (
+    FULL_RESTART_EXIT_CODE,
     register_uvicorn_server,
     restart_exit_code,
 )
@@ -62,6 +63,12 @@ def run() -> None:
     register_uvicorn_server(server)
     server.run()
     exit_code = restart_exit_code()
+    if exit_code == FULL_RESTART_EXIT_CODE:
+        # 回退暂存的数据库恢复只能在这里做：服务已停、DB 引擎已关闭，且重启
+        # 后跑的是旧版本代码（不认识本机制）。无暂存时本调用是空操作。
+        from movieclaw_api.services.app_update import execute_pending_restore
+
+        execute_pending_restore()
     if exit_code is not None:
         sys.exit(exit_code)
 
