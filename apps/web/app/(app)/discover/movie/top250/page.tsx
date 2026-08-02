@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 
-import { Top250View } from "@/components/top250-view";
+import { CollectionGridView } from "@/components/collection-grid-view";
 
 export const metadata: Metadata = { title: "豆瓣电影 Top 250" };
 
@@ -8,7 +8,7 @@ export const metadata: Metadata = { title: "豆瓣电影 Top 250" };
 export default function Top250Page() {
   return (
     <div className="flex h-full flex-col">
-      <Top250View />
+      <CollectionGridView collectionId="movie_top250" title="豆瓣电影 Top 250" />
     </div>
   );
 }

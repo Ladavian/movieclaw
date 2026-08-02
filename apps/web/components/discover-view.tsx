@@ -51,6 +51,12 @@ const layoutCache = new Map<string, DiscoverLayoutData>();
 const heroCache = new Map<string, MediaItem[]>();
 const rowCache = new Map<string, MediaRowData>();
 
+/** 有「看全部」落地页的榜单行：横滚只露前 10 条，入口跳完整榜单网格页。 */
+const ROW_MORE_LINKS: Record<string, Route> = {
+  "douban-movie_top250": "/discover/movie/top250?source=douban" as Route,
+  "douban-movie_high_score": "/discover/movie/high-score?source=douban" as Route,
+};
+
 /** 加载失败信息：除文案外带上后端错误码与引导提示，驱动引导式错误态。 */
 interface DiscoverErrorInfo {
   message: string;
@@ -241,14 +247,12 @@ export function DiscoverView({
           if (row === "error") return null;
           if (row && row.items.length === 0) return null;
           if (!row) return <RowSkeleton key={stub.id} stub={stub} />;
-          const isTop250 = row.id === "douban-movie_top250";
+          const moreHref = ROW_MORE_LINKS[row.id];
           return (
             <MediaRow
               key={row.id}
-              row={isTop250 ? { ...row, items: row.items.slice(0, 10) } : row}
-              moreHref={
-                isTop250 ? ("/discover/movie/top250?source=douban" as Route) : undefined
-              }
+              row={moreHref ? { ...row, items: row.items.slice(0, 10) } : row}
+              moreHref={moreHref}
             />
           );
         })}

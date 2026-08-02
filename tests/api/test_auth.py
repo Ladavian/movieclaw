@@ -249,6 +249,7 @@ def test_every_route_denies_anonymous_access(client: TestClient) -> None:
             .replace("{tmdb_id}", "1")
             .replace("{tmdb_person_id}", "1")
             .replace("{douban_id}", "26266893")
+            .replace("{collection_id}", "movie_top250")
             .replace("{subscription_id}", "1")
             .replace("{rule_set_id}", "1")
             .replace("{library_id}", "1")
