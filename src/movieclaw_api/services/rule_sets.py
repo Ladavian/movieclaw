@@ -25,13 +25,19 @@ logger = logging.getLogger("movieclaw_api.rule_sets")
 
 _DEFAULT_NAME = "默认规则组"
 
+# 懒种子默认组的安全预设：只收 1080p 及以上（顺序即偏好）、排除零做种死种。
+# 此前是"全不限"（spec={}），新用户第一批抓到的可能是低清枪版或没人做种的
+# 死种——对家用场景太危险。只影响首次创建；已有部署的默认组（无论是否被
+# 用户改过）一律不动。
+_DEFAULT_SPEC = {"resolutions": ["2160p", "1080p"], "min_seeders": 1}
+
 
 class RuleSetService:
     def __init__(self, session: AsyncSession) -> None:
         self._repo = RuleSetRepository(session)
 
     async def ensure_default(self) -> RuleSet:
-        """取默认规则组，不存在则懒种子一个"全不限"的（幂等）。
+        """取默认规则组，不存在则懒种子一个安全预设的（幂等）。
 
         放在服务层而非迁移里做 seed：迁移保持纯 DDL，且名字/形态想改时
         不用动历史迁移。
@@ -39,8 +45,10 @@ class RuleSetService:
         existing = await self._repo.get_default()
         if existing is not None:
             return existing
-        row = await self._repo.save(RuleSet(name=_DEFAULT_NAME, is_default=True, spec={}))
-        logger.info("已创建默认规则组（全不限），新订阅未指定规则组时使用它")
+        row = await self._repo.save(
+            RuleSet(name=_DEFAULT_NAME, is_default=True, spec=dict(_DEFAULT_SPEC))
+        )
+        logger.info("已创建默认规则组（1080p 及以上、做种数 ≥1），新订阅未指定规则组时使用它")
         return row
 
     async def list_all(self) -> list[RuleSet]:
@@ -80,6 +88,18 @@ class RuleSetService:
         except IntegrityError as exc:
             await self._repo.rollback()
             raise ConflictException(f"规则组「{new_name}」已存在，请换一个名称") from exc
+
+    async def set_default(self, rule_set_id: int) -> RuleSet:
+        """把默认标记转移到指定组：新订阅未指定规则组时用它。幂等。
+
+        只换"谁是默认"，不改任何订阅的挂靠——已有订阅继续用各自的组。
+        """
+        row = await self.get(rule_set_id)
+        if row.is_default:
+            return row
+        row = await self._repo.set_default(row)
+        logger.info("默认规则组已切换为「%s」", row.name)
+        return row
 
     async def delete(self, rule_set_id: int) -> None:
         """删除规则组。默认组与被订阅引用的组禁删（显式报错优于隐式改挂靠）。"""

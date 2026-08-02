@@ -379,8 +379,11 @@ export function SubscribeDialog({
                     return (
                       <p className="mt-1.5 flex flex-wrap gap-1.5">
                         {chips.length === 0 ? (
-                          <span className="text-caption text-[var(--text-faint)]">
-                            全不限：任何识别为本条目的资源都可接受
+                          // 全不限是个危险默认：第一批抓到的可能是低清枪版或
+                          // 零做种死种，用琥珀色把风险讲在订阅之前
+                          <span className="text-caption text-[#f5c451]/90">
+                            该规则组不限任何条件——可能抓到低画质或无人做种的资源，
+                            建议在「设置 → 订阅 → 规则组」里加上分辨率与做种数限制
                           </span>
                         ) : (
                           chips.map((chip) => (

@@ -52,6 +52,24 @@ class RuleSetRepository:
         await self._session.refresh(row)
         return row
 
+    async def set_default(self, row: RuleSet) -> RuleSet:
+        """把默认标记转移到 row：清掉旧默认与立新默认在同一事务内完成，
+        任何时刻查询 is_default 都恰有一个结果。"""
+        result = await self._session.execute(
+            select(RuleSet).where(RuleSet.is_default.is_(True))  # type: ignore[attr-defined]
+        )
+        for old in result.scalars().all():
+            if old.id != row.id:
+                old.is_default = False
+                old.updated_at = utcnow()
+                self._session.add(old)
+        row.is_default = True
+        row.updated_at = utcnow()
+        self._session.add(row)
+        await self._session.commit()
+        await self._session.refresh(row)
+        return row
+
     async def rollback(self) -> None:
         await self._session.rollback()
 

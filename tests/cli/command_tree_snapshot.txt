@@ -119,6 +119,7 @@ notices dismiss
 notices list
 people show
 rules create
+rules default
 rules delete
 rules list
 rules update

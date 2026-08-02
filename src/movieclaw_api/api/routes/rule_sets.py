@@ -62,6 +62,26 @@ async def update_rule_set(
     )
 
 
+@router.post(
+    "/{rule_set_id}/default",
+    response_model=ApiResponse[RuleSetView],
+    summary="设为默认规则组（新订阅未指定规则组时使用）",
+    operation_id="rules.default",
+)
+async def set_default_rule_set(
+    rule_set_id: int,
+    session: AsyncSession = Depends(get_session),
+) -> ApiResponse[RuleSetView]:
+    """只换"谁是默认"，不改任何已有订阅的挂靠。幂等。"""
+    service = RuleSetService(session)
+    row = await service.set_default(rule_set_id)
+    references = await service.count_references(rule_set_id)
+    return ok(
+        RuleSetView.from_model(row, reference_count=references),
+        message=f"「{row.name}」已设为默认规则组",
+    )
+
+
 @router.delete(
     "/{rule_set_id}",
     response_model=ApiResponse[dict],

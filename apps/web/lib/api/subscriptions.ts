@@ -437,6 +437,13 @@ export function updateRuleSet(id: number, name: string, spec: RuleSetSpec): Prom
   );
 }
 
+/** 设为默认规则组（新订阅未指定规则组时使用；不改已有订阅的挂靠）。 */
+export function setDefaultRuleSet(id: number): Promise<RuleSet> {
+  return unwrap(
+    request<ApiEnvelope<RuleSet>>(`/rule-sets/${id}/default`, { method: "POST" }),
+  );
+}
+
 /** 删除规则组（默认组与被订阅引用的组后端会拒绝，错误信息可直接展示）。 */
 export function deleteRuleSet(id: number): Promise<void> {
   return unwrap(request<ApiEnvelope<void>>(`/rule-sets/${id}`, { method: "DELETE" }));
