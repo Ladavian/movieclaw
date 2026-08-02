@@ -30,8 +30,9 @@ class LibraryRepository:
         return result.scalar_one_or_none()
 
     async def list_all(self, *, kind: str | None = None) -> list[Library]:
-        """返回全部库（可按类型过滤），按 id 排序保持创建顺序。"""
-        stmt = select(Library).order_by(Library.id)
+        """返回全部库（可按类型过滤），按用户排定的展示顺序（sort_order 升序，
+        id 兜底）——媒体库首页的卡片区与「最近添加」分区都按这个顺序排。"""
+        stmt = select(Library).order_by(Library.sort_order, Library.id)
         if kind is not None:
             stmt = stmt.where(Library.kind == kind)
         result = await self._session.execute(stmt)
@@ -62,18 +63,33 @@ class LibraryRepository:
         root_paths: list[str],
         match_rules: list | None = None,
     ) -> Library:
-        """新增一个库。该 kind 尚无默认库时，新库自动成为默认。"""
+        """新增一个库。该 kind 尚无默认库时，新库自动成为默认。新库置于
+        展示顺序末尾（现有最大 sort_order + 1，不打乱用户排好的顺序）。"""
+        existing = await self.list_all()
         row = Library(
             name=name,
             kind=kind,
             root_paths=list(root_paths),
             match_rules=list(match_rules or []),
             is_default=await self.get_default(kind) is None,
+            sort_order=max((lib.sort_order for lib in existing), default=0) + 1,
         )
         self._session.add(row)
         await self._session.commit()
         await self._session.refresh(row)
         return row
+
+    async def reorder(self, ordered_ids: list[int]) -> None:
+        """按给定的 id 顺序重写全部库的展示顺序（1 起步的连续序号）。
+        调用方（service 层）保证 ordered_ids 与现存库集合完全一致。"""
+        rows = {row.id: row for row in await self.list_all()}
+        now = utcnow()
+        for position, library_id in enumerate(ordered_ids, start=1):
+            row = rows[library_id]
+            if row.sort_order != position:
+                row.sort_order = position
+                row.updated_at = now
+        await self._session.commit()
 
     async def update(
         self,

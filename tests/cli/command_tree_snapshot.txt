@@ -87,6 +87,7 @@ lib list
 lib missing clear
 lib missing list
 lib missing redownload
+lib order set
 lib organize preview
 lib organize start
 lib refresh progress

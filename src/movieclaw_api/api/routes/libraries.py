@@ -27,6 +27,7 @@ from movieclaw_api.schemas.library import (
     LibraryItemDetailView,
     LibraryItemView,
     LibraryPayload,
+    LibraryReorderPayload,
     LibrarySearchGroupView,
     LibraryStats,
     LibraryView,
@@ -610,6 +611,26 @@ def _assert_not_busy(library_name: str, library_id: int) -> None:
         raise ConflictException(
             f"「{library_name}」正在转移条目，暂不能编辑或删除；请等待转移完成"
         )
+
+
+@router.put(
+    "/order",
+    response_model=ApiResponse[dict],
+    summary="重排媒体库展示顺序（决定首页卡片与「最近添加」分区的排列）",
+    operation_id="lib.order.set",
+)
+async def reorder_libraries(
+    payload: LibraryReorderPayload,
+    session: AsyncSession = Depends(get_session),
+) -> ApiResponse[dict]:
+    """按给定 id 顺序重写全部库的展示顺序。列表必须包含且仅包含现存的
+    全部库 id——部分排序语义不明确，库列表变化过就让前端刷新后重试。
+
+    必须注册在 ``PUT /{library_id}`` 之前：FastAPI 的路径参数按通配段匹配、
+    到校验层才转 int，注册在后面的话 ``/order`` 会被它抢走并报 422。"""
+    service = LibraryConfigService(session)
+    await service.reorder(payload.ordered_ids)
+    return ok({}, message="媒体库顺序已更新")
 
 
 @router.put(

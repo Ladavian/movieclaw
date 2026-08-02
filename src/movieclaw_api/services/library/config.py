@@ -254,6 +254,20 @@ class LibraryConfigService:
         self._refresh_watcher()
         return updated
 
+    async def reorder(self, ordered_ids: list[int]) -> list[Library]:
+        """按给定 id 顺序重排全部库的展示顺序（决定媒体库首页卡片与
+        「最近添加」分区的排列）。必须一次给全：漏库/多库/重复都拒绝——
+        部分排序没有明确语义（漏掉的库排哪里说不清），宁可让前端重拉列表。"""
+        existing = {row.id for row in await self._repo.list_all()}
+        if len(ordered_ids) != len(set(ordered_ids)):
+            raise BadRequestException("排序列表存在重复的库 id")
+        if set(ordered_ids) != existing:
+            raise BadRequestException(
+                "排序列表必须包含且仅包含全部媒体库的 id（库列表可能已变化，请刷新后重试）"
+            )
+        await self._repo.reorder(ordered_ids)
+        return await self._repo.list_all()
+
     async def set_default(self, library_id: int) -> Library:
         """设为该类型的默认库（订阅/手动下载不选库时用它）。"""
         ok = await self._repo.set_default(library_id)

@@ -25,6 +25,7 @@ import {
   getRoutingOptions,
   listLibraries,
   listLibraryItems,
+  reorderLibraries,
   SCAN_PHASE_LABELS,
   setDefaultLibrary,
   startLibraryScan,
@@ -284,6 +285,26 @@ export function LibraryView() {
     busyAny || recentlyBusy ? 3000 : refreshingAny ? 5000 : importingAny ? 10_000 : 30_000,
   );
 
+  // 调整展示顺序：与相邻库换位后整单提交（后端要求一次给全所有 id）。
+  // 先乐观换位（卡片区与下方「最近添加」分区同吃 libraries 的顺序，立即
+  // 一起换位），失败回滚并提示
+  const moveLibrary = (libraryId: number, offset: -1 | 1) => {
+    if (!libraries) return;
+    const index = libraries.findIndex((l) => l.id === libraryId);
+    const target = index + offset;
+    if (index < 0 || target < 0 || target >= libraries.length) return;
+    const next = [...libraries];
+    [next[index], next[target]] = [next[target], next[index]];
+    const prev = libraries;
+    setLibraries(next);
+    void reorderLibraries(next.map((l) => l.id))
+      .then(reload)
+      .catch((e) => {
+        setLibraries(prev);
+        setError((e as Error).message);
+      });
+  };
+
   // 新建的库进入列表后滚进视野（依赖 libraries：创建到列表刷新之间隔着
   // 一次请求，元素这时才存在），高亮 2.5 秒后自行褪去
   useEffect(() => {
@@ -413,7 +434,7 @@ export function LibraryView() {
           同一交互），首屏始终保住「库 → 最近添加」的信息层次 */}
       {libraries !== null && (
         <HScroller className="mt-6 gap-5 px-6 pb-1 pt-1 max-md:mt-4 max-md:gap-3.5 max-md:px-4">
-          {libraries.map((library) => (
+          {libraries.map((library, index) => (
             <div
               key={library.id}
               data-library-card={library.id}
@@ -428,6 +449,9 @@ export function LibraryView() {
                 onOrganize={() => setOrganizeTarget(library)}
                 onRefresh={reload}
                 onError={setError}
+                canMoveLeft={index > 0}
+                canMoveRight={index < libraries.length - 1}
+                onMove={(offset) => moveLibrary(library.id, offset)}
               />
             </div>
           ))}
@@ -516,6 +540,9 @@ function LibraryCard({
   onOrganize,
   onRefresh,
   onError,
+  canMoveLeft,
+  canMoveRight,
+  onMove,
 }: {
   library: MediaLibrary;
   items: LibraryItem[];
@@ -523,6 +550,9 @@ function LibraryCard({
   onOrganize: () => void;
   onRefresh: () => void;
   onError: (message: string) => void;
+  canMoveLeft: boolean;
+  canMoveRight: boolean;
+  onMove: (offset: -1 | 1) => void;
 }) {
   const meta = LIBRARY_KIND_META[library.kind];
   // 封面海报取最近入库的 4 部（items 已是服务端按最近入账排好的那批）
@@ -621,6 +651,9 @@ function LibraryCard({
         onOrganize={onOrganize}
         onRefresh={onRefresh}
         onError={onError}
+        canMoveLeft={canMoveLeft}
+        canMoveRight={canMoveRight}
+        onMove={onMove}
       />
     </div>
   );
@@ -740,6 +773,9 @@ function LibraryCardMenu({
   onOrganize,
   onRefresh,
   onError,
+  canMoveLeft,
+  canMoveRight,
+  onMove,
 }: {
   library: MediaLibrary;
   onEdit: () => void;
@@ -747,6 +783,9 @@ function LibraryCardMenu({
   onOrganize: () => void;
   onRefresh: () => void;
   onError: (message: string) => void;
+  canMoveLeft: boolean;
+  canMoveRight: boolean;
+  onMove: (offset: -1 | 1) => void;
 }) {
   const [menuPos, setMenuPos] = useState<{ left: number; top: number } | null>(null);
   const open = menuPos != null;
@@ -854,6 +893,29 @@ function LibraryCardMenu({
               className="glass-row px-2.5 py-2 text-ui font-medium disabled:opacity-40"
             >
               设为默认库
+            </button>
+            {/* 展示顺序：决定首页卡片与「最近添加」分区的排列（两处同步换位） */}
+            <button
+              type="button"
+              disabled={!canMoveLeft}
+              onClick={() => {
+                setMenuPos(null);
+                onMove(-1);
+              }}
+              className="glass-row px-2.5 py-2 text-ui font-medium disabled:opacity-40"
+            >
+              向前移动
+            </button>
+            <button
+              type="button"
+              disabled={!canMoveRight}
+              onClick={() => {
+                setMenuPos(null);
+                onMove(1);
+              }}
+              className="glass-row px-2.5 py-2 text-ui font-medium disabled:opacity-40"
+            >
+              向后移动
             </button>
             <button
               type="button"

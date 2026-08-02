@@ -28,6 +28,14 @@ class LibraryPayload(BaseModel):
     )
 
 
+class LibraryReorderPayload(BaseModel):
+    """媒体库重排的请求体：必须一次给全所有库的 id（漏/多/重复都拒绝）。"""
+
+    ordered_ids: list[int] = Field(
+        description="全部媒体库 id 的目标顺序（越靠前展示越靠前）"
+    )
+
+
 class LibraryStats(BaseModel):
     """库存统计（library_file 聚合，查询时现算——L1 曾用订阅数占位，L3 起是真库存）。"""
 

@@ -356,6 +356,19 @@ export function setDefaultLibrary(id: number): Promise<MediaLibrary> {
   return unwrap(request<ApiEnvelope<MediaLibrary>>(`/libraries/${id}/default`, { method: "POST" }));
 }
 
+/**
+ * 重排媒体库展示顺序（决定首页卡片与「最近添加」分区的排列）。
+ * 必须一次传入全部库的 id——漏/多/重复都会被后端拒绝。
+ */
+export function reorderLibraries(orderedIds: number[]): Promise<Record<string, never>> {
+  return unwrap(
+    request<ApiEnvelope<Record<string, never>>>(`/libraries/order`, {
+      method: "PUT",
+      body: JSON.stringify({ ordered_ids: orderedIds }),
+    }),
+  );
+}
+
 /** 删除媒体库（不动磁盘文件；其订阅回落到该类型默认库）。 */
 export function deleteLibrary(id: number): Promise<Record<string, never>> {
   return unwrap(request<ApiEnvelope<Record<string, never>>>(`/libraries/${id}`, { method: "DELETE" }));
