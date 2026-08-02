@@ -120,25 +120,25 @@ def test_graceful_exit_prefers_should_exit_over_signal(monkeypatch):
 
     fake = FakeServer()
     monkeypatch.setattr(app_config, "_uvicorn_server", fake)
-    monkeypatch.setattr(app_config, "_restart_requested", False)
+    monkeypatch.setattr(app_config, "_restart_exit_code", None)
     signals: list[int] = []
     monkeypatch.setattr(app_config.os, "kill", lambda pid, sig: signals.append(sig))
 
-    app_config._request_graceful_exit()
+    app_config._request_graceful_exit(app_config.RESTART_EXIT_CODE)
     assert fake.should_exit is True
     assert signals == []
     # main.run 停机后据此改用重启约定退出码（42）
-    assert app_config.restart_requested() is True
+    assert app_config.restart_exit_code() == app_config.RESTART_EXIT_CODE
 
 
 def test_graceful_exit_falls_back_to_sigterm(monkeypatch):
     """未注册 Server 实例（开发热重载）时：退回向自身发 SIGTERM。"""
     monkeypatch.setattr(app_config, "_uvicorn_server", None)
-    monkeypatch.setattr(app_config, "_restart_requested", False)
+    monkeypatch.setattr(app_config, "_restart_exit_code", None)
     signals: list[int] = []
     monkeypatch.setattr(app_config.os, "kill", lambda pid, sig: signals.append(sig))
 
-    app_config._request_graceful_exit()
+    app_config._request_graceful_exit(app_config.RESTART_EXIT_CODE)
     assert signals == [app_config.signal.SIGTERM]
 
 

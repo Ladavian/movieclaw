@@ -152,6 +152,32 @@ class Settings(BaseSettings):
     )
 
     # ------------------------------------------------------------------
+    # 应用内更新（docs/design/in-app-update.md）
+    # ------------------------------------------------------------------
+    # 更新产物（overlay 版本、状态标记、数据库备份）的落盘目录。默认在 data/
+    # 下，Docker 挂载 data 一个卷即可让更新在容器重建后依然生效。
+    # 注意与 docker/entrypoint.sh 的 UPDATES_DIR 是同一个目录（约定一致）。
+    updates_dir: str = Field(default="./data/updates", alias="MOVIECLAW_UPDATES_DIR")
+    # 更新来源仓库与 API 地址。API 地址可整体换成自建反代。
+    update_repo: str = Field(default="yipengfei329/movieclaw", alias="UPDATE_REPO")
+    update_api_base_url: str = Field(
+        default="https://api.github.com", alias="UPDATE_API_BASE_URL"
+    )
+    # Release 资产下载的加速镜像前缀（ghproxy 风格，如 https://ghproxy.com/）。
+    # 设置后下载地址变为「前缀 + 原始 GitHub 地址」；manifest 的 sha256 校验
+    # 是强制项，镜像被篡改的产物无法通过校验。
+    update_download_mirror: str = Field(default="", alias="UPDATE_DOWNLOAD_MIRROR")
+    # NER 模型的应用内更新落盘目录（entrypoint 解析其中的 current 指针，
+    # 优先于镜像内置模型）。与 updates_dir 同在 data/ 卷上。
+    models_dir: str = Field(default="./data/models/ner", alias="MOVIECLAW_MODELS_DIR")
+    # 更新清单的 Ed25519 签名公钥（base64 的 32 字节原始公钥）。配置后所有
+    # 更新清单必须携带有效签名（manifest.json.sig），防 Release 被篡改——
+    # 对走第三方加速镜像的用户是 sha256 之上的第二道保险。留空则不校验签名。
+    # 发布侧配套：scripts/gen-release-signing-key.sh 生成密钥对，CI 配置
+    # RELEASE_SIGNING_KEY 机密后自动随 Release 上传签名。
+    update_manifest_pubkey: str = Field(default="", alias="UPDATE_MANIFEST_PUBKEY")
+
+    # ------------------------------------------------------------------
     # 定时任务调度配置
     # ------------------------------------------------------------------
     # 调度总开关：置 false 可让部署者完全关掉定时任务（如临时排障、多实例部署时

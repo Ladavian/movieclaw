@@ -86,7 +86,11 @@ RUN mkdir -p /model \
     && cd /model \
     && curl -fSL --retry 3 -O "$NER_MODEL_BASE/model.int8.onnx" \
     && curl -fSL --retry 3 -O "$NER_MODEL_BASE/tokenizer.json" \
-    && curl -fSL --retry 3 -O "$NER_MODEL_BASE/labels.json"
+    && curl -fSL --retry 3 -O "$NER_MODEL_BASE/labels.json" \
+    # 记录内置模型的 Release tag（URL 末段；先去尾斜杠，防加速镜像地址
+    # 以 / 结尾时写入空 tag），应用内模型更新据此比对版本
+    && NER_BASE_TRIMMED="${NER_MODEL_BASE%/}" \
+    && echo "${NER_BASE_TRIMMED##*/}" > /model/.release-tag
 
 # ---------------------------------------------------------------------------
 # 阶段 4：目标架构的 node 二进制来源
@@ -146,9 +150,22 @@ COPY --from=ner-model /model ./models/torrent-ner
 COPY docker/entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 
+# 运行时版本（依赖集合的代号，docker/runtime-version 是唯一事实源）：
+# entrypoint 据此判断 data 卷上的应用内更新 overlay 与本镜像是否兼容，
+# Release 产物的 manifest.requires_runtime 也取自同一个文件（构建脚本读取）。
+# 凡是改动 pyproject dependencies、Node 大版本、系统包或 entrypoint 契约，
+# 必须 bump docker/runtime-version 并发布新镜像。
+COPY docker/runtime-version /etc/movieclaw-runtime
+
 # TMDB API Key 在构建时烧入镜像（部署者可用同名环境变量覆盖）
 ARG TMDB_API_KEY=""
 ENV TMDB_API_KEY=${TMDB_API_KEY}
+
+# 更新清单签名公钥（可选，base64 的 Ed25519 公钥）：烧入后应用内更新强制
+# 验签（manifest.json.sig），防 Release/加速镜像被篡改。留空则不校验。
+# 密钥对由 scripts/gen-release-signing-key.sh 生成。
+ARG UPDATE_MANIFEST_PUBKEY=""
+ENV UPDATE_MANIFEST_PUBKEY=${UPDATE_MANIFEST_PUBKEY}
 
 ENV PATH="/venv/bin:${PATH}" \
     PYTHONPATH=/app/src \
