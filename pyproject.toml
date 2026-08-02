@@ -16,6 +16,10 @@ dependencies = [
   "fastapi>=0.116.0,<1.0.0",
   "pydantic-settings>=2.10.0,<3.0.0",
   "uvicorn[standard]>=0.35.0,<1.0.0",
+  # Discord Gateway 收消息用 websocket 客户端。此前经 uvicorn[standard] 传递
+  # 引入,显式声明是因为代理支持(connect 的 proxy 参数)要求 >=14——
+  # 传递依赖的版本不受我们控制,uvicorn 换实现或降版本会静默破坏代理配置
+  "websockets>=14.0,<18.0",
   # [socks] extra：统一网络出口层支持 socks5 代理（NAS 玩家常见的翻墙形态）
   "httpx[socks]>=0.28.0,<1.0.0",
   "parsel>=1.9.0,<2.0.0",

@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 
 import Link from "next/link";
 
+import { useConfirm, useToast } from "@/components/feedback";
 import { ChatIcon } from "@/components/icons";
 import { useLlmConfigured } from "@/components/llm-gate";
 import { WeixinBindingSection } from "@/components/weixin-binding-section";
@@ -52,17 +53,16 @@ const CHANNEL_META: Record<
  */
 export function ImPushSection() {
   const llmConfigured = useLlmConfigured();
-  const [pushMsg, setPushMsg] = useState<string | null>(null);
+  const toast = useToast();
   const [pushBusy, setPushBusy] = useState(false);
 
   async function handleTestPush() {
     setPushBusy(true);
-    setPushMsg(null);
     try {
       const { sent } = await sendChannelPushTest();
-      setPushMsg(`✅ 已推送到 ${sent} 个账号，去客户端看看吧`);
+      toast.success(`已推送到 ${sent} 个账号，去客户端看看吧`);
     } catch (e) {
-      setPushMsg(`⚠️ ${(e as Error).message}`);
+      toast.error((e as Error).message);
     } finally {
       setPushBusy(false);
     }
@@ -121,7 +121,6 @@ export function ImPushSection() {
             发送测试
           </button>
         </div>
-        {pushMsg && <p className="mt-2 text-caption text-[var(--text-muted)]">{pushMsg}</p>}
       </div>
     </div>
   );
@@ -206,6 +205,7 @@ function ChannelBindingBlock({
   disabled: boolean;
 }) {
   const meta = CHANNEL_META[channel];
+  const confirm = useConfirm();
   const [accounts, setAccounts] = useState<ImAccount[] | null>(null);
   const [binding, setBinding] = useState<ImBinding | null>(null);
   const [token, setToken] = useState("");
@@ -263,7 +263,15 @@ function ChannelBindingBlock({
   );
 
   async function handleUnbind(accountId: string) {
-    if (!window.confirm(`确定解绑该 ${meta.label} bot？解绑后需重新配对才能使用。`)) return;
+    if (
+      !(await confirm({
+        title: `解绑该 ${meta.label} bot？`,
+        description: "解绑将删除 bot 凭据并停止通道，需重新配对才能使用。",
+        confirmLabel: "解绑",
+        tone: "danger",
+      }))
+    )
+      return;
     setBusy(true);
     setError(null);
     try {

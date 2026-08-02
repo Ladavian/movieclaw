@@ -46,7 +46,13 @@ class TelegramClient:
             raise TelegramApiError(
                 f"Telegram bot token 无效或已吊销(HTTP {resp.status_code})", auth_failed=True
             )
-        data = resp.json()
+        try:
+            data = resp.json()
+        except ValueError as exc:
+            # 5xx/代理错误页常返回 HTML:归入可重试的 API 错误,走退避而不是裸抛
+            raise TelegramApiError(
+                f"Telegram API {method} 返回异常响应(HTTP {resp.status_code},非 JSON)"
+            ) from exc
         if not data.get("ok"):
             raise TelegramApiError(
                 f"Telegram API {method} 失败:{data.get('description') or resp.status_code}"
