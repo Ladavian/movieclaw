@@ -193,6 +193,22 @@ textarea,
   touch-action: manipulation;
 }
 
+/* —— 原生 <select> 下拉弹层的 Windows 修复 ——
+   弹层由系统/浏览器绘制，Windows 上部分 Chromium（含 WebView）不跟随页面的
+   color-scheme: dark，弹层是系统白底；而选项文字继承页面近白色 --text，
+   结果白底白字完全看不清。修法是双保险：
+   1) 在 select 上显式重申 color-scheme（弹层配色跟随控件自身而非 :root）；
+   2) 给 option/optgroup 显式指定「不透明深色底 + 亮色字」——弹层里半透明
+      背景会叠在系统白底上，必须用实色。 */
+select {
+  color-scheme: dark;
+}
+select option,
+select optgroup {
+  background-color: #161923;
+  color: var(--text);
+}
+
 body {
   margin: 0;
   color: var(--text);
