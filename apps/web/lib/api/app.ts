@@ -42,7 +42,7 @@ export function restartApp(): Promise<null> {
 }
 
 // ---------------------------------------------------------------------------
-// 应用内更新（设置 → 关于与更新，见 routes/app_update）
+// 应用内更新（设置 → 应用，见 routes/app_update）
 // ---------------------------------------------------------------------------
 
 /** 版本与更新能力状态（GET /app/update/status）。 */
@@ -59,6 +59,8 @@ export interface UpdateStatusView {
   can_update: boolean;
   /** 是否存在可回退的上一版本 */
   has_previous: boolean;
+  /** 可回退的上一版本号（has_previous 时非空）；回退 UI 用它明示落点 */
+  previous_version: string | null;
   /** 曾连续启动失败被自动回落的坏版本列表 */
   bad_versions: string[];
   /** 当前生效的 NER 模型 Release tag（如 torrent-ner-v1）；无法识别时为 null */
@@ -101,6 +103,31 @@ export interface UpdateProgressView {
   target_version: string | null;
 }
 
+/**
+ * 待更新快照（GET /app/update/pending）：最近一次检查（每小时的定时任务或用户
+ * 手动点「检查更新」）留下的结论，读它不触网。
+ *
+ * 更新提醒的全部界面都建立在它之上：侧栏常驻的更新入口据此点亮，「设置 → 应用」
+ * 进页即用它直接渲染出新版本卡片（用户不必再手点一次「检查更新」）。
+ */
+export interface PendingUpdateView {
+  /** 可更新的应用版本号；null = 无可用更新（含从未检查过） */
+  app_version: string | null;
+  /** false = 该版本含依赖变化，需重拉 Docker 镜像，应用内更新不可用 */
+  app_compatible: boolean;
+  /** 该版本的 Release 说明（Markdown 原文） */
+  app_changelog: string;
+  app_published_at: string;
+  /** 可更新的 NER 模型 Release tag；null = 无可用更新 */
+  model_tag: string | null;
+  /** 最近一次检查完成时间；null = 从未检查过 */
+  checked_at: string | null;
+}
+
+export function getPendingUpdate(): Promise<PendingUpdateView> {
+  return unwrap(request<ApiEnvelope<PendingUpdateView>>("/app/update/pending"));
+}
+
 export function getUpdateStatus(): Promise<UpdateStatusView> {
   return unwrap(request<ApiEnvelope<UpdateStatusView>>("/app/update/status"));
 }
@@ -117,10 +144,58 @@ export function getUpdateProgress(): Promise<UpdateProgressView> {
   return unwrap(request<ApiEnvelope<UpdateProgressView>>("/app/update/progress"));
 }
 
-/** 回退到上一版本；返回后端的中文结果说明（信封 message）。 */
-export async function rollbackUpdate(): Promise<string> {
-  const envelope = await request<ApiEnvelope<null>>("/app/update/rollback", { method: "POST" });
+/** 一个可回退（或切换）的目标版本（GET /app/update/rollback/options）。 */
+export interface RollbackTargetView {
+  /** baseline = Docker 镜像内置版本；version = 本地保留的历史版本 */
+  kind: "version" | "baseline" | string;
+  /** 目标版本号；镜像基线未曾记录版本号时为 null */
+  version: string | null;
+  /** 该版本的 Release 更新说明（Markdown）；早期安装的版本可能没有 */
+  changelog: string | null;
+  installed_at: string | null;
+  /** 版本目录磁盘占用（字节）；baseline 为 null */
+  size_bytes: number | null;
+  /**
+   * 数据兼容判定：
+   *   switch  —— 数据结构一致，直接切换，数据全保留；
+   *   restore —— 跨过了数据库升级，需恢复对应时点的自动备份（此后数据丢失）；
+   *   unknown —— 无可对时的备份，切换后数据行为不保证
+   */
+  schema_action: "switch" | "restore" | "unknown" | string;
+  /** schema_action=restore 时，将被恢复的备份的备份时间 */
+  backup_taken_at: string | null;
+}
+
+export interface RollbackOptionsView {
+  /** 候选目标，新版本在前；不含当前正在运行的版本 */
+  targets: RollbackTargetView[];
+  /** versions/ 目录总磁盘占用（字节） */
+  versions_dir_bytes: number;
+  /** 当前的本地保留版本数设置 */
+  keep_versions: number;
+}
+
+export function getRollbackOptions(): Promise<RollbackOptionsView> {
+  return unwrap(
+    request<ApiEnvelope<RollbackOptionsView>>("/app/update/rollback/options"),
+  );
+}
+
+/** 回退到指定版本（"baseline" = 镜像内置版本）；返回后端的中文结果说明。 */
+export async function rollbackTo(target: string, restoreBackup: boolean): Promise<string> {
+  const envelope = await request<ApiEnvelope<null>>("/app/update/rollback", {
+    method: "POST",
+    body: JSON.stringify({ target, restore_backup: restoreBackup }),
+  });
   return envelope.message;
+}
+
+/** 设置本地保留的版本目录数（立即按新策略清理）。 */
+export async function saveUpdateRetention(keepVersions: number): Promise<void> {
+  await request<ApiEnvelope<null>>("/app/update/retention", {
+    method: "PUT",
+    body: JSON.stringify({ keep_versions: keepVersions }),
+  });
 }
 
 /** 检查 NER 模型更新的结果（POST /app/update/model/check）。 */

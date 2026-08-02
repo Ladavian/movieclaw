@@ -14,6 +14,7 @@ import {
   PlusIcon,
   TrashIcon,
 } from "@/components/icons";
+import { AppUpdateEntry } from "@/components/app-update-entry";
 import { NoticeCenter } from "@/components/notice-center";
 import { UserMenu } from "@/components/user-menu";
 import { useAgentConversations } from "@/lib/agent-conversations";
@@ -171,6 +172,9 @@ export function Sidebar({
           })}
           {/* 待处理事项：常态零渲染，有"需要用户行动"的运行时故障才亮起 */}
           <NoticeCenter collapsed={collapsed} />
+          {/* 更新入口：同样常态零渲染。刻意与待处理事项分开——"有新版可用"
+              不是故障，不该混进告警队列（理由见 app-update-entry 模块注释） */}
+          <AppUpdateEntry collapsed={collapsed} onOpen={() => onOpenSettings("app")} />
         </div>
 
         {/* 分组：最近会话（真实 Agent 会话，按最近更新排序；折叠时整组隐藏） */}

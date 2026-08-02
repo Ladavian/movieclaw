@@ -134,14 +134,28 @@ def test_apply_switches_current_and_prunes(updates_dir, tmp_path):
     # 首次更新没有 previous
     assert not (updates_dir / "previous").exists()
 
-    # 第二次更新：current → 新版本，previous → 旧版本，更早的版本被清理
+    # 第二次更新：current → 新版本，previous → 旧版本；保留策略 keep_versions=2
+    # 时最早的版本被清理（默认 5 则会保留，供回退选择器使用）
     manifest2 = _make_manifest(tmp_path / "dl2", "0.3.0")
     app_update._apply_downloaded(manifest2, tmp_path / "dl2")
     manifest3 = _make_manifest(tmp_path / "dl3", "0.4.0")
-    app_update._apply_downloaded(manifest3, tmp_path / "dl3")
+    app_update._apply_downloaded(manifest3, tmp_path / "dl3", keep_versions=2)
     assert Path(updates_dir / "current").resolve().name == "v0.4.0"
     assert Path(updates_dir / "previous").resolve().name == "v0.3.0"
     assert not (updates_dir / "versions" / "v0.2.0").exists()
+
+
+def test_apply_retains_versions_within_keep_limit(updates_dir, tmp_path):
+    """默认保留策略（5 个）下，历史版本目录留在盘上供回退选择器使用。"""
+    for i, ver in enumerate(("0.2.0", "0.3.0", "0.4.0")):
+        manifest = _make_manifest(tmp_path / f"dl{i}", ver)
+        app_update._apply_downloaded(manifest, tmp_path / f"dl{i}")
+    assert (updates_dir / "versions" / "v0.2.0").is_dir()
+    assert (updates_dir / "versions" / "v0.3.0").is_dir()
+    assert (updates_dir / "versions" / "v0.4.0").is_dir()
+    # release-info 随版本目录落盘（这里没传 release_info，也要有占位记录）
+    info = (updates_dir / "versions" / "v0.4.0" / "release-info.json").read_text("utf-8")
+    assert '"version": "0.4.0"' in info
 
 
 def test_apply_clears_bad_markers_and_backs_up_db(updates_dir, tmp_path):
@@ -298,6 +312,17 @@ def test_apply_skips_bad_current_as_previous_and_gc_markers(updates_dir, tmp_pat
     assert not (state / "failures-0.2.0").exists()
 
 
+def test_status_exposes_previous_version(updates_dir, tmp_path, monkeypatch):
+    """有可回退目标时，状态里给出具体版本号——回退 UI 要向用户明示落点。"""
+    app_update._apply_downloaded(_make_manifest(tmp_path / "d1", "0.2.0"), tmp_path / "d1")
+    app_update._apply_downloaded(_make_manifest(tmp_path / "d2", "0.3.0"), tmp_path / "d2")
+    monkeypatch.setenv("MOVIECLAW_OVERLAY_VERSION", "0.3.0")
+
+    status = app_update.build_status()
+    assert status.has_previous is True
+    assert status.previous_version == "0.2.0"
+
+
 def test_status_exposes_inactive_overlay(updates_dir, tmp_path, monkeypatch):
     """current 指向的版本没在运行时，状态页外显原因（bad 回落场景）。"""
     app_update._apply_downloaded(_make_manifest(tmp_path / "d1", "0.2.0"), tmp_path / "d1")
@@ -311,6 +336,181 @@ def test_status_exposes_inactive_overlay(updates_dir, tmp_path, monkeypatch):
     assert status.inactive_overlay_version == "0.3.0"
     assert "启动失败" in (status.inactive_overlay_reason or "")
     assert app_update._is_marked_bad("0.3.0") is True
+
+
+# ---------------------------------------------------------------------------
+# 多版本回退选择器与数据兼容判定
+# ---------------------------------------------------------------------------
+
+
+def _make_db(path: Path, rev: str) -> None:
+    """造一个带 alembic_version 表的最小 SQLite 库。"""
+    import sqlite3
+
+    conn = sqlite3.connect(path)
+    conn.execute("CREATE TABLE IF NOT EXISTS alembic_version (version_num TEXT)")
+    conn.execute("DELETE FROM alembic_version")
+    conn.execute("INSERT INTO alembic_version VALUES (?)", (rev,))
+    conn.commit()
+    conn.close()
+
+
+def _make_backup(updates_dir: Path, version: str, rev: str, stamp: str) -> Path:
+    """按真实命名与边车格式伪造一份「离开 version 时」的备份。"""
+    backup_dir = updates_dir / "backup"
+    backup_dir.mkdir(parents=True, exist_ok=True)
+    backup = backup_dir / f"movieclaw-v{version}-{stamp}.db"
+    _make_db(backup, rev)
+    sidecar = {"from_version": version, "alembic_rev": rev, "taken_at": "2026-08-01T10:00:00"}
+    backup.with_name(backup.name + ".json").write_text(json.dumps(sidecar), encoding="utf-8")
+    return backup
+
+
+def test_backup_writes_sidecar_with_version_and_rev(updates_dir, tmp_path):
+    db = Path(get_settings().database_url.split(":///", 1)[1])
+    _make_db(db, "rev-abc")
+    app_update._backup_database(updates_dir)
+    backups = list((updates_dir / "backup").glob("movieclaw-*.db"))
+    assert len(backups) == 1
+    sidecar = json.loads(backups[0].with_name(backups[0].name + ".json").read_text("utf-8"))
+    assert sidecar["from_version"] == app_update.__version__
+    assert sidecar["alembic_rev"] == "rev-abc"
+    assert sidecar["taken_at"]
+
+
+def test_rollback_options_classifies_schema_action(updates_dir, tmp_path, monkeypatch):
+    """三种数据兼容判定：迁移位置没变 → switch；变了但有对时备份 → restore；
+    无备份 → unknown。正在运行的版本与标坏的版本不进候选。"""
+    db = Path(get_settings().database_url.split(":///", 1)[1])
+    _make_db(db, "rev-live")
+
+    for i, ver in enumerate(("0.2.0", "0.3.0", "0.4.0", "0.5.0")):
+        app_update._apply_downloaded(_make_manifest(tmp_path / f"d{i}", ver), tmp_path / f"d{i}")
+    monkeypatch.setenv("MOVIECLAW_OVERLAY_VERSION", "0.5.0")
+
+    (updates_dir / "backup").mkdir(exist_ok=True)
+    for old in (updates_dir / "backup").glob("*"):
+        old.unlink()  # 清掉 _apply_downloaded 产生的真实备份，用伪造的精确控制
+    _make_backup(updates_dir, "0.4.0", "rev-live", "20260801-100000")  # 同 rev → switch
+    _make_backup(updates_dir, "0.3.0", "rev-old", "20260801-090000")  # 异 rev → restore
+    # 0.2.0 无备份 → unknown
+
+    view = app_update._build_rollback_options("0.1.0", 5)
+    by_version = {t.version: t for t in view.targets if t.kind == "version"}
+    assert set(by_version) == {"0.4.0", "0.3.0", "0.2.0"}  # 0.5.0 在运行，不列
+    assert by_version["0.4.0"].schema_action == "switch"
+    assert by_version["0.3.0"].schema_action == "restore"
+    assert by_version["0.3.0"].backup_taken_at == "2026-08-01T10:00:00"
+    assert by_version["0.2.0"].schema_action == "unknown"
+    baseline = next(t for t in view.targets if t.kind == "baseline")
+    assert baseline.version == "0.1.0"
+    assert view.versions_dir_bytes > 0
+
+
+def test_rollback_to_specific_version_swaps_links(updates_dir, tmp_path, monkeypatch, no_restart):
+    for i, ver in enumerate(("0.2.0", "0.3.0", "0.4.0")):
+        app_update._apply_downloaded(_make_manifest(tmp_path / f"d{i}", ver), tmp_path / f"d{i}")
+    monkeypatch.setenv("MOVIECLAW_OVERLAY_VERSION", "0.4.0")
+    app_update.reset_progress_for_tests()
+
+    message = app_update.rollback_to("0.2.0", restore_backup=False)
+    assert "v0.2.0" in message
+    assert Path(updates_dir / "current").resolve().name == "v0.2.0"
+    # previous ← 回退前正在运行的版本：一步切回的撤销路径
+    assert Path(updates_dir / "previous").resolve().name == "v0.4.0"
+    assert not (updates_dir / "state" / "restore-pending.json").exists()
+    assert no_restart == [43]
+
+
+def test_rollback_to_with_restore_stages_pending(updates_dir, tmp_path, monkeypatch, no_restart):
+    db = Path(get_settings().database_url.split(":///", 1)[1])
+    _make_db(db, "rev-live")
+    for i, ver in enumerate(("0.2.0", "0.3.0")):
+        app_update._apply_downloaded(_make_manifest(tmp_path / f"d{i}", ver), tmp_path / f"d{i}")
+    monkeypatch.setenv("MOVIECLAW_OVERLAY_VERSION", "0.3.0")
+    app_update.reset_progress_for_tests()
+    backup = _make_backup(updates_dir, "0.2.0", "rev-old", "20260801-100000")
+
+    app_update.rollback_to("0.2.0", restore_backup=True)
+    pending = json.loads((updates_dir / "state" / "restore-pending.json").read_text("utf-8"))
+    assert pending["backup"] == str(backup)
+    assert no_restart == [43]
+
+
+def test_rollback_to_restore_requires_backup(updates_dir, tmp_path, monkeypatch, no_restart):
+    for i, ver in enumerate(("0.2.0", "0.3.0")):
+        app_update._apply_downloaded(_make_manifest(tmp_path / f"d{i}", ver), tmp_path / f"d{i}")
+    monkeypatch.setenv("MOVIECLAW_OVERLAY_VERSION", "0.3.0")
+    app_update.reset_progress_for_tests()
+    for old in (updates_dir / "backup").glob("*"):
+        old.unlink()
+
+    with pytest.raises(BadRequestException, match="没有找到"):
+        app_update.rollback_to("0.2.0", restore_backup=True)
+    assert no_restart == []
+
+
+def test_rollback_to_baseline_unlinks_current(updates_dir, tmp_path, monkeypatch, no_restart):
+    app_update._apply_downloaded(_make_manifest(tmp_path / "d", "0.2.0"), tmp_path / "d")
+    monkeypatch.setenv("MOVIECLAW_OVERLAY_VERSION", "0.2.0")
+    app_update.reset_progress_for_tests()
+
+    message = app_update.rollback_to("baseline", restore_backup=False)
+    assert "镜像内置" in message
+    assert not (updates_dir / "current").exists()
+    assert Path(updates_dir / "previous").resolve().name == "v0.2.0"
+    assert no_restart == [43]
+
+
+def test_execute_pending_restore_swaps_db(updates_dir, tmp_path):
+    db = Path(get_settings().database_url.split(":///", 1)[1])
+    _make_db(db, "rev-new")
+    backup = _make_backup(updates_dir, "0.2.0", "rev-old", "20260801-100000")
+    app_update._stage_restore(updates_dir, backup, "v0.2.0")
+
+    app_update.execute_pending_restore()
+    assert app_update._read_alembic_rev(db) == "rev-old"  # 已换成备份内容
+    assert not (updates_dir / "state" / "restore-pending.json").exists()
+    # 换库前把现库（rev-new）又归档了一份：恢复操作自身不是数据的单向门
+    archived = [
+        b for b in (updates_dir / "backup").glob("movieclaw-*.db")
+        if app_update._read_alembic_rev(b) == "rev-new"
+    ]
+    assert archived
+
+
+def test_execute_pending_restore_ignores_stale(updates_dir, tmp_path):
+    db = Path(get_settings().database_url.split(":///", 1)[1])
+    _make_db(db, "rev-new")
+    backup = _make_backup(updates_dir, "0.2.0", "rev-old", "20260801-100000")
+    state_dir = updates_dir / "state"
+    state_dir.mkdir(parents=True, exist_ok=True)
+    (state_dir / "restore-pending.json").write_text(
+        json.dumps({"backup": str(backup), "target": "v0.2.0", "requested_at": 1000.0}),
+        encoding="utf-8",
+    )
+
+    app_update.execute_pending_restore()
+    assert app_update._read_alembic_rev(db) == "rev-new"  # 陈旧暂存被忽略，库未动
+    assert not (state_dir / "restore-pending.json").exists()  # 且已被消费清除
+
+
+def test_prune_backups_keeps_restore_sources(updates_dir, tmp_path):
+    """仍保留在盘上的版本，各自最近一份「离开时」的备份不能被清——
+    它们是回退恢复源；其余按时间保留最近 5 份。"""
+    for i in range(8):
+        _make_backup(updates_dir, "0.9.9", "rev-x", f"20260801-10000{i}")
+    old_restore_source = _make_backup(updates_dir, "0.2.0", "rev-old", "20260701-000000")
+    import os as _os
+    import time as _time
+
+    stale = _time.time() - 86400
+    _os.utime(old_restore_source, (stale, stale))  # 比 5 份池子里的都老
+
+    app_update._prune_backups(updates_dir, {"0.2.0"})
+    remaining = {b.name for b in (updates_dir / "backup").glob("movieclaw-*.db")}
+    assert old_restore_source.name in remaining  # 0.2.0 目录还在 → 恢复源保留
+    assert len(remaining) == 6  # 最近 5 份 + 1 份恢复源
 
 
 def test_rollback_on_baseline_rejected(updates_dir, no_restart):
@@ -569,52 +769,111 @@ async def test_startup_check_skipped_outside_docker(updates_dir, monkeypatch):
     assert app_update._startup_check_task is None
 
 
-class _StubResult:
-    def __init__(self, row):
-        self._row = row
-
-    def scalar_one_or_none(self):
-        return self._row
+# ---------------------------------------------------------------------------
+# 更新检查结果快照（侧栏更新徽标与「设置 → 应用」进页自动提示的数据源）
+# ---------------------------------------------------------------------------
 
 
-class _StubSession:
-    def __init__(self, row):
-        self._row = row
+@pytest.fixture
+def update_state(monkeypatch):
+    """把快照读写替换成内存实例，免去建库与配置存储单例的初始化。"""
+    from movieclaw_api.settings.schemas import AppUpdateStateSetting
 
-    async def execute(self, _query):
-        return _StubResult(self._row)
+    state = AppUpdateStateSetting()
+
+    async def fake_get():
+        return state
+
+    async def fake_save(value):
+        assert value is state
+
+    monkeypatch.setattr(app_update, "get_app_update_state", fake_get)
+    monkeypatch.setattr(app_update, "save_app_update_state", fake_save)
+    return state
 
 
-class _StubNotice:
-    def __init__(self, status: str, payload: dict):
-        self.status = status
-        self.payload = payload
+def _check_view(**kwargs) -> app_update.UpdateCheckView:
+    base = dict(
+        current_version=app_update.__version__,
+        latest_version="9.9.9",
+        update_available=True,
+        compatible=True,
+        requires_runtime=1,
+        changelog="## v9.9.9",
+        published_at="2026-08-01T00:00:00Z",
+        latest_known_bad=False,
+    )
+    return app_update.UpdateCheckView(**{**base, **kwargs})
 
 
 @pytest.mark.asyncio
-async def test_relight_dismissed_only_on_version_change(monkeypatch):
-    from movieclaw_db.models import NoticeStatus
+async def test_record_app_check_writes_snapshot(update_state):
+    await app_update._record_app_check(_check_view())
+    pending = await app_update.read_pending()
+    assert pending.app_version == "9.9.9"
+    assert pending.app_compatible is True
+    assert pending.app_changelog == "## v9.9.9"
+    assert pending.checked_at
 
-    resolved: list[str] = []
 
-    async def fake_resolve(_session, *, dedupe_key=None, prefix=None):
-        resolved.append(dedupe_key or prefix)
-        return 1
+@pytest.mark.asyncio
+async def test_record_app_check_clears_snapshot_when_up_to_date(update_state):
+    await app_update._record_app_check(_check_view())
+    # 装完新版后再查：快照必须熄灭，否则侧栏徽标会永远亮着
+    await app_update._record_app_check(_check_view(update_available=False))
+    assert (await app_update.read_pending()).app_version is None
 
-    monkeypatch.setattr(app_update, "resolve_notices", fake_resolve)
 
-    # 没有历史提醒 / dismiss 的就是当前版本：不动
-    await app_update._relight_dismissed_on_change(_StubSession(None), "k", "v", "0.3.0")
-    row_same = _StubNotice(NoticeStatus.DISMISSED.value, {"v": "0.3.0"})
-    await app_update._relight_dismissed_on_change(_StubSession(row_same), "k", "v", "0.3.0")
-    assert resolved == []
+@pytest.mark.asyncio
+async def test_read_pending_filters_stale_snapshot_after_update(update_state):
+    """装完新版重启后的窗口期：快照还写着"发现新版本 vX"、但当前运行的已是
+    vX（下一轮检查才会清快照）。读取必须按当前版本过滤，徽标立刻熄灭。"""
+    await app_update._record_app_check(
+        _check_view(latest_version=app_update.__version__)
+    )
+    pending = await app_update.read_pending()
+    assert pending.app_version is None
+    assert pending.app_changelog == ""
 
-    # dismiss 的是旧版本、新版本到来：清场以便重新点亮
-    row_old = _StubNotice(NoticeStatus.DISMISSED.value, {"v": "0.3.0"})
-    await app_update._relight_dismissed_on_change(_StubSession(row_old), "k", "v", "0.4.0")
-    assert resolved == ["k"]
 
-    # 活跃（未 dismiss）的提醒版本变化：upsert 自己会刷新内容，不清场
-    row_active = _StubNotice("active", {"v": "0.3.0"})
-    await app_update._relight_dismissed_on_change(_StubSession(row_active), "k", "v", "0.4.0")
-    assert resolved == ["k"]
+@pytest.mark.asyncio
+async def test_read_pending_filters_stale_model_snapshot(update_state, monkeypatch):
+    """模型侧同理：快照里的 tag 不比当前生效的新就不再提醒。"""
+    view = app_update.ModelUpdateCheckView(
+        current_tag=None,
+        latest_tag="torrent-ner-v2",
+        update_available=True,
+        installable=True,
+        published_at="",
+    )
+    await app_update._record_model_check(view)
+    # 当前无法识别模型（较早的镜像）：提醒照常
+    monkeypatch.setattr(app_update, "_current_model_tag", lambda: None)
+    assert (await app_update.read_pending()).model_tag == "torrent-ner-v2"
+    # 装完 v2 重启后：快照未清也不再提醒
+    monkeypatch.setattr(app_update, "_current_model_tag", lambda: "torrent-ner-v2")
+    assert (await app_update.read_pending()).model_tag is None
+
+
+@pytest.mark.asyncio
+async def test_record_app_check_skips_known_bad_version(update_state):
+    """曾在本机连续启动失败被回落的版本不提醒——让用户再装一次刚坑过自己的版本是误导。"""
+    await app_update._record_app_check(_check_view(latest_known_bad=True))
+    assert (await app_update.read_pending()).app_version is None
+
+
+@pytest.mark.asyncio
+async def test_record_model_check_requires_installable(update_state):
+    """没带更新清单的模型发布装不进来，提醒了也没有对应操作，按无更新处理。"""
+    view = app_update.ModelUpdateCheckView(
+        current_tag="torrent-ner-v1",
+        latest_tag="torrent-ner-v2",
+        update_available=True,
+        installable=False,
+        published_at="",
+    )
+    await app_update._record_model_check(view)
+    assert (await app_update.read_pending()).model_tag is None
+
+    await app_update._record_model_check(view.model_copy(update={"installable": True}))
+    assert (await app_update.read_pending()).model_tag == "torrent-ner-v2"

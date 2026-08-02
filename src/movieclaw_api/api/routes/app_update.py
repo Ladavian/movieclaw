@@ -1,8 +1,9 @@
-"""应用内更新接口（「设置 → 关于与更新」页的后端）。
+"""应用内更新接口（「设置 → 应用」页的后端）。
 
-五个端点（实现全部在 services/app_update.py，本文件只做参数进出）：
+端点（实现全部在 services/app_update.py，本文件只做参数进出）：
 - GET  /app/update/status    —— 当前版本/来源/是否支持更新/可否回退；
-- POST /app/update/check     —— 查 GitHub 最新 Release 并比对；
+- POST /app/update/check     —— 查 GitHub 最新 Release 并比对（结果落快照）；
+- GET  /app/update/pending   —— 读快照（不触网）：侧栏更新徽标与进页自动提示的数据源；
 - POST /app/update/apply     —— 发起更新（后台执行，进度轮询下方接口）；
 - GET  /app/update/progress  —— 更新执行进度；
 - POST /app/update/rollback  —— 回退到上一版本（或镜像基线）；
@@ -15,8 +16,12 @@ from fastapi import APIRouter
 
 from movieclaw_api.schemas.app_update import (
     ModelUpdateCheckView,
+    PendingUpdateView,
+    RollbackOptionsView,
+    RollbackPayload,
     UpdateCheckView,
     UpdateProgressView,
+    UpdateRetentionPayload,
     UpdateStatusView,
 )
 from movieclaw_api.schemas.response import ApiResponse, ok
@@ -42,7 +47,17 @@ async def get_update_status() -> ApiResponse[UpdateStatusView]:
     operation_id="app.update_check",
 )
 async def check_update() -> ApiResponse[UpdateCheckView]:
-    return ok(await app_update.check_update())
+    return ok(await app_update.check_update_now())
+
+
+@router.get(
+    "/pending",
+    response_model=ApiResponse[PendingUpdateView],
+    summary="读取待更新快照（最近一次检查的结论，不触网）",
+    operation_id="app.update_pending",
+)
+async def get_pending_update() -> ApiResponse[PendingUpdateView]:
+    return ok(await app_update.read_pending())
 
 
 @router.post(
@@ -73,7 +88,7 @@ async def get_update_progress() -> ApiResponse[UpdateProgressView]:
     operation_id="app.update_model_check",
 )
 async def check_model_update() -> ApiResponse[ModelUpdateCheckView]:
-    return ok(await app_update.check_model_update())
+    return ok(await app_update.check_model_update_now())
 
 
 @router.post(
@@ -87,12 +102,37 @@ async def apply_model_update() -> ApiResponse[UpdateProgressView]:
     return ok(view, message="模型更新已开始，可通过进度接口跟踪")
 
 
+@router.get(
+    "/rollback/options",
+    response_model=ApiResponse[RollbackOptionsView],
+    summary="回退选择器数据：本地保留的历史版本、数据兼容判定与保留策略",
+    operation_id="app.update_rollback_options",
+)
+async def get_rollback_options() -> ApiResponse[RollbackOptionsView]:
+    return ok(await app_update.rollback_options())
+
+
 @router.post(
     "/rollback",
     response_model=ApiResponse[None],
-    summary="回退到上一版本（无上一版本时回落镜像内置版本）",
+    summary="回退到指定版本/镜像内置版本（不带 target 时回退上一版本）",
     operation_id="app.update_rollback",
 )
-async def rollback_update() -> ApiResponse[None]:
-    message = app_update.rollback()
+async def rollback_update(payload: RollbackPayload | None = None) -> ApiResponse[None]:
+    if payload is not None and payload.target:
+        message = app_update.rollback_to(payload.target, payload.restore_backup)
+    else:
+        # 旧版兼容语义：previous 互换，无 previous 回落基线
+        message = app_update.rollback()
     return ok(None, message=message)
+
+
+@router.put(
+    "/retention",
+    response_model=ApiResponse[None],
+    summary="设置本地保留的版本目录数（立即按新策略清理）",
+    operation_id="app.update_retention",
+)
+async def set_update_retention(payload: UpdateRetentionPayload) -> ApiResponse[None]:
+    value = await app_update.save_update_retention(payload.keep_versions)
+    return ok(None, message=f"本地将保留最近 {value} 个版本")

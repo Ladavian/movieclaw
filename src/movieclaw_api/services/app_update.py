@@ -37,26 +37,34 @@ import re
 import shutil
 import tarfile
 import threading
+import time
 from dataclasses import dataclass, field
 from datetime import datetime
+from functools import cmp_to_key
 from pathlib import Path
 
 import httpx
-from sqlmodel import select
 
 from movieclaw_api import __version__
 from movieclaw_api.core.config import get_settings
 from movieclaw_api.exceptions import BadRequestException
 from movieclaw_api.schemas.app_update import (
     ModelUpdateCheckView,
+    PendingUpdateView,
+    RollbackOptionsView,
+    RollbackTargetView,
     UpdateCheckView,
     UpdateProgressView,
     UpdateStatusView,
 )
 from movieclaw_api.services.app_config import FULL_RESTART_EXIT_CODE, schedule_restart
-from movieclaw_api.services.system_notice import resolve_notices, upsert_notice
-from movieclaw_db.engine import get_database
-from movieclaw_db.models import NoticeSeverity, NoticeStatus, SystemNotice
+from movieclaw_api.settings.schemas import (
+    get_app_update_prefs,
+    get_app_update_state,
+    save_app_update_prefs,
+    save_app_update_state,
+)
+from movieclaw_db.models import utcnow
 from movieclaw_db.models.scheduled_task import TriggerType
 from movieclaw_net import egress_transport, resolve_proxy_url
 from movieclaw_scheduler import register_task
@@ -66,6 +74,8 @@ logger = logging.getLogger("movieclaw_api.app_update")
 # Release 产物文件名（与 scripts/build-release-artifacts.sh 的产出一致）
 _ARTIFACT_NAMES = ("app-backend.tar.gz", "app-web.tar.gz")
 _MANIFEST_NAME = "manifest.json"
+# 版本目录里的 Release 元信息（安装时落盘，回退选择器离线展示更新说明）
+_RELEASE_INFO_NAME = "release-info.json"
 # 数据库备份保留份数（SQLite 单文件，成本低，多留几份）
 _BACKUP_KEEP = 5
 _HTTP_TIMEOUT = httpx.Timeout(30.0, connect=15.0)
@@ -227,7 +237,14 @@ def build_status() -> UpdateStatusView:
         p.name.removeprefix("bad-") for p in state_dir.glob("bad-*")
     ) if state_dir.is_dir() else []
     previous = updates / "previous"
-    has_previous = previous.is_symlink() and _overlay_state(Path(previous))[1]
+    # 回退目标的具体版本号：UI 要向用户明示「回退到 v 几」而不是含糊的
+    # 「上一版本」——回退会全量重启，用户必须先知道自己会落在哪个版本上
+    previous_version = (
+        _overlay_state(Path(previous))[0]
+        if previous.is_symlink() and _overlay_state(Path(previous))[1]
+        else None
+    )
+    has_previous = previous_version is not None
 
     # 盘上 current 指向的版本与实际运行版本不一致时，把「为什么没生效」外显：
     # 否则 runtime 不匹配 / bad 回落场景下，用户昨天还在的版本会凭空消失
@@ -248,6 +265,7 @@ def build_status() -> UpdateStatusView:
         runtime_version=_runtime_version(),
         can_update=_runtime_version() is not None,
         has_previous=has_previous,
+        previous_version=previous_version,
         bad_versions=list(bad_versions),
         model_tag=_current_model_tag(),
         inactive_overlay_version=inactive_version,
@@ -512,6 +530,34 @@ def _validate_layout(version_dir: Path) -> None:
             raise RuntimeError(f"更新产物解包后布局异常（缺少 {rel}），已放弃本次更新")
 
 
+def _db_path() -> Path | None:
+    """SQLite 数据库文件路径；非 SQLite 部署返回 None。"""
+    url = get_settings().database_url
+    if "sqlite" not in url or ":///" not in url:
+        return None
+    return Path(url.split(":///", 1)[1])
+
+
+def _read_alembic_rev(db_path: Path) -> str | None:
+    """读数据库当前的 alembic 迁移位置（alembic_version 表）；读不到返回 None。
+
+    它是回退数据兼容判定的锚点：备份时记下当时的迁移位置，回退时与现库比对
+    ——相同说明期间没跑过迁移，代码可以直接切；不同说明数据结构已前进，
+    旧代码不认识新结构，必须恢复备份。
+    """
+    import sqlite3
+
+    try:
+        conn = sqlite3.connect(db_path)
+        try:
+            row = conn.execute("SELECT version_num FROM alembic_version").fetchone()
+            return str(row[0]) if row else None
+        finally:
+            conn.close()
+    except sqlite3.Error:
+        return None
+
+
 def _backup_database(updates: Path) -> None:
     """切换版本前备份 SQLite（非 SQLite 部署跳过）。迁移单向，备份是回退跨
     版本时恢复数据的唯一通道。
@@ -519,14 +565,17 @@ def _backup_database(updates: Path) -> None:
     必须用 sqlite3 的 backup API 而不是拷文件：数据库开着 WAL，已提交但
     未 checkpoint 的事务都在 -wal 文件里，直接拷主文件必然丢这部分数据，
     撞上 checkpoint 还可能拷出损坏文件。备份失败视为致命，中止本次更新。
+
+    每份备份带一个同名 .json 边车，记录「离开哪个版本 + 当时的迁移位置」：
+    更新 vX → vY 前备的这份库，就是 vX 能完美运行的数据快照——回退到 vX 时
+    据此判定能否直接切换（迁移位置没变）或需要恢复这份备份（跨了迁移）。
     """
     import sqlite3
 
-    url = get_settings().database_url
-    if "sqlite" not in url or ":///" not in url:
+    db_path = _db_path()
+    if db_path is None:
         logger.info("当前数据库不是 SQLite，跳过更新前自动备份")
         return
-    db_path = Path(url.split(":///", 1)[1])
     if not db_path.is_file():
         return
     backup_dir = updates / "backup"
@@ -548,16 +597,83 @@ def _backup_database(updates: Path) -> None:
         raise RuntimeError(
             f"更新前的数据库自动备份失败（{exc}），为保护数据已中止本次更新"
         ) from exc
+    sidecar = {
+        "from_version": __version__,
+        "alembic_rev": _read_alembic_rev(db_path),
+        "taken_at": datetime.now().astimezone().isoformat(timespec="seconds"),
+    }
+    target.with_name(target.name + ".json").write_text(
+        json.dumps(sidecar, ensure_ascii=False), encoding="utf-8"
+    )
     logger.info("已在更新前备份数据库：%s", target)
-    backups = sorted(backup_dir.glob("movieclaw-*.db"), key=lambda p: p.stat().st_mtime)
-    for old in backups[:-_BACKUP_KEEP]:
-        old.unlink(missing_ok=True)
 
 
-def _apply_downloaded(manifest: dict, download_dir: Path) -> None:
+def _backup_from_version(backup: Path) -> str | None:
+    """从备份读它离开的版本号：优先边车，缺边车时按文件名解析（老备份）。"""
+    sidecar = backup.with_name(backup.name + ".json")
+    if sidecar.is_file():
+        try:
+            version = json.loads(sidecar.read_text(encoding="utf-8")).get("from_version")
+            if version:
+                return str(version)
+        except (OSError, json.JSONDecodeError):
+            pass
+    # 文件名形如 movieclaw-v{version}-{YYYYmmdd}-{HHMMSS}.db，掐头去尾取中段
+    name = backup.name
+    if not (name.startswith("movieclaw-v") and name.endswith(".db")):
+        return None
+    core = name[len("movieclaw-v") : -len(".db")]
+    parts = core.rsplit("-", 2)
+    return parts[0] if len(parts) == 3 else None
+
+
+def _latest_backup_for(updates: Path, version: str) -> Path | None:
+    """找「离开某版本时」最近的一份备份（回退到该版本时的数据恢复源）。"""
+    backup_dir = updates / "backup"
+    if not backup_dir.is_dir():
+        return None
+    candidates = [
+        p for p in backup_dir.glob("movieclaw-*.db") if _backup_from_version(p) == version
+    ]
+    return max(candidates, key=lambda p: p.stat().st_mtime, default=None)
+
+
+def _prune_backups(updates: Path, retained_versions: set[str]) -> None:
+    """清理备份：仍保留在盘上的版本各留最近一份「离开时」的备份（它们是
+    对应版本的回退恢复源，版本目录还在就不能删），其余按时间留最近
+    ``_BACKUP_KEEP`` 份。边车与备份文件同生共死。"""
+    backup_dir = updates / "backup"
+    if not backup_dir.is_dir():
+        return
+    backups = sorted(
+        backup_dir.glob("movieclaw-*.db"), key=lambda p: p.stat().st_mtime, reverse=True
+    )
+    keep: set[Path] = set(backups[:_BACKUP_KEEP])
+    matched: set[str] = set()
+    for backup in backups:  # 新的在前，每个版本命中的第一份就是最近一份
+        version = _backup_from_version(backup)
+        if version and version in retained_versions and version not in matched:
+            keep.add(backup)
+            matched.add(version)
+    for backup in backups:
+        if backup not in keep:
+            backup.unlink(missing_ok=True)
+            backup.with_name(backup.name + ".json").unlink(missing_ok=True)
+
+
+def _apply_downloaded(
+    manifest: dict,
+    download_dir: Path,
+    *,
+    keep_versions: int = 5,
+    release_info: dict | None = None,
+) -> None:
     """校验、解包并切换到已下载的版本（下载完成后的纯本地流程，可独立测试）。
 
     download_dir 内应有 manifest["files"] 声明的全部产物文件。
+    ``keep_versions``：本地保留的版本目录数（含新装的这个），来自用户偏好。
+    ``release_info``：该版本的 Release 元信息（changelog/published_at），随
+    版本目录落盘——回退选择器要能离线展示每个历史版本的更新说明。
     """
     version = manifest["version"]
     updates = _updates_dir()
@@ -575,6 +691,18 @@ def _apply_downloaded(manifest: dict, download_dir: Path) -> None:
     _extract(download_dir / "app-web.tar.gz", partial_dir / "web")
     (partial_dir / _MANIFEST_NAME).write_bytes(manifest["raw"])
     _validate_layout(partial_dir)
+    (partial_dir / _RELEASE_INFO_NAME).write_text(
+        json.dumps(
+            {
+                "version": version,
+                "changelog": (release_info or {}).get("changelog") or "",
+                "published_at": (release_info or {}).get("published_at") or "",
+                "installed_at": datetime.now().astimezone().isoformat(timespec="seconds"),
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
 
     # 重新安装同一版本时清掉历史的坏标记/失败计数（用户显式重试即既往不咎）
     marker = _sanitize(version)
@@ -606,28 +734,56 @@ def _apply_downloaded(manifest: dict, download_dir: Path) -> None:
         _atomic_symlink(prev_target, updates / "previous")
     _atomic_symlink(final_dir, current)
 
-    # 只保留 current/previous 引用与运行中的版本目录，更早的清掉（磁盘不无限增长）
+    _prune_versions(updates, keep_versions=keep_versions, running=running)
+    logger.info("应用内更新已就绪：v%s，即将全量重启生效", version)
+
+
+def _prune_versions(updates: Path, *, keep_versions: int, running: str | None = None) -> None:
+    """清理版本目录：保留最近 ``keep_versions`` 个（按版本号新旧排序），
+    current/previous 指向的与正在运行的无条件保留（磁盘不无限增长，但
+    绝不能把正在使用的目录当垃圾清掉）。备份跟着版本走：目录还保留的
+    版本各留一份「离开时」的备份作为回退恢复源。"""
+    versions_dir = updates / "versions"
+    if not versions_dir.is_dir():
+        return
     referenced = set()
-    for link in (current, updates / "previous"):
+    for link in (updates / "current", updates / "previous"):
         if link.is_symlink():
             referenced.add(Path(os.readlink(link)).name)
+    if running is None:
+        running = os.environ.get("MOVIECLAW_OVERLAY_VERSION")
     if running:
         referenced.add(f"v{_sanitize(running)}")
-    for vdir in versions_dir.iterdir():
-        if vdir.is_dir() and vdir.name not in referenced:
+    dirs = [d for d in versions_dir.iterdir() if d.is_dir()]
+    # 版本号新的在前（_is_newer 的 semver 子集语义；解析失败的排最后）
+    dirs.sort(
+        key=cmp_to_key(
+            lambda a, b: -1
+            if _is_newer(a.name.removeprefix("v"), b.name.removeprefix("v"))
+            else (1 if _is_newer(b.name.removeprefix("v"), a.name.removeprefix("v")) else 0)
+        )
+    )
+    # 标坏的版本不占保留名额也不保留（它已不是可用的回退目标，是纯磁盘死重）；
+    # 除非它正被 current/previous 引用或正在运行——那是别处的问题，这里不动
+    healthy = [d for d in dirs if not _is_marked_bad(d.name.removeprefix("v"))]
+    keep_names = {d.name for d in healthy[: max(keep_versions, 1)]} | referenced
+    for vdir in dirs:
+        if vdir.name not in keep_names:
             shutil.rmtree(vdir, ignore_errors=True)
     # 状态标记跟着版本目录走：目录已清理的版本，其 bad/failures 标记一并清掉
     state_dir = updates / "state"
+    remaining = {v.name for v in versions_dir.iterdir() if v.is_dir()}
     if state_dir.is_dir():
-        remaining = {v.name for v in versions_dir.iterdir() if v.is_dir()}
         for marker in list(state_dir.glob("bad-*")) + list(state_dir.glob("failures-*")):
             marked_version = marker.name.split("-", 1)[1]
             if f"v{marked_version}" not in remaining:
                 marker.unlink(missing_ok=True)
-    logger.info("应用内更新已就绪：v%s，即将全量重启生效", version)
+    _prune_backups(updates, {name.removeprefix("v") for name in remaining})
 
 
-def _download_and_apply(manifest: dict) -> None:
+def _download_and_apply(
+    manifest: dict, *, keep_versions: int = 5, release_info: dict | None = None
+) -> None:
     """后台线程主体：下载产物 → _apply_downloaded → 触发全量重启。"""
     version = manifest["version"]
     settings = get_settings()
@@ -672,7 +828,9 @@ def _download_and_apply(manifest: dict) -> None:
                                     percent=min(done / total * 100, 100.0),
                                     target_version=version,
                                 )
-        _apply_downloaded(manifest, tmp_dir)
+        _apply_downloaded(
+            manifest, tmp_dir, keep_versions=keep_versions, release_info=release_info
+        )
         shutil.rmtree(tmp_dir, ignore_errors=True)
         _progress.set(
             "restarting",
@@ -705,7 +863,7 @@ async def start_update() -> UpdateProgressView:
         raise BadRequestException("已有更新正在进行中，请等待其完成")
     _progress.set("checking", "正在获取最新版本信息……", target_version=None)
     try:
-        _release, manifest = await _fetch_latest_release()
+        release, manifest = await _fetch_latest_release()
         if not _is_newer(manifest["version"], __version__):
             raise BadRequestException(f"当前已是最新版本（v{__version__}），无需更新")
         if manifest["requires_runtime"] != _runtime_version():
@@ -714,11 +872,20 @@ async def start_update() -> UpdateProgressView:
                 f"（需要 runtime {manifest['requires_runtime']}，"
                 f"当前镜像为 {_runtime_version()}），请升级 Docker 镜像完成本次更新"
             )
+        keep_versions = (await get_app_update_prefs()).keep_versions
     except BaseException:
         _progress.set("idle", target_version=None)
         raise
+    release_info = {
+        "changelog": release.get("body") or "",
+        "published_at": release.get("published_at") or "",
+    }
     thread = threading.Thread(
-        target=_download_and_apply, args=(manifest,), name="app-update", daemon=True
+        target=_download_and_apply,
+        args=(manifest,),
+        kwargs={"keep_versions": keep_versions, "release_info": release_info},
+        name="app-update",
+        daemon=True,
     )
     thread.start()
     return _progress.view()
@@ -952,25 +1119,116 @@ async def start_model_update() -> UpdateProgressView:
 
 
 # ---------------------------------------------------------------------------
+# 更新检查结果快照（前端更新提醒的唯一数据源）
+# ---------------------------------------------------------------------------
+# 提醒形态的产品决策：更新**不进「待处理事项」**。待处理事项的语义是「运行时
+# 故障，修好才会消失」，而「有新版可用」既不是故障、也不该被用户"处理掉"——
+# 混在一起会让红色告警入口天天亮着，真故障反而被淹没（告警疲劳）。
+#
+# 改用主流桌面产品的做法（Chrome 菜单圆点 / VS Code 齿轮角标 / macOS 系统设置
+# 徽标）：一个**常驻、不可忽略、不打断**的环境徽标，它只在有新版时存在，装了
+# 新版就自然消失，不需要用户做任何"清理"动作。徽标要能随时点亮，就不能每次
+# 都去打 GitHub，故这里把检查结论落成快照，前端只读快照（见 settings.schemas
+# 的 AppUpdateStateSetting 模块注释）。
+
+
+async def _record_app_check(view: UpdateCheckView) -> None:
+    """把一次应用更新检查的结论写进快照。
+
+    曾在本机连续启动失败被自动回落的版本按「无可用更新」记录：提醒用户去装
+    一个刚坑过自己的版本是误导，等修复版本发布后自然恢复提醒。
+    """
+    state = await get_app_update_state()
+    available = view.update_available and not view.latest_known_bad
+    state.checked_at = utcnow().isoformat()
+    state.app_latest_version = view.latest_version if available else ""
+    state.app_compatible = view.compatible if available else False
+    state.app_changelog = view.changelog if available else ""
+    state.app_published_at = view.published_at if available else ""
+    await save_app_update_state(state)
+
+
+async def _record_model_check(view: ModelUpdateCheckView) -> None:
+    """把一次模型更新检查的结论写进快照。
+
+    不携带更新清单的模型发布记为「无可用更新」：它装不进来，提醒了也没有
+    对应的操作，只会变成用户消不掉的噪声。
+    """
+    state = await get_app_update_state()
+    state.checked_at = utcnow().isoformat()
+    state.model_latest_tag = (
+        view.latest_tag if view.update_available and view.installable else ""
+    )
+    await save_app_update_state(state)
+
+
+async def check_update_now() -> UpdateCheckView:
+    """检查应用更新并记录结论（「检查更新」按钮与定时任务共用的入口）。
+
+    与裸的 ``check_update()`` 的区别只在于落快照：手动检查完，侧栏徽标要跟着
+    同步点亮/熄灭，不能出现「页面上说有新版、侧栏没反应」的割裂。
+    """
+    view = await check_update()
+    await _record_app_check(view)
+    return view
+
+
+async def check_model_update_now() -> ModelUpdateCheckView:
+    """检查 NER 模型更新并记录结论（同 ``check_update_now`` 的理由）。"""
+    view = await check_model_update()
+    await _record_model_check(view)
+    return view
+
+
+async def clear_legacy_update_notices() -> None:
+    """清掉旧版写进「待处理事项」的更新提醒（一次性，幂等，启动时调用）。
+
+    v0.2.x 之前更新提醒是 dedupe_key 以 ``app_update:`` 开头的告警行。改成侧栏
+    徽标后，再没有任何代码路径会去 resolve 它们——存量部署升上来会看到一条
+    永远消不掉的「发现新版本」告警。这里按前缀消退一次；表里没有这类行时
+    resolve_notices 直接短路返回 0，对新装用户零开销。
+    """
+    from movieclaw_api.services.system_notice import resolve_notices
+    from movieclaw_db.engine import get_database
+
+    try:
+        async with get_database().session() as session:
+            await resolve_notices(session, prefix="app_update:")
+    except Exception:
+        # 清场失败只是留下一条陈旧告警，绝不该拖垮启动
+        logger.warning("清理旧版更新提醒失败（不影响启动）", exc_info=True)
+
+
+async def read_pending() -> PendingUpdateView:
+    """读取待更新快照（纯读库，不触网）。
+
+    读取时按**当前运行版本**兜底过滤：装完新版重启后，快照里还留着
+    "发现新版本 vX"（要等重启后 3 分钟的启动首查才会清掉，离线则更久），
+    但此刻运行的就是 vX——不过滤的话徽标在更新完成后还会亮着几分钟，
+    用户刚完成的动作看起来"没生效"。比较当前版本是纯本地判断，零成本。
+    """
+    state = await get_app_update_state()
+    app_version = state.app_latest_version or None
+    if app_version is not None and not _is_newer(app_version, __version__):
+        app_version = None
+    model_tag = state.model_latest_tag or None
+    if model_tag is not None and _model_tag_num(model_tag) <= _model_tag_num(
+        _current_model_tag()
+    ):
+        model_tag = None
+    return PendingUpdateView(
+        app_version=app_version,
+        app_compatible=state.app_compatible if app_version else False,
+        app_changelog=state.app_changelog if app_version else "",
+        app_published_at=state.app_published_at if app_version else "",
+        model_tag=model_tag,
+        checked_at=state.checked_at or None,
+    )
+
+
+# ---------------------------------------------------------------------------
 # 定时自动检查（只提醒、绝不自动安装：更新会重启服务，须由用户主动触发）
 # ---------------------------------------------------------------------------
-
-_NOTICE_KEY_APP = "app_update:new-version"
-_NOTICE_KEY_MODEL = "app_update:new-model"
-
-
-async def _relight_dismissed_on_change(session, dedupe_key: str, field: str, value: str) -> None:
-    """用户 dismiss 的是「某个具体新版本」的提醒，不是「永远别提醒我更新」：
-    再有更新的版本发布时，把沉默的旧提醒清场，让 upsert 以新内容重新点亮。"""
-    row = (
-        await session.execute(select(SystemNotice).where(SystemNotice.dedupe_key == dedupe_key))
-    ).scalar_one_or_none()
-    if (
-        row is not None
-        and row.status == NoticeStatus.DISMISSED.value
-        and (row.payload or {}).get(field) != value
-    ):
-        await resolve_notices(session, dedupe_key=dedupe_key)
 
 
 @register_task(
@@ -979,73 +1237,26 @@ async def _relight_dismissed_on_change(session, dedupe_key: str, field: str, val
     trigger_type=TriggerType.INTERVAL,
     interval_seconds=3600,
     description=(
-        "每小时检查 GitHub 是否发布了新版本与新的 NER 模型；发现后在待处理事项中"
-        "提醒（不会自动安装，更新入口在「设置 → 关于与更新」）。检查用 ETag 条件"
+        "每小时检查 GitHub 是否发布了新版本与新的 NER 模型；发现后在侧栏亮出更新"
+        "入口（不会自动安装，更新在「设置 → 应用」里一键完成）。检查用 ETag 条件"
         "请求，无新版时不消耗 GitHub API 配额。仅 Docker 部署生效。"
     ),
 )
 async def check_app_update_task() -> None:
     if _runtime_version() is None:
         return  # 源码部署/开发环境不适用应用内更新
-    db = get_database()
     # 应用与模型两条检查相互独立：一条网络失败不拖累另一条；
-    # 网络不可达按「下轮再试」处理，不产生告警（避免离线环境天天报错）
+    # 网络不可达按「下轮再试」处理，保持上一次快照不动（离线时徽标不该乱跳）
     try:
-        view = await check_update()
+        await check_update_now()
     except Exception as exc:
         # 兜住一切异常（含 GitHub 返回异常结构导致的解析错误）：
         # 定时检查失败只记日志、下轮再试，绝不让任务本身报故障打扰用户
         logger.info("定时检查应用更新未完成：%s", exc)
-    else:
-        async with db.session() as session:
-            # 曾在本机连续启动失败被回落的版本不再提醒（提醒用户安装刚坑过
-            # 自己的版本是误导）；等更新的版本发布后自然恢复提醒
-            if view.update_available and not view.latest_known_bad:
-                await _relight_dismissed_on_change(
-                    session, _NOTICE_KEY_APP, "latest_version", view.latest_version
-                )
-                await upsert_notice(
-                    session,
-                    dedupe_key=_NOTICE_KEY_APP,
-                    severity=NoticeSeverity.WARNING,
-                    source="app",
-                    title=f"发现新版本 v{view.latest_version}",
-                    message=(
-                        f"movieclaw v{view.latest_version} 已发布（当前 v{view.current_version}）。"
-                        + (
-                            "到「设置 → 关于与更新」一键更新即可，无需重拉镜像。"
-                            if view.compatible
-                            else "本次更新包含运行时依赖变化，需要拉取新的 Docker 镜像升级。"
-                        )
-                    ),
-                    payload={"latest_version": view.latest_version, "compatible": view.compatible},
-                )
-            else:
-                await resolve_notices(session, dedupe_key=_NOTICE_KEY_APP)
     try:
-        model = await check_model_update()
+        await check_model_update_now()
     except Exception as exc:
         logger.info("定时检查模型更新未完成：%s", exc)
-    else:
-        async with db.session() as session:
-            if model.update_available and model.installable:
-                await _relight_dismissed_on_change(
-                    session, _NOTICE_KEY_MODEL, "latest_tag", model.latest_tag
-                )
-                await upsert_notice(
-                    session,
-                    dedupe_key=_NOTICE_KEY_MODEL,
-                    severity=NoticeSeverity.WARNING,
-                    source="app",
-                    title=f"发现新的识别模型 {model.latest_tag}",
-                    message=(
-                        f"种子名识别（NER）模型 {model.latest_tag} 已发布。"
-                        "到「设置 → 关于与更新」一键更新即可（更新后应用会自动重启）。"
-                    ),
-                    payload={"latest_tag": model.latest_tag},
-                )
-            else:
-                await resolve_notices(session, dedupe_key=_NOTICE_KEY_MODEL)
 
 
 # ---------------------------------------------------------------------------
@@ -1133,3 +1344,313 @@ def rollback() -> str:
     _progress.set("restarting", "正在回退并重启应用……", target_version=None)
     schedule_restart(FULL_RESTART_EXIT_CODE)
     return message
+
+
+# ---------------------------------------------------------------------------
+# 多版本回退选择器（数据兼容机制见 docs/design/in-app-update.md）
+#
+# 数据兼容的判定锚点：每次切换版本前的自动备份都带边车，记录「离开的版本 +
+# 当时的 alembic 迁移位置」。回退到 vX 时把现库迁移位置与「离开 vX 时」的
+# 记录比对——相同说明期间没跑过迁移，代码直接切、数据全保留（switch）；
+# 不同说明数据结构已前进、旧代码不认识，需恢复那份备份并明示数据损失
+# （restore）；没有可对时的备份则只能强警告（unknown）。
+#
+# 恢复的执行时机：回退后跑的是旧版本代码，不能指望它认识本机制——文件替换
+# 必须由**当前进程**在优雅停机之后、退出重启之前完成（此时 DB 引擎已关闭，
+# 纯文件操作），入口在 main.run 的停机尾声调 execute_pending_restore()。
+# ---------------------------------------------------------------------------
+
+# 待执行恢复的暂存文件（updates/state/ 下）；带时间戳，防陈旧暂存误触发
+_RESTORE_PENDING_NAME = "restore-pending.json"
+# 暂存的有效窗口：正常流程从暂存到停机只有几秒，超过说明中途被打断过
+# （如恰好 docker stop），陈旧暂存绝不能在未来的某次重启里突然生效
+_RESTORE_PENDING_TTL_SECONDS = 600
+
+
+def _release_info_of(vdir: Path) -> dict:
+    """读版本目录里的 Release 元信息；缺失/损坏返回空 dict（老版本目录没有）。"""
+    path = vdir / _RELEASE_INFO_NAME
+    if not path.is_file():
+        return {}
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        return data if isinstance(data, dict) else {}
+    except (OSError, json.JSONDecodeError):
+        return {}
+
+
+def _backup_sidecar(backup: Path) -> dict:
+    """读备份边车；缺失/损坏返回空 dict（本机制之前的老备份没有边车）。"""
+    sidecar = backup.with_name(backup.name + ".json")
+    if not sidecar.is_file():
+        return {}
+    try:
+        data = json.loads(sidecar.read_text(encoding="utf-8"))
+        return data if isinstance(data, dict) else {}
+    except (OSError, json.JSONDecodeError):
+        return {}
+
+
+def _dir_size(path: Path) -> int:
+    total = 0
+    for root, _dirs, files in os.walk(path):
+        for name in files:
+            with contextlib.suppress(OSError):
+                total += (Path(root) / name).stat().st_size
+    return total
+
+
+def _classify_target(
+    updates: Path, version: str | None, live_rev: str | None
+) -> tuple[str, str | None]:
+    """判定回退到某版本的数据处理方式，返回 (schema_action, backup_taken_at)。"""
+    if version is None:
+        return "unknown", None  # 目标版本号都不知道（未记录的基线），无从对时
+    backup = _latest_backup_for(updates, version)
+    if backup is None:
+        return "unknown", None
+    sidecar = _backup_sidecar(backup)
+    taken_at = sidecar.get("taken_at") or datetime.fromtimestamp(
+        backup.stat().st_mtime
+    ).astimezone().isoformat(timespec="seconds")
+    rev = sidecar.get("alembic_rev")
+    if rev and live_rev and rev == live_rev:
+        # 离开该版本后没跑过任何迁移：直接切换代码即可，数据全保留
+        return "switch", taken_at
+    return "restore", taken_at
+
+
+def _running_version_dir(updates: Path) -> Path | None:
+    """当前运行版本的目录（跑基线时为 None）。"""
+    running = os.environ.get("MOVIECLAW_OVERLAY_VERSION")
+    if not running:
+        return None
+    vdir = updates / "versions" / f"v{_sanitize(running)}"
+    return vdir if vdir.is_dir() else None
+
+
+def _build_rollback_options(baseline_version: str, keep_versions: int) -> RollbackOptionsView:
+    """装配回退选择器数据（同步、纯本地，在线程里跑——含目录体积统计）。"""
+    updates = _updates_dir()
+    versions_dir = updates / "versions"
+    db_path = _db_path()
+    live_rev = _read_alembic_rev(db_path) if db_path and db_path.is_file() else None
+    running = os.environ.get("MOVIECLAW_OVERLAY_VERSION")
+    targets: list[RollbackTargetView] = []
+    total_bytes = 0
+    dirs = sorted(
+        (d for d in versions_dir.iterdir() if d.is_dir()) if versions_dir.is_dir() else [],
+        key=cmp_to_key(
+            lambda a, b: -1
+            if _is_newer(a.name.removeprefix("v"), b.name.removeprefix("v"))
+            else (1 if _is_newer(b.name.removeprefix("v"), a.name.removeprefix("v")) else 0)
+        ),
+    )
+    for vdir in dirs:
+        size = _dir_size(vdir)
+        total_bytes += size
+        version, usable, _reason = _overlay_state(vdir)
+        # 不可用目录（清单损坏/runtime 不匹配/标坏）不进候选：列出一个
+        # entrypoint 注定拒绝的目标只会制造无效的全量重启
+        if not usable or not version or version == running:
+            continue
+        info = _release_info_of(vdir)
+        schema_action, backup_taken_at = _classify_target(updates, version, live_rev)
+        targets.append(
+            RollbackTargetView(
+                kind="version",
+                version=version,
+                changelog=info.get("changelog") or None,
+                installed_at=info.get("installed_at") or None,
+                size_bytes=size,
+                schema_action=schema_action,
+                backup_taken_at=backup_taken_at,
+            )
+        )
+    # 镜像基线：只有 overlay 在运行时才是一个「回退」目标（跑基线时它就是现状）
+    if running:
+        schema_action, backup_taken_at = _classify_target(
+            updates, baseline_version or None, live_rev
+        )
+        targets.append(
+            RollbackTargetView(
+                kind="baseline",
+                version=baseline_version or None,
+                changelog=None,
+                installed_at=None,
+                size_bytes=None,
+                schema_action=schema_action,
+                backup_taken_at=backup_taken_at,
+            )
+        )
+    return RollbackOptionsView(
+        targets=targets, versions_dir_bytes=total_bytes, keep_versions=keep_versions
+    )
+
+
+async def rollback_options() -> RollbackOptionsView:
+    """回退选择器数据（候选版本 + 保留策略现状）。"""
+    if _runtime_version() is None:
+        raise BadRequestException("当前部署形态不支持应用内回退（仅 Docker 镜像部署支持）")
+    state = await get_app_update_state()
+    prefs = await get_app_update_prefs()
+    return await asyncio.to_thread(
+        _build_rollback_options, state.baseline_version, prefs.keep_versions
+    )
+
+
+def _stage_restore(updates: Path, backup: Path, target_label: str) -> None:
+    """暂存一次数据库恢复，由 main.run 在停机尾声执行（见模块段注释）。"""
+    state_dir = updates / "state"
+    state_dir.mkdir(parents=True, exist_ok=True)
+    (state_dir / _RESTORE_PENDING_NAME).write_text(
+        json.dumps(
+            {"backup": str(backup), "target": target_label, "requested_at": time.time()},
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+
+def rollback_to(target: str, restore_backup: bool) -> str:
+    """回退（切换）到指定版本或镜像基线，可选恢复对应时点的数据库备份。
+
+    与旧版 ``rollback()`` 的 previous 互换不同，这里显式指定目标；previous
+    指针指向当前运行版本——回退后还能一步切回来（配合回退前的保险备份，
+    连数据都能一并撤销）。
+    """
+    if _runtime_version() is None:
+        raise BadRequestException("当前部署形态不支持应用内回退（仅 Docker 镜像部署支持）")
+    if _progress.busy():
+        raise BadRequestException("已有更新正在进行中，无法回退")
+    updates = _updates_dir()
+    current = updates / "current"
+    if current.exists() and not current.is_symlink():
+        raise BadRequestException(
+            "updates/current 不是符号链接（可能被手工改动过），"
+            "请删除 data/updates/current 后重启容器回到镜像内置版本"
+        )
+    running = os.environ.get("MOVIECLAW_OVERLAY_VERSION")
+
+    if target == "baseline":
+        if not running:
+            raise BadRequestException("当前运行的就是镜像内置版本，无需回退")
+        target_dir: Path | None = None
+        target_label = "镜像内置版本"
+        # 恢复源按记录过的基线版本号对时；没记录过就找不到（选项接口已把
+        # 这种情况标为 unknown，正常流程不会带着 restore_backup 走到这里）
+        restore_version = None
+    else:
+        if target == running:
+            raise BadRequestException(f"v{target} 正在运行，无需回退")
+        target_dir = updates / "versions" / f"v{_sanitize(target)}"
+        version, usable, reason = _overlay_state(target_dir)
+        if not usable:
+            raise BadRequestException(f"版本 v{target} 不可用：{reason}")
+        if version != target:
+            raise BadRequestException(f"版本目录 v{target} 的清单声明的是 v{version}，内容不匹配")
+        target_label = f"v{target}"
+        restore_version = target
+
+    backup: Path | None = None
+    if restore_backup:
+        if target == "baseline":
+            raise BadRequestException(
+                "镜像内置版本没有可对时的自动备份，无法随回退恢复数据；"
+                "如需恢复请在回退后从 data/updates/backup 手动恢复"
+            )
+        assert restore_version is not None
+        backup = _latest_backup_for(updates, restore_version)
+        if backup is None:
+            raise BadRequestException(
+                f"没有找到离开 v{restore_version} 时的自动备份，无法随回退恢复数据"
+            )
+
+    # 保险备份：记录当前版本此刻的数据（含边车）。它同时是将来「切回来」时
+    # 的数据恢复源——让这次回退本身也可完整撤销
+    _backup_database(updates)
+
+    # 切换指针：previous ← 当前运行版本（回退的撤销路径），current ← 目标
+    running_dir = _running_version_dir(updates)
+    if target_dir is not None:
+        _atomic_symlink(target_dir, current)
+    else:
+        current.unlink(missing_ok=True)
+    if running_dir is not None:
+        _atomic_symlink(running_dir, updates / "previous")
+
+    if backup is not None:
+        _stage_restore(updates, backup, target_label)
+        message = f"正在回退到{target_label}并恢复对应时点的数据备份，应用即将重启……"
+    else:
+        message = f"正在回退到{target_label}，应用即将重启……"
+    logger.info("应用回退：%s", message)
+    _progress.set("restarting", message, target_version=None)
+    schedule_restart(FULL_RESTART_EXIT_CODE)
+    return message
+
+
+def execute_pending_restore() -> None:
+    """执行暂存的数据库恢复（main.run 在优雅停机后、进程退出前调用）。
+
+    此时 uvicorn 已停、lifespan 已收尾、DB 引擎已关闭——纯文件操作是安全的。
+    任何异常只记日志不阻断退出：恢复失败的后果是旧版本对着新结构的库启动
+    （可能再次失败触发 entrypoint 的坏版本回落），数据本身始终无损。
+    """
+    updates = _updates_dir()
+    pending = updates / "state" / _RESTORE_PENDING_NAME
+    if not pending.is_file():
+        return
+    try:
+        data = json.loads(pending.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return
+    finally:
+        pending.unlink(missing_ok=True)  # 先消费后执行：中途崩溃也不会反复触发
+    requested_at = float(data.get("requested_at") or 0)
+    if time.time() - requested_at > _RESTORE_PENDING_TTL_SECONDS:
+        logger.warning("忽略陈旧的数据库恢复暂存（超过 %d 秒）", _RESTORE_PENDING_TTL_SECONDS)
+        return
+    backup = Path(str(data.get("backup") or ""))
+    db_path = _db_path()
+    if db_path is None or not backup.is_file() or not db_path.is_file():
+        logger.warning("数据库恢复暂存无法执行（备份或数据库文件缺失），已跳过")
+        return
+    try:
+        # 换库前把现库再归档一份（sqlite backup API，连未 checkpoint 的 WAL
+        # 一起收干净）——恢复操作自身也绝不能是数据的单向门
+        _backup_database(updates)
+        tmp = db_path.with_name(db_path.name + ".restore-tmp")
+        shutil.copyfile(backup, tmp)
+        os.replace(tmp, db_path)
+        # 旧的 WAL/SHM 属于被换掉的库，留着会被 SQLite 误认为配套文件
+        db_path.with_name(db_path.name + "-wal").unlink(missing_ok=True)
+        db_path.with_name(db_path.name + "-shm").unlink(missing_ok=True)
+        logger.info("已恢复数据库备份（%s → 回退到%s）", backup.name, data.get("target"))
+    except Exception:
+        logger.exception("数据库恢复失败（数据未受损，现库保持原样）")
+
+
+async def save_update_retention(keep_versions: int) -> int:
+    """保存本地版本保留数并立即按新策略清理，返回生效值。"""
+    prefs = await get_app_update_prefs()
+    prefs.keep_versions = keep_versions
+    await save_app_update_prefs(prefs)
+    # 立即生效：调小保留数时马上释放磁盘，而不是等下一次更新才清
+    await asyncio.to_thread(_prune_versions, _updates_dir(), keep_versions=keep_versions)
+    return keep_versions
+
+
+async def record_baseline_version() -> None:
+    """跑镜像基线时记下版本号（lifespan 启动时调用，仅变化时写库）。
+
+    overlay 运行期读不到基线代码的版本号，回退列表靠这份记录向用户明示
+    「回落镜像内置版本 = 回到 v 几」。
+    """
+    if os.environ.get("MOVIECLAW_CODE_SOURCE") != "baseline":
+        return
+    state = await get_app_update_state()
+    if state.baseline_version == __version__:
+        return
+    state.baseline_version = __version__
+    await save_app_update_state(state)

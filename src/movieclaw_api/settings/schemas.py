@@ -396,6 +396,73 @@ async def save_ui_preferences(prefs: UiPreferencesSetting) -> UiPreferencesSetti
     return prefs
 
 
+# ---------------------------------------------------------------------------
+# 更新检查结果快照
+# ---------------------------------------------------------------------------
+# 为什么要落库：更新提醒的载体是「侧栏常驻的环境徽标」（见 apps/web 的
+# app-update-badge），徽标要在**任意页面、任意时刻**都能立刻知道「有没有新
+# 版本」，不能每次渲染都去打 GitHub。定时任务（每小时）与用户手动点「检查
+# 更新」都把结果写进这里，前端只读这份快照——既零网络开销，也让重启容器后
+# 徽标立刻恢复（NAS 用户重启很频繁，等下一轮检查才亮灯是明显的倒退）。
+#
+# 没有新版本时写回全空实例（而不是删记录）：语义是「已检查过，结论是最新」，
+# 与「从未检查过」区分开，前端才能安心地按快照渲染。
+
+
+@register_setting(namespace="app.update_state", title="更新检查结果快照")
+class AppUpdateStateSetting(SettingSchema):
+    """最近一次更新检查的结果快照（应用与 NER 模型各一组，互相独立）。"""
+
+    checked_at: str = Field(
+        default="", description="最近一次检查完成时间（ISO8601）；空 = 从未检查过"
+    )
+    app_latest_version: str = Field(default="", description="可更新的应用版本号；空 = 无可用更新")
+    app_compatible: bool = Field(
+        default=False, description="False = 含依赖变化，需重拉 Docker 镜像"
+    )
+    app_changelog: str = Field(default="", description="该版本的 Release 说明（Markdown 原文）")
+    app_published_at: str = Field(default="", description="该版本的发布时间（ISO8601）")
+    model_latest_tag: str = Field(default="", description="可更新的 NER 模型 tag；空 = 无可用更新")
+    # 镜像基线版本：跑基线代码时（MOVIECLAW_CODE_SOURCE=baseline）由启动流程
+    # 记下 __version__。overlay 运行期读不到基线代码的版本号，回退列表要向
+    # 用户明示「回落镜像内置版本 = 回到 v 几」，只能靠这份历史记录
+    baseline_version: str = Field(default="", description="最近一次以镜像基线运行时的版本号")
+
+
+async def get_app_update_state() -> AppUpdateStateSetting:
+    """读取更新检查结果快照（从未检查过则返回全空实例）。"""
+    return await get_setting_store().get(AppUpdateStateSetting)
+
+
+async def save_app_update_state(state: AppUpdateStateSetting) -> None:
+    """整体覆盖式保存更新检查结果快照。"""
+    await get_setting_store().set(state)
+
+
+@register_setting(namespace="app.update_prefs", title="应用更新偏好")
+class AppUpdatePrefsSetting(SettingSchema):
+    """应用内更新的用户偏好。
+
+    ``keep_versions``：本地保留的历史版本目录数（含当前运行版本）。保留得越多
+    可回退的范围越大，占用磁盘越多（每个版本一整份前后端产物）。范围 2~20：
+    下限 2 保证「当前 + 上一版」的 A/B 兜底永远成立。
+    """
+
+    keep_versions: int = Field(
+        default=5, ge=2, le=20, description="本地保留的版本目录数（含当前版本），默认 5"
+    )
+
+
+async def get_app_update_prefs() -> AppUpdatePrefsSetting:
+    """读取应用更新偏好（从未配置则返回默认值）。"""
+    return await get_setting_store().get(AppUpdatePrefsSetting)
+
+
+async def save_app_update_prefs(prefs: AppUpdatePrefsSetting) -> None:
+    """整体覆盖式保存应用更新偏好。"""
+    await get_setting_store().set(prefs)
+
+
 async def get_search_tabs() -> list[SearchTab]:
     """读取当前搜索标签配置（从未配置则返回默认值），已规范化。"""
     setting = await get_setting_store().get(SearchPreferencesSetting)

@@ -111,6 +111,16 @@ def build_lifespan(settings: Settings):
         from movieclaw_api.services.enrich_backfill import reenrich_stale_torrents
 
         await reenrich_stale_torrents()
+        # 旧版更新提醒清场：更新提醒曾写进「待处理事项」，现已改为侧栏常驻徽标，
+        # 存量告警行再无任何路径去消退它，会永远挂在告警面板上（见函数注释）
+        from movieclaw_api.services.app_update import (
+            clear_legacy_update_notices,
+            record_baseline_version,
+        )
+
+        await clear_legacy_update_notices()
+        # 跑镜像基线时记下版本号：回退列表据此向用户明示「回落基线 = 回到 v 几」
+        await record_baseline_version()
         # 启动定时任务调度器：注册内置任务、从数据库重建 job 并开始调度。
         # 领域业务任务在此处 import 其任务模块以触发 @register_task 注册（须在 start() 前）。
         if settings.scheduler_enabled:

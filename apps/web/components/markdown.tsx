@@ -28,9 +28,17 @@ const components: Components = {
   ),
 };
 
-export const Markdown = memo(function Markdown({ text }: { text: string }) {
+export const Markdown = memo(function Markdown({
+  text,
+  compact = false,
+}: {
+  text: string;
+  /** 紧凑档：嵌在卡片里的短文（如更新说明）用，字号/行高压到与周边说明文字同级。
+   *  必须靠 class 而非父级字号继承——.markdown 自己写死了 font-size。 */
+  compact?: boolean;
+}) {
   return (
-    <div className="markdown">
+    <div className={`markdown${compact ? " markdown--compact" : ""}`}>
       <ReactMarkdown remarkPlugins={[remarkGfm]} components={components}>
         {text}
       </ReactMarkdown>

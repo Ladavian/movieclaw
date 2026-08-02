@@ -17,7 +17,7 @@ import { useCallback, useEffect, useState } from "react";
 import type { Route } from "next";
 import { useRouter } from "next/navigation";
 
-import { BellIcon, ChevronRightIcon, XIcon } from "@/components/icons";
+import { BellIcon, ChevronRightIcon } from "@/components/icons";
 import { Modal } from "@/components/modal";
 import {
   dismissNotice,
@@ -107,40 +107,60 @@ export function NoticeCenter({ collapsed }: { collapsed: boolean }) {
         // 弹层会超出实际可视高度（subscribe-dialog 同款约定）
         panelClassName="flex max-h-[76dvh] flex-col"
       >
-        <div className="flex items-center gap-2 px-5 pb-3 pt-5">
-          <BellIcon className="size-[18px] text-[var(--danger)]" />
-          <h2 className="flex-1 text-body font-semibold">待处理事项</h2>
-          <span className="text-caption text-[var(--text-faint)]">
-            问题修复后会自动消失
+        {/* 头部只放标题与件数：右侧原先那句"问题修复后会自动消失"与标题争夺
+            同一条视线，且它是整个面板的机制说明、不是某条事项的信息，降到底栏 */}
+        <div className="flex items-center gap-2.5 px-5 pb-4 pt-5">
+          <BellIcon className="size-5 shrink-0 text-[var(--danger)]" />
+          <h2 className="flex-1 text-title-sm font-semibold text-[var(--text)]">待处理事项</h2>
+          <span className="shrink-0 rounded-full bg-white/[0.07] px-2 py-0.5 text-caption font-semibold text-[var(--text-muted)]">
+            {notices.length}
           </span>
         </div>
-        <div className="scroll-thin flex-1 space-y-2 overflow-y-auto px-5 pb-5">
+        <div className="scroll-thin flex-1 space-y-2.5 overflow-y-auto px-5 pb-4">
           {notices.map((notice) => (
-            <div key={notice.id} className="glass-row flex-col items-stretch gap-1.5 !rounded-xl p-3">
-              <div className="flex items-center gap-2">
+            // 卡片刻意不用 .glass-row：那个类是给"单行可点行"用的，它在
+            // globals.css 里是无 @layer 的普通规则，align-items:center 与
+            // gap:11px 会压过 Tailwind 工具类——套在竖排卡片上会把每一行都
+            // 挤成"内容宽度并居中"（标题与时间黏在一起飘在中间）。
+            <div
+              key={notice.id}
+              className="rounded-xl border border-white/[0.07] bg-white/[0.03] px-3.5 py-3"
+            >
+              {/* 严重度圆点自成一条左栏，标题与正文对齐在同一条竖线上；
+                  时间贴右，与标题基线对齐 */}
+              <div className="flex gap-2.5">
                 <span
-                  className="size-2 shrink-0 rounded-full"
+                  className="mt-[7px] size-2 shrink-0 rounded-full"
                   style={{ background: DOT_COLOR[notice.severity] ?? DOT_COLOR.error }}
                 />
-                <span className="flex-1 truncate text-ui font-semibold">{notice.title}</span>
-                <span className="shrink-0 text-caption text-[var(--text-faint)]">
-                  {formatRelativeTime(notice.updated_at)}
-                </span>
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-baseline gap-3">
+                    <h3 className="min-w-0 flex-1 text-ui font-semibold text-[var(--text)]">
+                      {notice.title}
+                    </h3>
+                    <span className="shrink-0 text-caption text-[var(--text-faint)]">
+                      {formatRelativeTime(notice.updated_at)}
+                    </span>
+                  </div>
+                  <p className="mt-1 text-sub leading-relaxed text-[var(--text-muted)]">
+                    {notice.message}
+                  </p>
+                </div>
               </div>
-              <p className="text-caption leading-5 text-[var(--text-muted)]">{notice.message}</p>
-              <div className="flex items-center justify-end gap-1.5 pt-0.5">
+              {/* 操作条：一道发丝线与正文分开，主次分明——「去处理」是这条事项
+                  真正的出口（实心玻璃按钮），「忽略」是退路（纯文字，最弱） */}
+              <div className="mt-3 flex items-center justify-end gap-2 border-t border-white/[0.05] pt-2.5">
                 <button
                   type="button"
                   onClick={() => dismiss(notice.id)}
-                  className="glass-row !w-auto gap-1 rounded-lg px-2 py-1 text-caption text-[var(--text-faint)]"
+                  className="rounded-lg px-2.5 py-1.5 text-sub text-[var(--text-faint)] transition-colors hover:bg-white/[0.06] hover:text-[var(--text-muted)] max-md:py-2"
                 >
-                  <XIcon className="size-3.5" />
                   忽略
                 </button>
                 <button
                   type="button"
                   onClick={() => goto(notice)}
-                  className="glass-row !w-auto gap-1 rounded-lg px-2 py-1 text-caption font-medium"
+                  className="btn-glass gap-1 px-3 py-1.5 text-sub font-medium text-[var(--text)] max-md:py-2"
                 >
                   去处理
                   <ChevronRightIcon className="size-3.5" />
@@ -148,6 +168,10 @@ export function NoticeCenter({ collapsed }: { collapsed: boolean }) {
               </div>
             </div>
           ))}
+        </div>
+        {/* 底栏：面板的机制说明——告诉用户这里的东西不需要手动清理 */}
+        <div className="border-t border-white/[0.06] px-5 py-3 text-caption text-[var(--text-faint)]">
+          这里只列需要你处理的运行时问题，修复后会自动消失。
         </div>
       </Modal>
     </>
