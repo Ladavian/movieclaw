@@ -1,0 +1,92 @@
+---
+name: release
+description: 发布 movieclaw 新版本。当用户要求发版、发布新版本、打 tag、发布 NER 模型或发布 Docker 镜像时使用。涵盖版本号三处同步、应用/模型/镜像三种发布类型的完整流程与检查清单。
+---
+
+# movieclaw 发布规范
+
+本项目有**三种发布类型**，先判定这次要发的是哪种（机制背景见
+`docs/design/in-app-update.md`）：
+
+| 类型 | 什么时候发 | 用户侧感知 |
+|------|-----------|-----------|
+| 应用 Release（`vX.Y.Z` tag） | 前后端代码变了（最常见） | 设置页一键更新，免拉镜像 |
+| 模型 Release（`torrent-ner-vN` tag） | NER 模型重新训练 | 设置页一键更新模型 |
+| Docker 镜像 | 运行时依赖变了（罕见） | 用户必须重拉镜像 |
+
+## 一、应用 Release（日常发版）
+
+### 1. 版本号三处同步（硬约束，构建脚本强制校验）
+
+以下三处必须完全一致，否则 CI 构建直接失败、Release 不会创建：
+
+- `pyproject.toml` 的 `[project] version`
+- `src/movieclaw_api/__init__.py` 的 `__version__`
+- git tag（去掉 `v` 前缀后的部分）
+
+发版第一步就是把前两处 bump 到目标版本并提交合入主干。
+
+### 2. 发版步骤
+
+```
+1. bump 两处版本号 → 提交 PR 合入 main
+2. 确认 main 上测试通过（pytest tests/、pnpm web:typecheck、pnpm web:lint）
+3. git tag vX.Y.Z && git push origin vX.Y.Z
+4. release.yml 自动构建并上传 Release assets：
+   app-web.tar.gz / app-backend.tar.gz / manifest.json（可选 manifest.json.sig）
+5. 验证：到 GitHub Release 页确认三个产物齐全；有条件的话在一个
+   Docker 部署实例上走一遍「设置 → 关于与更新」端到端更新
+```
+
+### 3. 预发布（beta/rc）
+
+tag 带预发布段（如 `v0.3.0-beta.1`）时，release.yml 会自动标记 GitHub
+prerelease，应用内更新的检查逻辑会跳过它——beta 不会被推给全量用户。
+预发布数字段按数值比较（`beta.10` > `beta.9`），命名放心递增。
+
+## 二、何时必须发 Docker 镜像（runtime 契约）
+
+`docker/runtime-version` 是运行时依赖集合的版本代号（唯一事实源）。
+**凡是改了以下任何一项，必须把它 +1，并在合并后构建发布新镜像**：
+
+- `pyproject.toml` 的 dependencies
+- Node 大版本、Dockerfile 里的系统包（ffmpeg 等）或基础镜像
+- `docker/entrypoint.sh` 的行为契约（重启约定码、目录约定等）
+
+CI 守卫（runtime-guard.yml）会拦截漏 bump 的 PR。bump 后发的应用
+Release 其 manifest 会声明新的 `requires_runtime`，旧镜像用户在设置页
+会看到「需升级 Docker 镜像」的明确提示，而不是坏掉的更新。
+
+镜像构建：`TMDB_API_KEY=xxx ./scripts/build-image.sh`（详见脚本头注释；
+启用了清单签名的话记得带 `--build-arg UPDATE_MANIFEST_PUBKEY=<公钥>`）。
+
+## 三、模型 Release
+
+1. 训练产出三件套：`model.int8.onnx`、`tokenizer.json`、`labels.json`
+2. 生成更新清单（tag 必须与将要创建的 Release tag 一致，后端会强校验）：
+   `./scripts/build-model-manifest.sh <模型目录> torrent-ner-vN`
+3. 创建 tag 为 `torrent-ner-vN` 的 GitHub Release（N 递增），上传
+   三件套 + `manifest.json`（+ 签名时的 `manifest.json.sig`）
+4. **不要**把模型 Release 标成 latest 之外还需担心什么——应用更新检查
+   按 tag 正则过滤，模型 Release 不会干扰应用更新
+5. 没带 manifest.json 的模型 Release 无法被应用内安装（会提示用户），
+   只能作为镜像构建的 `NER_MODEL_BASE` 来源
+
+## 四、清单签名（可选，防 Release/加速镜像被篡改）
+
+- 首次启用：`./scripts/gen-release-signing-key.sh` 生成密钥对；私钥配成
+  仓库 Actions 机密 `RELEASE_SIGNING_KEY`（绝不入库），公钥烧进镜像
+  （`UPDATE_MANIFEST_PUBKEY` 构建参数）或让用户配同名环境变量
+- 启用后：应用发版自动签名；模型清单脚本在有 `RELEASE_SIGNING_KEY`
+  环境变量时也会生成签名
+- 注意：部署侧配置了公钥后，**所有**更新清单必须携带有效签名，包括
+  模型 Release——启用后发的每个 Release 都不能漏传 `.sig`
+
+## 五、发版检查清单
+
+- [ ] 版本号三处一致（应用发版）
+- [ ] 本次改动是否触碰运行时依赖？触碰了 → `docker/runtime-version` +1 并计划发镜像
+- [ ] 数据库迁移向前兼容（alembic 迁移是单向的，用户回退靠自动备份）
+- [ ] Release 产物三件齐全（CI 完成后到 Release 页核对）
+- [ ] 启用签名的仓库：`.sig` 已随产物上传
+- [ ] changelog 写在 GitHub Release body（应用内更新界面会原文展示给用户）
