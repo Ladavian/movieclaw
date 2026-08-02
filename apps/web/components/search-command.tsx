@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 
+import { useConfirm } from "@/components/feedback";
 import { SearchIcon } from "@/components/icons";
 import {
   clearSearchHistory,
@@ -197,6 +198,7 @@ function SearchPalette({
   onSearch: (keyword: string, scope: SearchScope, options?: SearchSubmitOptions) => void;
 }) {
   const { visibleTabs, loading: tabsLoading } = useSearchPrefs();
+  const confirm = useConfirm();
   const [keyword, setKeyword] = useState("");
   // 面板每次重新挂载，但模式与资源分类从浏览器级记忆恢复。
   const [rememberedState] = useState(readSearchPaletteState);
@@ -349,10 +351,14 @@ function SearchPalette({
     deleteSearchHistory(id).catch(() => undefined);
   };
 
-  const removeGroup = (group: HistoryGroup) => {
+  const removeGroup = async (group: HistoryGroup) => {
     if (
       group.items.length > 1 &&
-      !window.confirm(`删除「${group.keyword}」的 ${group.items.length} 条搜索记录？`)
+      !(await confirm({
+        title: `删除「${group.keyword}」的 ${group.items.length} 条搜索记录？`,
+        confirmLabel: "删除",
+        tone: "danger",
+      }))
     ) {
       return;
     }
@@ -480,7 +486,7 @@ function SearchPalette({
                   onToggle={() => toggleGroup(group.key)}
                   onPickItem={pick}
                   onRemoveItem={removeOne}
-                  onRemoveGroup={() => removeGroup(group)}
+                  onRemoveGroup={() => void removeGroup(group)}
                 />
               ))}
             </ul>

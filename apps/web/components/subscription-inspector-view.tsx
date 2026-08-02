@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
+import { useConfirm } from "@/components/feedback";
 import { ArrowLeftIcon } from "@/components/icons";
 import { Modal } from "@/components/modal";
 import { PageNav } from "@/components/page-nav";
@@ -47,6 +48,7 @@ import { formatDateTime, formatRelativeTime } from "@/lib/time";
  */
 export function SubscriptionInspectorView({ id }: { id: number }) {
   const router = useRouter();
+  const confirm = useConfirm();
   // 暂停/取消订阅会改变全站订阅状态（海报卡片的「已订阅」徽标），操作后同步刷新
   const { refresh: refreshSubscriptions } = useSubscribeEntry();
   const [detail, setDetail] = useState<SubscriptionDetail | null>(null);
@@ -128,7 +130,14 @@ export function SubscriptionInspectorView({ id }: { id: number }) {
   };
 
   const remove = async () => {
-    if (!window.confirm(`确定取消订阅《${detail.media.title}》？已下载的内容不受影响。`)) return;
+    const ok = await confirm({
+      title: `取消订阅《${detail.media.title}》？`,
+      description: "已下载的内容不受影响。",
+      confirmLabel: "取消订阅",
+      cancelLabel: "先不",
+      tone: "danger",
+    });
+    if (!ok) return;
     setBusy(true);
     try {
       await deleteSubscription(detail.id);

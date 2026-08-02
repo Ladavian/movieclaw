@@ -337,6 +337,26 @@ body::before {
   }
 }
 
+/* Toast 回执（components/feedback.tsx）：自下方轻浮入，与玻璃面板同源的进场语言 */
+.toast-item {
+  animation: toast-in 280ms cubic-bezier(0.2, 0.9, 0.3, 1) both;
+}
+@keyframes toast-in {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .toast-item {
+    animation: none;
+  }
+}
+
 /*
  * 沉浸页蒙版（Agent 对话页）：与 .page-scrim 同层同显隐逻辑，但完全不透明——
  * 密集文本页整页不允许透出背景大图。底色用中性近黑（不带全站的冷蓝调），

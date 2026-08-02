@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 
 import { LiquidGlassButton } from "@/vendor/liquid-glass";
 
+import { useConfirm } from "@/components/feedback";
 import { GripIcon, PlusIcon } from "@/components/icons";
 import { listConfiguredSites, listSiteCatalog } from "@/lib/api/sites";
 import { useBackdrop } from "@/lib/backdrop";
@@ -95,6 +96,7 @@ interface SiteOption {
  */
 export function SearchSection() {
   const { backdrop } = useBackdrop();
+  const confirm = useConfirm();
   const { tabs, loading, saveTabs } = useSearchPrefs();
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -248,8 +250,14 @@ export function SearchSection() {
     if (await apply(next)) setEditor(null);
   };
 
-  const deletePreset = (preset: PresetTab) => {
-    if (!window.confirm(`删除自定义分类「${preset.name}」？搜索历史不受影响。`)) return;
+  const deletePreset = async (preset: PresetTab) => {
+    const ok = await confirm({
+      title: `删除自定义分类「${preset.name}」？`,
+      description: "搜索历史不受影响。",
+      confirmLabel: "删除",
+      tone: "danger",
+    });
+    if (!ok) return;
     if (editor?.editingId === preset.id) setEditor(null);
     void apply(tabs.filter((t) => !(t.type === "preset" && t.id === preset.id)));
   };
@@ -333,7 +341,7 @@ export function SearchSection() {
                   </button>
                   <button
                     type="button"
-                    onClick={() => deletePreset(tab)}
+                    onClick={() => void deletePreset(tab)}
                     disabled={busy || loading}
                     className="rounded-full px-2.5 py-1 text-caption font-medium text-[var(--text-faint)] transition-colors hover:bg-[var(--danger)]/15 hover:text-[var(--danger)] disabled:opacity-40"
                   >

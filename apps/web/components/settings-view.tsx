@@ -9,6 +9,7 @@ import { AppUpdateDot, usePendingUpdate } from "@/components/app-update-entry";
 import { AppUpdateSection } from "@/components/app-update-section";
 import { AvatarBadge } from "@/components/avatar-badge";
 import { DownloaderConfigSection } from "@/components/downloader-config-section";
+import { useConfirm } from "@/components/feedback";
 import { ImportWatchSection } from "@/components/import-watch-section";
 import { LlmConfigSection } from "@/components/llm-config-section";
 import { WeixinBindingSection } from "@/components/weixin-binding-section";
@@ -551,6 +552,7 @@ function AppearanceSection() {
 function BackdropGroup() {
   const { backdrop, isCustom, loading, items, activeId, uploadBackdrop, selectBackdrop, deleteBackdrop } =
     useBackdrop();
+  const confirm = useConfirm();
   const inputRef = useRef<HTMLInputElement>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -583,8 +585,14 @@ function BackdropGroup() {
     guard(() => selectBackdrop(backdropId), "切换失败，请重试");
 
   /** 删除图库中的一张图：不可恢复，需二次确认；删的是生效图时后端自动回退默认。 */
-  const handleDelete = (backdropId: string) => {
-    if (!window.confirm("删除这张背景图？删除后不可恢复。")) return;
+  const handleDelete = async (backdropId: string) => {
+    const ok = await confirm({
+      title: "删除这张背景图？",
+      description: "删除后不可恢复。",
+      confirmLabel: "删除",
+      tone: "danger",
+    });
+    if (!ok) return;
     void guard(() => deleteBackdrop(backdropId), "删除失败，请重试");
   };
 
@@ -679,7 +687,7 @@ function BackdropGroup() {
                 active={item.id === activeId}
                 disabled={busy}
                 onSelect={() => void handleSelect(item.id)}
-                onDelete={() => handleDelete(item.id)}
+                onDelete={() => void handleDelete(item.id)}
               />
             ))}
             <button

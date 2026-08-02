@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 
+import { useConfirm } from "@/components/feedback";
 import { MoreIcon, PlusIcon, ServerIcon } from "@/components/icons";
 import { ExtensionCard } from "@/components/extension-settings";
 import { SearchSection } from "@/components/search-settings";
@@ -431,6 +432,7 @@ function SiteCard({
   onError,
 }: SiteCardProps) {
   const { backdrop } = useBackdrop();
+  const confirm = useConfirm();
   const [busy, setBusy] = useState(false);
   const meta = STATUS_META[site.status];
 
@@ -497,7 +499,16 @@ function SiteCard({
             onReverify={() => void guard(async () => onChanged(await reverifySite(site.site_id)))}
             onDelete={() =>
               void guard(async () => {
-                if (!window.confirm(`确定删除「${item.display_name}」的配置？`)) return;
+                if (
+                  !(await confirm({
+                    title: `删除「${item.display_name}」的配置？`,
+                    description: "该站点将不再参与搜索与订阅投递，可随时重新接入。",
+                    confirmLabel: "删除",
+                    tone: "danger",
+                  }))
+                ) {
+                  return;
+                }
                 await deleteSite(item.site_id);
                 onDeleted(item.site_id);
               })

@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 
+import { useConfirm } from "@/components/feedback";
 import { Modal } from "@/components/modal";
 import {
   createRuleSet,
@@ -37,6 +38,7 @@ interface EditorTarget {
 }
 
 export function RuleSetsPanel() {
+  const confirm = useConfirm();
   const [ruleSets, setRuleSets] = useState<RuleSet[] | null>(null);
   const [editing, setEditing] = useState<EditorTarget | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -53,7 +55,15 @@ export function RuleSetsPanel() {
   useEffect(reload, []);
 
   const remove = async (rs: RuleSet) => {
-    if (!window.confirm(`确定删除规则组「${rs.name}」？`)) return;
+    if (
+      !(await confirm({
+        title: `删除规则组「${rs.name}」？`,
+        confirmLabel: "删除",
+        tone: "danger",
+      }))
+    ) {
+      return;
+    }
     try {
       await deleteRuleSet(rs.id);
       reload();

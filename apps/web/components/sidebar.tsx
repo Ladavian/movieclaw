@@ -15,6 +15,7 @@ import {
   TrashIcon,
 } from "@/components/icons";
 import { AppUpdateEntry } from "@/components/app-update-entry";
+import { useConfirm, usePrompt, useToast } from "@/components/feedback";
 import { NoticeCenter } from "@/components/notice-center";
 import { UserMenu } from "@/components/user-menu";
 import { useAgentConversations } from "@/lib/agent-conversations";
@@ -74,30 +75,40 @@ export function Sidebar({
   // 必须条件渲染而不是 CSS 隐藏：SearchCommand 自带全局 ⌘K 监听，
   // 挂两份会让一次快捷键把面板开了又关。
   const isMobile = useIsMobile();
+  const toast = useToast();
+  const confirm = useConfirm();
+  const prompt = usePrompt();
 
-  /** 重命名会话：沿用全站的原生弹窗风格；空输入或未改动直接放弃。 */
-  const handleRename = (id: string, currentTitle: string) => {
-    const input = window.prompt("重命名会话", currentTitle);
+  /** 重命名会话：空输入或未改动直接放弃。 */
+  const handleRename = async (id: string, currentTitle: string) => {
+    const input = await prompt({
+      title: "重命名会话",
+      initialValue: currentTitle,
+      maxLength: 80,
+    });
     if (input == null) return;
     const title = input.trim().slice(0, 80);
     if (!title || title === currentTitle) return;
     void rename(id, title).catch((error) => {
-      window.alert(`重命名失败：${(error as Error).message}`);
+      toast.error(`重命名失败：${(error as Error).message}`);
     });
   };
 
   /** 彻底删除会话（二次确认）；删的是当前打开的会话时回到新任务页。 */
-  const handleDelete = (id: string, title: string) => {
-    const ok = window.confirm(
-      `彻底删除会话「${title}」？\n服务器上的完整对话记录将一并删除，此操作不可恢复。`,
-    );
+  const handleDelete = async (id: string, title: string) => {
+    const ok = await confirm({
+      title: `彻底删除会话「${title}」？`,
+      description: "服务器上的完整对话记录将一并删除，此操作不可恢复。",
+      confirmLabel: "彻底删除",
+      tone: "danger",
+    });
     if (!ok) return;
     void remove(id)
       .then(() => {
         if (activeNav === id) onSelect("new");
       })
       .catch((error) => {
-        window.alert(`删除失败：${(error as Error).message}`);
+        toast.error(`删除失败：${(error as Error).message}`);
       });
   };
   // 透明度/明暗/厚度来自「设置 → 外观」的用户偏好（ui.preferences.sidebar），
@@ -195,8 +206,8 @@ export function Sidebar({
                       time={formatRelativeTime(new Date(c.updatedAt).toISOString())}
                       active={activeNav === c.id}
                       onClick={() => onSelect(c.id)}
-                      onRename={() => handleRename(c.id, c.title)}
-                      onDelete={() => handleDelete(c.id, c.title)}
+                      onRename={() => void handleRename(c.id, c.title)}
+                      onDelete={() => void handleDelete(c.id, c.title)}
                     />
                   ))
                 )}
