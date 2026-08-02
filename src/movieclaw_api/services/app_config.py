@@ -1,9 +1,7 @@
 """应用设置的业务服务（routes/app_config 的实现层）。
 
 职责：
-- 配置视图装配：配置本体 + 端口生效状态（默认值 / 当前监听端口 / 是否被
-  环境变量钉死 / 是否需重启）；
-- 保存编排：校验（端口区间、外部地址格式）→ 落库；
+- 配置读写：外部访问地址的校验与落库（保存即生效，纯落库数据）；
 - 重启调度：优雅停机后以约定退出码 ``RESTART_EXIT_CODE``（42）退出进程，
   告知守护方「这是重启请求」——Docker 镜像的 entrypoint 内置重启循环，
   见到 42 原地拉起新的后端进程（前端不中断，也不依赖用户的 restart 策略）；
@@ -14,9 +12,6 @@
 uvloop 的 C 事件循环下信号处理可能长时间得不到执行（实测偶发悬挂）。
 故 main.run 启动时把 Server 实例注册进来，重启直接置 ``should_exit``
 （与收到 SIGTERM 的处理路径殊途同归），完全绕开信号投递。
-
-端口为何不能热切换：uvicorn 在启动时一次性绑定监听端口，运行期无法换绑，
-这是「改端口需重启」的根因；外部访问地址纯属落库数据，保存即生效。
 """
 
 from __future__ import annotations
@@ -32,11 +27,9 @@ from urllib.parse import urlsplit
 if TYPE_CHECKING:
     import uvicorn
 
-from movieclaw_api.core.config import get_settings
 from movieclaw_api.exceptions import BadRequestException
 from movieclaw_api.schemas.app_config import AppConfigPayload, AppConfigView
 from movieclaw_api.settings import AppServerSetting, get_setting_store
-from movieclaw_api.settings.app_server import RUNTIME_PORT_ENV
 
 logger = logging.getLogger("movieclaw_api.app_config")
 
@@ -48,6 +41,9 @@ _FORCE_EXIT_SECONDS = 10.0
 # 「设置页请求的应用重启」的约定退出码，entrypoint 的重启循环据此区分
 # 重启请求（原地拉起新进程）与真故障/停机（整容器退出）。
 RESTART_EXIT_CODE = 42
+# 「应用内更新/回退后的全量重启」约定码：entrypoint 见到它会把前端一并重启，
+# 并重新解析代码来源（data 卷上的 overlay 指针可能已切换，见 docker/entrypoint.sh）。
+FULL_RESTART_EXIT_CODE = 43
 
 
 # ---------------------------------------------------------------------------
@@ -55,40 +51,14 @@ RESTART_EXIT_CODE = 42
 # ---------------------------------------------------------------------------
 
 
-def _runtime_port() -> int:
-    """当前进程实际监听的端口（main.run 启动时记录；测试等场景回落配置值）。"""
-    raw = os.environ.get(RUNTIME_PORT_ENV, "")
-    return int(raw) if raw.isdigit() else get_settings().port
-
-
-def _build_view(setting: AppServerSetting) -> AppConfigView:
-    env_settings = get_settings()
-    env_locked = "APP_PORT" in os.environ
-    runtime_port = _runtime_port()
-    # 已保存配置在下次启动时的生效端口：被环境变量钉死时始终是环境变量值
-    effective_port = env_settings.port if env_locked else (setting.port or env_settings.port)
-    return AppConfigView(
-        port=setting.port,
-        external_url=setting.external_url,
-        default_port=env_settings.port,
-        runtime_port=runtime_port,
-        port_env_locked=env_locked,
-        restart_required=effective_port != runtime_port,
-    )
-
-
 async def build_config_view() -> AppConfigView:
-    """装配设置页所需的完整视图。"""
+    """装配设置页所需的配置视图。"""
     setting = await get_setting_store().get(AppServerSetting)
-    return _build_view(setting)
+    return AppConfigView(external_url=setting.external_url)
 
 
 def _validate_payload(payload: AppConfigPayload) -> None:
     """保存前校验，错误信息中文直达前端。"""
-    if payload.port != 0 and not 1024 <= payload.port <= 65535:
-        raise BadRequestException(
-            "端口必须在 1024~65535 之间（1024 以下为系统保留端口）；留空则使用默认端口"
-        )
     url = payload.external_url.strip()
     if url:
         parts = urlsplit(url)
@@ -99,15 +69,14 @@ def _validate_payload(payload: AppConfigPayload) -> None:
 
 
 async def save_config(payload: AppConfigPayload) -> AppConfigView:
-    """校验并保存应用设置。外部地址保存即生效；端口改动需重启（见返回的 restart_required）。"""
+    """校验并保存应用设置（保存即生效）。"""
     _validate_payload(payload)
     setting = AppServerSetting(
-        port=payload.port,
         # 规范化：去掉尾部斜杠，后续拼接路径时不用再处理
         external_url=payload.external_url.strip().rstrip("/"),
     )
     await get_setting_store().set(setting)
-    return _build_view(setting)
+    return AppConfigView(external_url=setting.external_url)
 
 
 # ---------------------------------------------------------------------------
@@ -117,8 +86,8 @@ async def save_config(payload: AppConfigPayload) -> AppConfigView:
 
 # main.run 启动时注册的 uvicorn Server 实例（开发热重载模式下为 None）
 _uvicorn_server: uvicorn.Server | None = None
-# 本次进程退出是否为「设置页请求的重启」——main.run 停机后据此决定退出码
-_restart_requested = False
+# 本次进程退出应使用的重启约定码（42 后端 / 43 全量）；None = 非重启退出
+_restart_exit_code: int | None = None
 
 
 def register_uvicorn_server(server: uvicorn.Server) -> None:
@@ -127,16 +96,16 @@ def register_uvicorn_server(server: uvicorn.Server) -> None:
     _uvicorn_server = server
 
 
-def restart_requested() -> bool:
-    """main.run 在 Server 停机后查询：本次退出是否应使用重启约定退出码。"""
-    return _restart_requested
+def restart_exit_code() -> int | None:
+    """main.run 在 Server 停机后查询：本次退出应使用的重启约定码（非重启为 None）。"""
+    return _restart_exit_code
 
 
-def _request_graceful_exit() -> None:
+def _request_graceful_exit(exit_code: int) -> None:
     """请求优雅停机：优先置 Server.should_exit，未注册实例时退回 SIGTERM。"""
-    global _restart_requested
-    _restart_requested = True
-    logger.info("正在按用户请求重启应用：优雅停机后由容器入口拉起新进程……")
+    global _restart_exit_code
+    _restart_exit_code = exit_code
+    logger.info("正在按请求重启应用（约定码 %d）：优雅停机后由容器入口拉起新进程……", exit_code)
     if _uvicorn_server is not None:
         # 与 uvicorn 收到 SIGTERM 后的处理路径殊途同归，但不经过信号投递
         _uvicorn_server.should_exit = True
@@ -145,18 +114,22 @@ def _request_graceful_exit() -> None:
         os.kill(os.getpid(), signal.SIGTERM)
 
 
-def _terminate_self() -> None:
+def _terminate_self(exit_code: int) -> None:
     """触发优雅停机；超时未退出则以重启约定退出码强制退出。"""
-    _request_graceful_exit()
+    _request_graceful_exit(exit_code)
     # 优雅停机成功时进程直接消失，走不到下面；只有停机被拖住才会兜底
     time.sleep(_FORCE_EXIT_SECONDS)
     logger.warning("优雅停机超时（%.0f 秒），强制退出进程以完成重启", _FORCE_EXIT_SECONDS)
     logging.shutdown()  # 强制退出不走解释器清理，先冲刷日志缓冲，保住上面这行警告
-    os._exit(RESTART_EXIT_CODE)
+    os._exit(exit_code)
 
 
-def schedule_restart() -> None:
-    """调度一次应用重启：延迟片刻（先让响应回到前端）后优雅退出进程。"""
-    timer = threading.Timer(_RESTART_DELAY_SECONDS, _terminate_self)
+def schedule_restart(exit_code: int = RESTART_EXIT_CODE) -> None:
+    """调度一次应用重启：延迟片刻（先让响应回到前端）后优雅退出进程。
+
+    exit_code 决定 entrypoint 的处理方式：42 只重启后端（默认，设置页重启），
+    43 前后端全量重启并重新解析代码来源（应用内更新/回退用）。
+    """
+    timer = threading.Timer(_RESTART_DELAY_SECONDS, _terminate_self, args=(exit_code,))
     timer.daemon = True
     timer.start()

@@ -1,3 +1,16 @@
+## 发布规范（硬约束）
+
+完整发版流程见 `.claude/skills/release/SKILL.md`（发版时必读），机制设计见
+`docs/design/in-app-update.md`。任何时候都不可违反的三条：
+
+1. **版本号三处一致**：`pyproject.toml` 的 version、`src/movieclaw_api/__init__.py`
+   的 `__version__`、Release tag（去 `v`）必须完全一致，构建脚本会强制校验。
+2. **动了运行时依赖必须 bump `docker/runtime-version`**：pyproject dependencies、
+   Node 大版本、Dockerfile 系统包/基础镜像、entrypoint 契约，任何一项变更都要 +1
+   并在合并后发布新镜像（CI 守卫会拦截漏 bump 的 PR）。
+3. **数据库迁移只能向前兼容**：应用内更新支持一键回退，迁移是单向的，
+   用户回退跨版本时靠更新前的自动备份恢复数据。
+
 ## 注释和日志
 1. 每一个关键类的设计和实现，补充完善的中文注释，好的注释可以帮助项目其他成员看懂关键设计思路，有利于后续的扩展和迭代。
 2. 日志可以使用中文输出明确的错误信息，这是一款开源软件，非开发者可能也会部署，遇到任何错误，他们需要能够看懂。

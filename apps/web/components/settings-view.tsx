@@ -5,6 +5,7 @@ import { useEffect, useRef, useState } from "react";
 import { LiquidGlassButton } from "@/vendor/liquid-glass";
 
 import { AppConfigSection } from "@/components/app-config-section";
+import { AppUpdateSection } from "@/components/app-update-section";
 import { AvatarBadge } from "@/components/avatar-badge";
 import { DownloaderConfigSection } from "@/components/downloader-config-section";
 import { ImportWatchSection } from "@/components/import-watch-section";
@@ -160,7 +161,13 @@ export function SettingsPanel({ active }: SettingsPanelProps) {
         ) : section.id === "weixin" ? (
           <WeixinBindingSection />
         ) : section.id === "app" ? (
-          <AppConfigSection />
+          // 「应用」一个分区收拢应用自身的一切：版本与更新（AppUpdateSection：
+          // 版本/更新/模型/回退）在前，网络与维护（AppConfigSection：外部访问
+          // 地址/重启）在后——重启这类危险操作按惯例垫底
+          <div className="space-y-7">
+            <AppUpdateSection />
+            <AppConfigSection />
+          </div>
         ) : section.id === "network" ? (
           <NetworkConfigSection />
         ) : section.id === "logs" ? (

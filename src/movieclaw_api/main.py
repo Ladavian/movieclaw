@@ -1,4 +1,3 @@
-import os
 import sys
 
 import uvicorn
@@ -8,11 +7,9 @@ from movieclaw_api.app import create_app
 from movieclaw_api.core.config import get_settings
 from movieclaw_api.core.logging import configure_logging
 from movieclaw_api.services.app_config import (
-    RESTART_EXIT_CODE,
     register_uvicorn_server,
-    restart_requested,
+    restart_exit_code,
 )
-from movieclaw_api.settings.app_server import RUNTIME_PORT_ENV, resolve_boot_port
 
 
 def app() -> FastAPI:
@@ -24,10 +21,10 @@ def run() -> None:
     # 启动 uvicorn 前先装配好根 logger：让「Started server process」等启动日志
     # 也进入按天落盘的日志文件（设置页「系统日志」的数据来源）。
     configure_logging(settings.log_level, settings.log_dir, settings.log_retention_days)
-    # 监听端口三级解析：APP_PORT 环境变量 > 设置页落库值 > 默认 8000。
-    # 实际生效端口记进环境变量，供设置页判断「改了端口是否还需重启」。
-    port = resolve_boot_port(settings.database_url, settings.port)
-    os.environ[RUNTIME_PORT_ENV] = str(port)
+    # 监听端口来自 APP_PORT 环境变量（默认 8000），不提供应用内配置：
+    # 用户视角的访问入口是前端（3000 / compose 端口映射），后端端口只在
+    # 容器内被 Next 反代，应用内改它对外部访问没有意义。
+    port = settings.port
     # 两个分支的公共 uvicorn 参数：
     # - log_config=None：不让 uvicorn 接管日志配置，它的 logger 直接向根 logger
     #   传播，与业务日志走同一套「控制台 + 按天落盘」Handler、同一格式。
@@ -64,8 +61,9 @@ def run() -> None:
     server = uvicorn.Server(config)
     register_uvicorn_server(server)
     server.run()
-    if restart_requested():
-        sys.exit(RESTART_EXIT_CODE)
+    exit_code = restart_exit_code()
+    if exit_code is not None:
+        sys.exit(exit_code)
 
 
 if __name__ == "__main__":

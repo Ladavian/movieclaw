@@ -24,6 +24,8 @@ export default async function SettingsSectionPage({
   const { section } = await params;
   // 旧「搜索」分区已并入「资源站点」，老书签/历史链接重定向过去，不要 404
   if (section === "search") redirect("/settings/sites" as Route);
+  // 旧「关于与更新」分区已并入「应用」，同样重定向兜底
+  if (section === "about") redirect("/settings/app" as Route);
   if (!settingsSections.some((s) => s.id === section)) notFound();
   return <SettingsPanel active={section} />;
 }

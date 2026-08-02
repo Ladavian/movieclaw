@@ -13,7 +13,9 @@
 # =============================================================================
 services:
   movieclaw:
-    image: movieclaw:latest
+    # 官方镜像（Docker Hub）。自己用 scripts/build-image.sh 从源码构建的话，
+    # 把这一行改成本地镜像名：movieclaw:latest
+    image: movieclaw/movieclaw:latest
     container_name: movieclaw
     init: true
     ports:
@@ -30,6 +32,9 @@ services:
       - TZ=Asia/Shanghai
       # 如需覆盖镜像内置的 TMDB Key，取消注释：
       # - TMDB_API_KEY=你自己的key
+      # 应用内更新（设置 → 关于与更新）下载 GitHub Release 慢时，可配加速
+      # 镜像前缀（ghproxy 风格；下载后仍会按官方清单做 sha256 校验）：
+      # - UPDATE_DOWNLOAD_MIRROR=https://ghproxy.com/
       # 公网 HTTPS 部署时建议开启（Cookie 仅走 https）：
       # - SESSION_COOKIE_SECURE=true
       # Emby/Jellyfin 入库通知（可选）：

@@ -71,29 +71,93 @@
 
 ## 快速开始
 
-### Docker（推荐）
+三种方式，**按你的情况选一种**即可：
 
-单容器跑全部（前端 + 后端 + NER 模型），只暴露 3000 端口。
+| 你是…… | 选哪种 | 需要会什么 |
+| --- | --- | --- |
+| 普通用户，想直接用起来（NAS / 家用服务器 / 云主机） | 方式一：官方镜像 | 会装 Docker 就行 |
+| 想自己从源码打包镜像部署 | 方式二：源码构建镜像 | 基本的命令行操作 |
+| 开发者，要改代码、调试 | 方式三：本地开发 | Python / Node 开发环境 |
+
+### 方式一：官方镜像（推荐，最简单）
+
+不用下载源码、不用编译。官方镜像
+[movieclaw/movieclaw](https://hub.docker.com/r/movieclaw/movieclaw)
+单容器跑全部（前端 + 后端 + NER 模型 + 内置 TMDB Key），支持 x86_64 与 ARM64。
+唯一前提：机器上装好 Docker（群晖用自带的 Container Manager，其他 NAS 用
+各自的 Docker 套件即可）。
+
+**第 1 步**：新建一个文件夹（比如叫 `movieclaw`），在里面创建一个名为
+`docker-compose.yml` 的文本文件，粘贴以下内容：
+
+```yaml
+services:
+  movieclaw:
+    image: movieclaw/movieclaw:latest
+    container_name: movieclaw
+    init: true
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./data:/app/data              # 运行数据，备份这个文件夹就够了
+      - /volume1/media:/media         # ← 改成你的媒体目录
+      - /volume1/downloads:/downloads # ← 改成你下载器的保存目录
+    environment:
+      - TZ=Asia/Shanghai
+    restart: unless-stopped
+```
+
+**第 2 步**：把 `volumes` 里后两行改成你机器上的真实路径。规则很简单：
+冒号**左边**是你机器上的目录，冒号**右边**是 movieclaw 在容器里看到的路径——
+之后在网页设置里填路径时，填的都是右边这个。下载器的保存目录一定要挂进来，
+movieclaw 才能整理下载完成的文件。
+
+**第 3 步**：在这个文件夹下启动（NAS 图形界面用户：在 Container Manager
+选「项目 → 新增」，指向这个文件夹即可）：
 
 ```bash
-# 1. 构建镜像（TMDB Key 会烧进镜像，运行时可用环境变量覆盖）
+docker compose up -d
+```
+
+**第 4 步**：浏览器打开 `http://<主机IP>:3000`，按引导创建管理员账号，
+然后照下文「上手四步」完成配置。
+
+### 方式二：源码构建镜像
+
+适合想自己出镜像、或改了代码想打包部署的用户。需要先在
+[themoviedb.org](https://www.themoviedb.org/settings/api) 免费申请一个
+TMDB API Key（官方镜像已内置，自建才需要）。
+
+```bash
+# 1. 下载源码
+git clone https://github.com/yipengfei329/movieclaw.git
+cd movieclaw
+
+# 2. 构建镜像（TMDB Key 会烧进镜像，运行时可用环境变量覆盖）
 TMDB_API_KEY=你的key ./scripts/build-image.sh
 #   国内网络加速： CN_MIRROR=1 TMDB_API_KEY=... ./scripts/build-image.sh
 #   给 NAS 交叉构建：PLATFORM=linux/amd64 TMDB_API_KEY=... ./scripts/build-image.sh
 
-# 2. 按实际情况修改 docker-compose.yml 里的媒体目录挂载，然后启动
+# 3. 把仓库根目录 docker-compose.yml 的 image 一行改成本地镜像名
+#    movieclaw:latest，按注释改好媒体目录挂载，然后启动
 docker compose up -d
 ```
 
-浏览器打开 `http://<主机IP>:3000`，按引导创建管理员账号。
+挂载路径的含义与方式一相同，更多可选项（覆盖 TMDB Key、更新加速镜像、
+Emby/Jellyfin 通知等）见 [docker-compose.yml](docker-compose.yml) 内的注释。
 
-挂载要点（详见 [docker-compose.yml](docker-compose.yml) 注释）：
+### 日常升级：应用内更新，无需重拉镜像
 
-- `./data:/app/data` —— 全部运行数据（数据库、日志、密钥、图片资产、缓存），**备份它就够了**
-- 媒体盘按实际路径挂进来，容器内路径就是「媒体库 / 监听导入」里填的路径
-- **下载器的保存目录也要以相同路径挂进来**，movieclaw 才能对下载完成的文件做入库整理
+以上两种 Docker 部署，装完后的日常升级都**不需要**重新拉取或构建镜像：
+在「设置 → 关于与更新」里一键检查并更新到最新版（前后端代码与 NER 模型），
+下载的是 GitHub Release 上几 MB 的产物包（可配加速镜像），更新落在 data 卷上、
+容器重建也不丢。只有当更新说明里明确提示「包含依赖变化，需升级 Docker 镜像」时，
+才需要 `docker compose pull && docker compose up -d`（自建镜像则重新构建）——
+这种情况很少发生。更新出问题可在同一页面一键回退，坏更新会被容器自动回落到
+可用版本，数据不受影响。
+（机制详见 [docs/design/in-app-update.md](docs/design/in-app-update.md)）
 
-### 本地开发
+### 方式三：本地开发
 
 ```bash
 ./scripts/dev.sh          # 同时启动后端和前端
@@ -120,7 +184,7 @@ pnpm install && pnpm web:dev
 - Web 控制台：`http://127.0.0.1:3000`
 - API 文档（Swagger UI）：`http://127.0.0.1:8000/docs`
 
-源码方式部署时，**种子名结构化抽取依赖的 NER 模型需手动放置**（Docker 镜像已内置）：
+源码方式运行时，**种子名结构化抽取依赖的 NER 模型需手动放置**（Docker 镜像已内置）：
 从 [Releases](https://github.com/yipengfei329/movieclaw/releases) 下载 `model.int8.onnx`、
 `tokenizer.json`、`labels.json` 放进 `data/models/torrent-ner/`（可用 `MOVIECLAW_NER_DIR` 改路径）后重启。
 不放模型服务照常启动，仅该功能不可用，日志中有明确提示。

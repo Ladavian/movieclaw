@@ -1,0 +1,94 @@
+# =============================================================================
+# 发版流水线（docs/design/in-app-update.md M1）
+#
+# 打 v* tag 时构建应用内更新产物并上传到 GitHub Release：
+#   app-web.tar.gz / app-backend.tar.gz / manifest.json
+# 产物上传成功后自动调用 docker-image.yml，同步发布同版本号的
+# Docker 镜像（多架构，标签策略见该工作流头注释）。
+# =============================================================================
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+  # 手动触发通道：远程会话（Claude Code 等）的 git 凭证通常只能推分支、
+  # 推不了 tag。这里输入目标 tag 后，由「创建 Release」步骤经 gh 一并创建
+  # tag（指向触发时的 main HEAD）。GITHUB_TOKEN 创建的 tag 不会再触发
+  # 本工作流的 push 事件，无递归风险。
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "要发布的 tag（如 v0.2.0），须与 pyproject / __version__ 一致"
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  release-artifacts:
+    runs-on: ubuntu-latest
+    env:
+      # tag 推送事件取 ref 名；手动触发取输入的 tag。后续步骤统一用它。
+      RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: 安装前端依赖
+        run: pnpm install --frozen-lockfile
+
+      - name: 安装后端运行依赖（spec 导出需要拉起 FastAPI app）
+        run: |
+          python -c "import tomllib; deps = tomllib.load(open('pyproject.toml', 'rb'))['project']['dependencies']; open('requirements.txt', 'w').write('\n'.join(deps))"
+          pip install --no-cache-dir -r requirements.txt
+
+      - name: 构建更新产物（版本取自 tag，与 pyproject/__version__ 三方校验）
+        env:
+          NEXT_TELEMETRY_DISABLED: "1"
+          # 配置了 RELEASE_SIGNING_KEY 机密（Ed25519 私钥 PEM）时自动生成
+          # manifest.json.sig；未配置则跳过签名（部署侧不设公钥即不校验）
+          RELEASE_SIGNING_KEY: ${{ secrets.RELEASE_SIGNING_KEY }}
+        run: |
+          VERSION="${RELEASE_TAG#v}" ./scripts/build-release-artifacts.sh dist/release
+
+      - name: 上传 Release assets（Release 不存在则创建）
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # 带预发布段的 tag（v0.2.0-beta 等）自动标记 GitHub prerelease：
+          # 应用内更新的检查逻辑会跳过 prerelease，避免 beta 被推给全量用户
+          PRERELEASE_FLAG=""
+          case "$RELEASE_TAG" in
+            *-*) PRERELEASE_FLAG="--prerelease" ;;
+          esac
+          if ! gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
+            # --target：tag 不存在时（手动触发通道）在该提交上创建 tag；
+            # tag 推送事件里 tag 已存在，此参数被忽略
+            gh release create "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" \
+              --target "$GITHUB_SHA" \
+              --title "$RELEASE_TAG" --generate-notes $PRERELEASE_FLAG
+          fi
+          assets=(dist/release/app-web.tar.gz dist/release/app-backend.tar.gz dist/release/manifest.json)
+          [ -f dist/release/manifest.json.sig ] && assets+=(dist/release/manifest.json.sig)
+          gh release upload "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --clobber "${assets[@]}"
+
+  # 产物发布成功后同步发布 Docker 镜像。串在产物之后而非并行，
+  # 是为了避免产物构建失败（版本校验不过等）时 latest 镜像已被推走。
+  docker-image:
+    needs: release-artifacts
+    uses: ./.github/workflows/docker-image.yml
+    with:
+      tag: ${{ inputs.tag || github.ref_name }}
+    secrets: inherit

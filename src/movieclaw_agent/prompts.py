@@ -9,6 +9,7 @@
 
 from __future__ import annotations
 
+import os
 from datetime import datetime
 from pathlib import Path
 
@@ -77,6 +78,17 @@ def build_system_prompt(extra_environment: str | None = None) -> str:
         "可以主动查阅源码分析根因。但注意：向用户解释结论时，要把代码细节翻译成"
         "用户能理解的功能逻辑，不要出现函数名、报错堆栈这类只有程序员才懂的术语。",
     ]
+    # 应用内更新的 overlay 生效时（Docker 部署，见 docs/design/in-app-update.md）：
+    # _SOURCE_ROOT 因从 __file__ 反推已自动指向 overlay 内的新代码，但镜像里
+    # 还留着旧的基线源码——必须明确告知模型别去读那份，否则它用 bash 探索
+    # 文件系统时撞见 /app/src 会误把旧代码当成正在运行的实现。
+    if os.environ.get("MOVIECLAW_CODE_SOURCE") == "overlay":
+        overlay_version = os.environ.get("MOVIECLAW_OVERLAY_VERSION", "")
+        lines.append(
+            f"- 当前运行的是应用内更新版本{f' v{overlay_version}' if overlay_version else ''}，"
+            "上面的源码目录已指向该版本。镜像内 /app/src、/app/web 是旧的基线备份，"
+            "查阅源码一律以上面的目录为准，不要读 /app 下的那份。"
+        )
     if extra_environment:
         lines.append(extra_environment)
     return "\n".join(lines)
