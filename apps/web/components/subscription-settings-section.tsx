@@ -446,15 +446,26 @@ function LibraryPipelineCard({
   if (pipeline.mode === "watch") {
     nodes.push({
       key: "transfer",
-      label: "转移进库",
-      sub: null,
+      label: pipeline.staging_path ? "整理输出" : "转移进库",
+      sub: pipeline.staging_path,
       status: worst(transferChecks.map((c) => c.status)),
       checks: transferChecks,
     });
   }
+  if (pipeline.staging_path) {
+    // 自定义目录规则：整理后不直接入库——中间隔着用户自己的外部流转
+    // （上传/转存/人工确认），movieclaw 不判它的死活，节点仅作说明
+    nodes.push({
+      key: "external",
+      label: "外部流转",
+      sub: null,
+      status: "ok",
+      checks: [],
+    });
+  }
   nodes.push({
     key: "ingest",
-    label: "入库",
+    label: pipeline.staging_path ? "回流入账" : "入库",
     sub: pipeline.library_root,
     status: ingestError ? "error" : "ok",
     checks: [],
@@ -635,12 +646,20 @@ function SimulatePanel() {
                 n={2}
                 text={
                   preview.mode === "watch"
-                    ? `投递到监听导入目录 ${preview.path}，下载完成后自动整理入库`
+                    ? preview.staging_path
+                      ? `投递到监听导入目录 ${preview.path}，下载完成后识别改名并整理到 ${preview.staging_path}`
+                      : `投递到监听导入目录 ${preview.path}，下载完成后自动整理入库`
                     : preview.mode === "inplace"
                       ? `直接下载到库内目录 ${preview.path?.replace(/\/+$/, "")}/${picked.title}${picked.year ? ` (${picked.year})` : ""}，完成后自动入账`
                       : "落到下载器默认目录（不会自动入库）"
                 }
               />
+              {preview.staging_path && (
+                <SimStep
+                  n={3}
+                  text="等待文件进入媒体库根目录后自动扫描入账（上传/转存等外部流转由你的工具完成）"
+                />
+              )}
               {preview.ok ? (
                 <p className="flex items-center gap-1.5 pt-1 text-sub font-medium text-[#4ade80]">
                   ✓ 全链路可行：订阅后即可自动下载并整理入库

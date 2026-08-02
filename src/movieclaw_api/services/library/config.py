@@ -40,6 +40,19 @@ def sanitize_folder_name(name: str) -> str:
     return cleaned or "未命名"
 
 
+def derive_entry_dir(root: str, *, title: str, year: int | None) -> str:
+    """由根路径推导条目目录：``{root}/{title} ({year})``。
+
+    库入库与监听导入的自定义目录目标共用同一命名规范——命名同源是
+    "整理输出 → 外部流转 → 库根回流"链路的唯一衔接机制
+    （docs/design/strm-workflow.md）。路径用 POSIX 分隔符拼接。
+    """
+    folder = sanitize_folder_name(title)
+    if year is not None:
+        folder = f"{folder} ({year})"
+    return posixpath.join(root.rstrip("/"), folder)
+
+
 def derive_save_path(library: Library, *, title: str, year: int | None) -> str | None:
     """由库推导入库保存路径：``{主根}/{title} ({year})``。
 
@@ -51,10 +64,7 @@ def derive_save_path(library: Library, *, title: str, year: int | None) -> str |
     root = library.primary_root
     if not root:
         return None
-    folder = sanitize_folder_name(title)
-    if year is not None:
-        folder = f"{folder} ({year})"
-    return posixpath.join(root.rstrip("/"), folder)
+    return derive_entry_dir(root, title=title, year=year)
 
 
 class LibraryConfigService:

@@ -121,7 +121,9 @@ export function DownloadTargetDialog({
       const folder = `${request.identity.title} (${request.identity.year})`;
       const detail =
         preview?.mode === "watch"
-          ? `投递到监听导入目录 ${preview.path}，完成后自动整理入库`
+          ? preview.staging_path
+            ? `投递到监听导入目录 ${preview.path}，完成后整理到 ${preview.staging_path}（外部流转回库根后入账）`
+            : `投递到监听导入目录 ${preview.path}，完成后自动整理入库`
           : preview
             ? `直接下载到 ${preview.path?.replace(/\/+$/, "")}/${folder}，完成后自动入账`
             : null;

@@ -1,23 +1,30 @@
 """监听导入规则的配置服务：CRUD 与校验（媒体库之上的独立功能）。
 
 规则 = 源目录 → 目标 的搬运声明（策略：硬链接/复制），由
-``library_ingest`` 引擎消费。目标二选一（docs/design/library-routing.md 2.3）：
+``library_ingest`` 引擎消费。目标三态（docs/design/library-routing.md 2.3、
+docs/design/strm-workflow.md）：
 
 - **指定库**（``library_id`` 非空）：内容固定进该库；
-- **自动路由**（``library_id`` 为 NULL + ``kind`` 必填）：识别出作品后按
-  各库的收藏范围声明选库。kind 仍须先验（识别链按 movie/tv 分叉）；
-  每 kind 至多一条 auto 规则——多条会让订阅投递的落点歧义。
+- **自动路由**（``library_id`` 与 ``target_path`` 均空 + ``kind`` 必填）：
+  识别出作品后按各库的收藏范围声明选库。kind 仍须先验（识别链按
+  movie/tv 分叉）；每 kind 至多一条 auto 规则——多条会让订阅投递的
+  落点歧义；
+- **自定义目录**（``target_path`` 非空 + ``kind`` 必填）：识别改名后落
+  该目录、不进入任何媒体库——"整理结果需外部流转再进库"场景的落点。
+  每 kind 至多一条（投递查找链同 auto 理由）。
 
 校验要点：
 
+- ``library_id`` 与 ``target_path`` 互斥；
 - 源目录不得与**任何**库的根路径前缀重叠（双头管理必乱；库侧改根路径
-  时做反向校验，见 LibraryConfigService）；
+  时做反向校验，见 LibraryConfigService）；自定义目录同理，且不得与
+  任何监听源目录重叠——整理输出落回监听区会被再次消费成环；
 - 源目录全局唯一（数据库唯一索引兜底，这里给可读中文报错）；
-- 策略选硬链接时做**同盘检测**（源目录与目标库主根的 st_dev 比对）——
+- 策略选硬链接时做**同盘检测**（源目录与落点的 st_dev 比对）——
   把"跨文件系统无法硬链"从第一次搬运失败前置到保存配置时；auto 规则
   对该 kind **全部可能目标库**（声明收藏范围的库 + 默认库）逐一检测，
-  列出不同盘的库名；任一目录尚不存在（挂载未就绪）时跳过检测，
-  搬运失败的中文引导兜底。
+  列出不同盘的库名；自定义目录对 ``target_path`` 检测；任一目录尚不
+  存在（挂载未就绪）时跳过检测，搬运失败的中文引导兜底。
 """
 
 from __future__ import annotations
@@ -44,9 +51,12 @@ _KIND_LABELS = {"movie": "电影", "tv": "剧集"}
 
 
 def rule_target_label(rule: ImportWatch, library_name: str | None) -> str:
-    """规则目标的展示名：库名 或「自动路由（电影/剧集）」（日志与接口共用）。"""
+    """规则目标的展示名：库名 /「自动路由（电影/剧集）」/「自定义目录 …」
+    （日志与接口共用）。"""
     if rule.library_id is not None:
         return f"「{library_name or '?'}」"
+    if rule.target_path:
+        return f"自定义目录（{rule.target_path}）"
     return f"自动路由（{_KIND_LABELS.get(rule.kind or '', rule.kind or '?')}）"
 
 
@@ -73,11 +83,22 @@ class ImportWatchConfigService:
         strategy: str,
         library_id: int | None,
         kind: str | None = None,
+        target_path: str | None = None,
     ) -> ImportWatch:
-        source, kind = await self._validate(
-            source_path=source_path, strategy=strategy, library_id=library_id, kind=kind
+        source, kind, target = await self._validate(
+            source_path=source_path,
+            strategy=strategy,
+            library_id=library_id,
+            kind=kind,
+            target_path=target_path,
         )
-        row = ImportWatch(source_path=source, strategy=strategy, library_id=library_id, kind=kind)
+        row = ImportWatch(
+            source_path=source,
+            strategy=strategy,
+            library_id=library_id,
+            kind=kind,
+            target_path=target,
+        )
         self._session.add(row)
         await self._session.commit()
         await self._session.refresh(row)
@@ -99,19 +120,22 @@ class ImportWatchConfigService:
         strategy: str,
         library_id: int | None,
         kind: str | None = None,
+        target_path: str | None = None,
     ) -> ImportWatch:
         row = await self.get(rule_id)
-        source, kind = await self._validate(
+        source, kind, target = await self._validate(
             source_path=source_path,
             strategy=strategy,
             library_id=library_id,
             kind=kind,
+            target_path=target_path,
             exclude_id=rule_id,
         )
         row.source_path = source
         row.strategy = strategy
         row.library_id = library_id
         row.kind = kind
+        row.target_path = target
         row.updated_at = utcnow()
         await self._session.commit()
         await self._session.refresh(row)
@@ -134,17 +158,45 @@ class ImportWatchConfigService:
         strategy: str,
         library_id: int | None,
         kind: str | None,
+        target_path: str | None,
         exclude_id: int | None = None,
-    ) -> tuple[str, str | None]:
+    ) -> tuple[str, str | None, str | None]:
         source = source_path.strip().rstrip("/")
         if not source or not source.startswith("/"):
             raise BadRequestException("源目录必须是绝对路径")
         if strategy not in STRATEGIES:
             raise BadRequestException("搬运策略必须是硬链接（hardlink）或复制（copy）")
+        if library_id is not None and target_path:
+            raise BadRequestException(
+                "目标只能选一种：指定媒体库、自动路由或自定义目录"
+                "（library_id 与 target_path 不能同时提供）"
+            )
 
-        # 目标解析：指定库（kind 由库推导、存 NULL）或 auto（kind 必填）
-        hardlink_targets: list[Library]
-        if library_id is not None:
+        # 目标解析：指定库（kind 由库推导、存 NULL）/ 自定义目录（kind 必填）
+        # / auto（kind 必填）
+        target: str | None = None
+        hardlink_targets: list[Library] = []
+        if target_path:
+            target = target_path.strip().rstrip("/")
+            if not target or not target.startswith("/"):
+                raise BadRequestException("自定义目录必须是绝对路径")
+            if kind not in _KINDS:
+                raise BadRequestException("自定义目录规则必须指定媒体类型（movie / tv）")
+            # 每 kind 至多一条：投递查找链（resolve_dispatch_rule）的落点不能歧义
+            existing_target = (
+                await self._session.execute(
+                    select(ImportWatch).where(
+                        ImportWatch.target_path.is_not(None),  # type: ignore[union-attr]
+                        ImportWatch.kind == kind,
+                    )
+                )
+            ).scalar_one_or_none()
+            if existing_target is not None and existing_target.id != exclude_id:
+                raise BadRequestException(
+                    f"{_KIND_LABELS[kind]}已有自定义目录规则（{existing_target.source_path}）——"
+                    "每个类型至多一条，请编辑既有规则"
+                )
+        elif library_id is not None:
             library = await self._session.get(Library, library_id)
             if library is None:
                 raise NotFoundException(f"目标媒体库不存在：id={library_id}")
@@ -157,11 +209,13 @@ class ImportWatchConfigService:
         else:
             if kind not in _KINDS:
                 raise BadRequestException("自动路由规则必须指定媒体类型（movie / tv）")
-            # 每 kind 至多一条 auto 规则：多条会让订阅投递的落点歧义
+            # 每 kind 至多一条 auto 规则：多条会让订阅投递的落点歧义。
+            # 自定义目录规则的 library_id 同为 NULL，须按 target_path 区分
             existing_auto = (
                 await self._session.execute(
                     select(ImportWatch).where(
                         ImportWatch.library_id.is_(None),  # type: ignore[union-attr]
+                        ImportWatch.target_path.is_(None),  # type: ignore[union-attr]
                         ImportWatch.kind == kind,
                     )
                 )
@@ -192,27 +246,46 @@ class ImportWatchConfigService:
                     "或声明了收藏范围的库），请先到「媒体库」创建"
                 )
 
-        # 与所有库的根路径不重叠（不只是目标库：落在任何库根下都会被扫描双头管理）
+        def _overlaps(a: str, b: str) -> bool:
+            return a == b or a.startswith(b + "/") or b.startswith(a + "/")
+
+        # 与所有库的根路径不重叠（不只是目标库：落在任何库根下都会被扫描双头
+        # 管理）；自定义目录同理——整理输出落进库根等于绕过了"外部流转"语义
         libraries = list((await self._session.execute(select(Library))).scalars().all())
         for lib in libraries:
             for root in lib.root_paths:
                 r = root.rstrip("/")
-                if source == r or source.startswith(r + "/") or r.startswith(source + "/"):
+                if _overlaps(source, r):
                     raise BadRequestException(
                         f"源目录与媒体库「{lib.name}」的根路径重叠：{source} ↔ {root}"
                     )
+                if target is not None and _overlaps(target, r):
+                    raise BadRequestException(
+                        f"自定义目录与媒体库「{lib.name}」的根路径重叠：{target} ↔ {root}"
+                    )
+
+        # 自定义目录与监听源互不重叠（含本条规则自身）：整理输出落回监听区
+        # 会被再次消费成环
+        rules = list((await self._session.execute(select(ImportWatch))).scalars().all())
+        others = [r for r in rules if r.id != exclude_id]
+        if target is not None:
+            for candidate in [source, *(r.source_path for r in others)]:
+                if _overlaps(target, candidate):
+                    raise BadRequestException(f"自定义目录与监听源目录重叠：{target} ↔ {candidate}")
+        for r in others:
+            if r.target_path and _overlaps(source, r.target_path):
+                raise BadRequestException(
+                    f"源目录与另一条规则的自定义目录重叠：{source} ↔ {r.target_path}"
+                )
 
         # 源目录全局唯一
-        existing = (
-            await self._session.execute(
-                select(ImportWatch).where(ImportWatch.source_path == source)
-            )
-        ).scalar_one_or_none()
-        if existing is not None and existing.id != exclude_id:
+        existing = next((r for r in others if r.source_path == source), None)
+        if existing is not None:
             raise BadRequestException(f"该源目录已有监听导入规则：{source}")
 
         # 硬链接的同盘检测：跨盘当场提示，不留到第一次搬运失败。auto 规则
-        # 逐库检测——路由到哪个库都可能，任何一个不同盘将来都会搬运失败
+        # 逐库检测——路由到哪个库都可能，任何一个不同盘将来都会搬运失败；
+        # 自定义目录规则对 target 检测
         if strategy == "hardlink":
             offenders: list[str] = []
             try:
@@ -227,24 +300,36 @@ class ImportWatchConfigService:
                         continue
                     if root_dev != source_dev:
                         offenders.append(lib.name)
+                if target is not None:
+                    try:
+                        if os.stat(target).st_dev != source_dev:
+                            raise BadRequestException(
+                                f"源目录与自定义目录不在同一文件系统（{source} ↔ {target}），"
+                                "硬链接无法工作；请把策略改为「复制」，或把它们放到同一存储卷"
+                            )
+                    except OSError:
+                        pass  # 目录未就绪：同上跳过
             if offenders:
                 names = "」「".join(offenders)
                 raise BadRequestException(
                     f"源目录与媒体库「{names}」的主根不在同一文件系统，"
                     "硬链接无法工作；请把策略改为「复制」，或把它们放到同一存储卷"
                 )
-        return source, kind
+        return source, kind, target
 
 
 async def resolve_dispatch_rule(
     session: AsyncSession, library_id: int | None, *, kind: str | None = None
 ) -> ImportWatch | None:
-    """投递会命中的监听导入规则：目标库的专属规则 → 同 kind 的自动路由规则 → None。
+    """投递会命中的监听导入规则：
+    目标库的专属规则 → 同 kind 的自动路由规则 → 同 kind 的自定义目录规则 → None。
 
     订阅/手动下载止于投递——把种子投到会被监听导入接管的目录（分离布局），
     或不指定目录退下载器默认。auto 规则兜底让"一个混合下载目录服务所有库"
     成立：完成后按 info_hash 认领回订阅身份，目标库=订阅定格的库，与投递
-    预检的结论必然一致（docs/design/library-routing.md 2.3）。
+    预检的结论必然一致（docs/design/library-routing.md 2.3）。自定义目录
+    规则再兜一格：命中它意味着完成后整理到规则声明的目录、不直接进库
+    （docs/design/strm-workflow.md——外部流转后由库根扫描收尾）。
     多条规则指向同一库时取最早创建的一条。
     投递方（dispatch/预检）只关心源目录，链路体检还要读策略——故返回规则本体。
     """
@@ -263,12 +348,29 @@ async def resolve_dispatch_rule(
         if rule is not None:
             return rule
     if kind is not None:
-        return (
+        auto_rule = (
             (
                 await session.execute(
                     select(ImportWatch)
                     .where(
                         ImportWatch.library_id.is_(None),  # type: ignore[union-attr]
+                        ImportWatch.target_path.is_(None),  # type: ignore[union-attr]
+                        ImportWatch.kind == kind,
+                    )
+                    .order_by(ImportWatch.id)
+                )
+            )
+            .scalars()
+            .first()
+        )
+        if auto_rule is not None:
+            return auto_rule
+        return (
+            (
+                await session.execute(
+                    select(ImportWatch)
+                    .where(
+                        ImportWatch.target_path.is_not(None),  # type: ignore[union-attr]
                         ImportWatch.kind == kind,
                     )
                     .order_by(ImportWatch.id)

@@ -108,7 +108,7 @@ export function ImportWatchSection() {
       <p className="text-ui leading-6 text-[var(--text-muted)]">
         监听下载目录，其中<strong className="font-medium text-white/80">下载完成</strong>
         的内容（下载器确认完成，或文件持续静默且探测通过）自动识别、按「标题 (年份)」规范命名
-        搬进目标媒体库。源文件原地保留：硬链接零占用、可继续做种；复制适合跨盘。
+        搬进目标媒体库或你指定的自定义目录。源文件原地保留：硬链接零占用、可继续做种；复制适合跨盘。
         把下载器的保存目录设为这里的源目录，即可实现「下载完成自动整理入库」。
       </p>
 
@@ -225,12 +225,16 @@ function RuleFormDialog({
   const [error, setError] = useState<string | null>(null);
   const [sourcePath, setSourcePath] = useState("");
   const [strategy, setStrategy] = useState<"hardlink" | "copy">("hardlink");
-  // 目标二选一：指定库，或「自动路由（电影/剧集）」——识别出作品后按各库
-  // 收藏范围选库，一个混合下载目录即可服务该类型的所有库
+  // 目标三态：指定库 /「自动路由（电影/剧集）」/ 自定义目录——最后一种
+  // 识别改名后落所选目录、不进任何库（整理结果需外部流转再进库的场景）
   const [target, setTarget] = useState<
-    { type: "library"; id: number } | { type: "auto"; kind: "movie" | "tv" } | null
+    | { type: "library"; id: number }
+    | { type: "auto"; kind: "movie" | "tv" }
+    | { type: "path"; path: string; kind: "movie" | "tv" }
+    | null
   >(null);
-  const [pickerOpen, setPickerOpen] = useState(false);
+  // 目录浏览弹窗当前服务的字段：源目录 / 自定义目录
+  const [pickerFor, setPickerFor] = useState<"source" | "target" | null>(null);
 
   useEffect(() => {
     if (state === null) return;
@@ -239,6 +243,8 @@ function RuleFormDialog({
     setStrategy(rule?.strategy ?? "hardlink");
     if (rule?.library_id != null) {
       setTarget({ type: "library", id: rule.library_id });
+    } else if (rule?.target_path) {
+      setTarget({ type: "path", path: rule.target_path, kind: rule.kind ?? "movie" });
     } else if (rule?.kind) {
       setTarget({ type: "auto", kind: rule.kind });
     } else if (initialTarget) {
@@ -246,12 +252,16 @@ function RuleFormDialog({
     } else {
       setTarget(libraries[0] ? { type: "library", id: libraries[0].id } : null);
     }
-    setPickerOpen(false);
+    setPickerFor(null);
   }, [state, rule, libraries, initialTarget]);
 
   if (state === null) return null;
 
-  const canSubmit = !busy && sourcePath.length > 0 && target !== null;
+  const canSubmit =
+    !busy &&
+    sourcePath.length > 0 &&
+    target !== null &&
+    (target.type !== "path" || target.path.length > 0);
 
   const submit = () => {
     if (target === null) return;
@@ -261,7 +271,8 @@ function RuleFormDialog({
       source_path: sourcePath,
       strategy,
       library_id: target.type === "library" ? target.id : null,
-      kind: target.type === "auto" ? target.kind : null,
+      kind: target.type === "library" ? null : target.kind,
+      target_path: target.type === "path" ? target.path : null,
     };
     void (rule ? updateImportWatchRule(rule.id, payload) : createImportWatchRule(payload))
       .then(onSaved)
@@ -289,7 +300,7 @@ function RuleFormDialog({
             <label className={labelClass}>源目录（监听这里的下载）</label>
             <button
               type="button"
-              onClick={() => setPickerOpen(true)}
+              onClick={() => setPickerFor("source")}
               className="flex w-full items-center gap-2 rounded-xl border border-white/[0.08] bg-white/[0.04] px-3 py-2 text-left transition-colors hover:border-[var(--accent)]/50"
             >
               <FolderIcon className="size-4 shrink-0 text-[var(--accent)]/80" />
@@ -358,8 +369,8 @@ function RuleFormDialog({
             </div>
             <p className="mt-1.5 text-caption leading-relaxed text-[var(--text-faint)]">
               {strategy === "hardlink"
-                ? "保存时会检测源目录与目标库主根是否同一文件系统，跨盘会提示改用复制。"
-                : "复制适合源目录与库不在同一块盘的部署。"}
+                ? "保存时会检测源目录与整理落点（库主根或自定义目录）是否同一文件系统，跨盘会提示改用复制。"
+                : "复制适合源目录与落点不在同一块盘的部署。"}
             </p>
           </div>
 
@@ -395,16 +406,68 @@ function RuleFormDialog({
                   {label}
                 </button>
               ))}
+              <button
+                type="button"
+                onClick={() =>
+                  setTarget((prev) =>
+                    prev?.type === "path" ? prev : { type: "path", path: "", kind: "movie" },
+                  )
+                }
+                data-active={target?.type === "path"}
+                className="glass-row nav-item !w-auto px-3 py-1.5 text-sub font-medium"
+                title="识别改名后放入指定目录、不进入任何媒体库——适合整理结果还需外部流转（如上传、转存）再进库的场景"
+              >
+                自定义目录…
+              </button>
               {libraries.length === 0 && (
                 <p className="text-sub text-[var(--text-faint)]">
                   还没有媒体库，请先在「媒体库」页创建。
                 </p>
               )}
             </div>
+            {target?.type === "path" && (
+              <div className="mt-2 space-y-2">
+                <button
+                  type="button"
+                  onClick={() => setPickerFor("target")}
+                  className="flex w-full items-center gap-2 rounded-xl border border-white/[0.08] bg-white/[0.04] px-3 py-2 text-left transition-colors hover:border-[var(--accent)]/50"
+                >
+                  <FolderIcon className="size-4 shrink-0 text-[var(--accent)]/80" />
+                  {target.path ? (
+                    <span dir="rtl" className="min-w-0 flex-1 truncate font-mono text-ui text-[var(--text)]">
+                      {"‎" + target.path + "‎"}
+                    </span>
+                  ) : (
+                    <span className="text-ui text-[var(--text-faint)]">选择整理结果的存放目录…</span>
+                  )}
+                </button>
+                <div className="flex gap-2">
+                  {(
+                    [
+                      ["movie", "电影"],
+                      ["tv", "剧集"],
+                    ] as const
+                  ).map(([k, label]) => (
+                    <button
+                      key={k}
+                      type="button"
+                      onClick={() => setTarget({ type: "path", path: target.path, kind: k })}
+                      data-active={target.kind === k}
+                      className="glass-row nav-item !w-auto px-3 py-1.5 text-sub font-medium"
+                      title="识别链需要先知道内容是电影还是剧集（命名与季集解析不同）"
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
             <p className="mt-1.5 text-caption leading-relaxed text-[var(--text-faint)]">
               {target?.type === "auto"
                 ? "自动路由：识别出作品后按各媒体库的「收藏范围」分流（如动画进动漫库），未命中进该类型的默认库；订阅投递的内容始终进订阅指定的库。每个类型至多一条自动路由规则。"
-                : "指定库：这个目录里的内容固定导入所选库（落其主根）。"}
+                : target?.type === "path"
+                  ? "自定义目录：下载整理（识别改名）后的文件放入该目录，不进入任何媒体库。适合整理结果还需外部流转（如上传网盘、转存、人工确认）再进入媒体库的场景——文件后续出现在某个库的根目录时会被自动扫描入账。目录不得与库根或监听源重叠，每个类型至多一条。"
+                  : "指定库：这个目录里的内容固定导入所选库（落其主根）。"}
             </p>
           </div>
 
@@ -425,12 +488,24 @@ function RuleFormDialog({
       </Modal>
 
       <DirectoryPicker
-        open={pickerOpen}
-        initialPath={sourcePath || undefined}
-        onClose={() => setPickerOpen(false)}
+        open={pickerFor !== null}
+        initialPath={
+          (pickerFor === "target"
+            ? target?.type === "path"
+              ? target.path
+              : undefined
+            : sourcePath) || undefined
+        }
+        onClose={() => setPickerFor(null)}
         onSelect={(path) => {
-          setSourcePath(path);
-          setPickerOpen(false);
+          if (pickerFor === "target") {
+            setTarget((prev) =>
+              prev?.type === "path" ? { ...prev, path } : { type: "path", path, kind: "movie" },
+            );
+          } else {
+            setSourcePath(path);
+          }
+          setPickerFor(null);
         }}
       />
     </>

@@ -1,4 +1,9 @@
-"""下载监听导入：监听目录里下载完成的内容 → 识别 → 硬链/复制进库主根。
+"""下载监听导入：监听目录里下载完成的内容 → 识别 → 硬链/复制到目标。
+
+目标三态（docs/design/strm-workflow.md）：指定库/自动路由进库主根；
+**自定义目录**规则落规则声明的目录——识别改名后即完成，不进任何库
+（文件是"过客"：外部流转——上传网盘、转存、人工确认——后出现在某个
+库根时由扫描收尾入账）。
 
 与既有两条入库路径的关系（docs/design/library.md 语境）：
 - 订阅管线靠**下载器 API 轮询**确认完成后硬链入库（download_progress）；
@@ -65,7 +70,7 @@ from pathlib import Path
 from sqlmodel import select
 
 from movieclaw_api.services.import_watch_config import rule_target_label
-from movieclaw_api.services.library.config import derive_save_path
+from movieclaw_api.services.library.config import derive_entry_dir, derive_save_path
 from movieclaw_api.services.library.layout import (
     IN_PROGRESS_MARKERS,
     VIDEO_EXTS,
@@ -396,7 +401,10 @@ async def _ingest_entry(
 ) -> None:
     strategy = rule.strategy
     # 目标库：指定库规则即入参；auto 规则在识别出作品后才决定（见下），
-    # conclude 闭包读的是当下的 dest_library——选定目标前失败的条目落账无归属库
+    # conclude 闭包读的是当下的 dest_library——选定目标前失败的条目落账无归属库。
+    # 自定义目录规则（staging 非空）不涉及任何库：识别改名后落该目录即完成，
+    # 文件是"过客"（外部流转后由库根扫描收尾），不写库台账、不生成资产
+    staging = rule.target_path
     dest_library: Library | None = library
 
     async def conclude(status: IngestStatus, message: str, imported: int = 0) -> None:
@@ -425,7 +433,9 @@ async def _ingest_entry(
         return
 
     # 身份优先级：订阅工单认领（info_hash 命中在途投递 → 继承投递时锚定的
-    # 精确身份，零猜测）→ 名称解析识别链（第三方下载的兜底）
+    # 精确身份，零猜测）→ 名称解析识别链（第三方下载的兜底）。自定义目录
+    # 规则同样认领——身份与落点分离：认领只取身份（免重新识别、命名更准），
+    # 落点始终由规则声明决定（docs/design/strm-workflow.md 2.3）
     item, pinned_library_id = await _wanted_identity(session, matched_hashes or [])
     claimed = item is not None
     if item is None:
@@ -442,7 +452,7 @@ async def _ingest_entry(
     # 订阅认领的内容沿用创建时定格的库——粘性 + 尊重用户在订阅上的手选，
     # 不重新路由；识别链身份才走收藏范围路由（route 内含默认库兜底）
     route_note: str | None = None
-    if dest_library is None:
+    if staging is None and dest_library is None:
         if claimed and pinned_library_id is not None:
             dest_library = await session.get(Library, pinned_library_id)
             if dest_library is not None:
@@ -461,18 +471,25 @@ async def _ingest_entry(
             )
             return
 
-    dest_dir = derive_save_path(dest_library, title=item.title, year=item.year)
-    if dest_dir is None:
-        await conclude(
-            IngestStatus.FAILED, f"媒体库「{dest_library.name}」没有配置根路径，无法入库"
-        )
-        return
+    if staging is not None:
+        # 自定义目录与库入库共用同一命名规范——回流文件名天然规范，
+        # 库根扫描识别精准命中，这就是两段链路的全部衔接
+        dest_dir = derive_entry_dir(staging, title=item.title, year=item.year)
+    else:
+        assert dest_library is not None
+        dest_dir = derive_save_path(dest_library, title=item.title, year=item.year)
+        if dest_dir is None:
+            await conclude(
+                IngestStatus.FAILED, f"媒体库「{dest_library.name}」没有配置根路径，无法入库"
+            )
+            return
 
     # 发布信息以条目名为准（比单集文件名完整），与入库管线的种子名口径一致
     release_attrs = enrich(entry.name if entry.is_dir() else entry.stem)
     base = entry_base_name(item)
     repo = LibraryFileRepository(session)
-    assert dest_library.id is not None and item.id is not None
+    assert item.id is not None
+    assert staging is not None or (dest_library is not None and dest_library.id is not None)
 
     files = [main] if kind is MediaKind.MOVIE else list(snap.videos)
     notes: list[str] = []
@@ -513,7 +530,12 @@ async def _ingest_entry(
             notes.append(str(exc))
             continue
         if final is None:
-            continue  # 同一内容已在库（重复处理/增量重扫），静默幂等
+            continue  # 同一内容已在目标（重复处理/增量重扫），静默幂等
+        if staging is not None:
+            # 自定义目录：文件是"过客"，搬到位即完成，不写库台账
+            imported += 1
+            continue
+        assert dest_library is not None and dest_library.id is not None
         await repo.upsert_by_path(
             LibraryFile(
                 library_id=dest_library.id,
@@ -538,12 +560,14 @@ async def _ingest_entry(
         )
         imported += 1
 
-    if imported:
+    if imported and staging is None:
         # NFO 身份档案：Emby 零歧义、自家重扫免收敛（已存在不覆盖，失败不阻断）
         from movieclaw_api.services.library.nfo import write_entry_nfo
 
         await asyncio.to_thread(write_entry_nfo, Path(dest_dir), item)
-        # 库存对账：新入库的单元关闭对应的订阅工单（订阅止于投递）
+        # 库存对账：新入库的单元关闭对应的订阅工单（订阅止于投递）。
+        # 自定义目录不在此列——"库里有"才算完成，工单在文件外部流转后
+        # 由库根扫描入账时关闭
         from movieclaw_api.services.subscription import close_fulfilled_wanted
 
         await close_fulfilled_wanted(session, item.id)
@@ -560,11 +584,15 @@ async def _ingest_entry(
         if route_note:
             message += f"，{route_note}"
         message += f"，{verb} {imported} 个文件到 {dest_dir}"
+        if staging is not None:
+            message += "；文件进入媒体库根目录后将自动入账"
         if notes:
             message += "；" + "；".join(notes)
         await conclude(IngestStatus.IMPORTED, message, imported)
     elif notes:
         await conclude(IngestStatus.FAILED, "；".join(notes))
+    elif staging is not None:
+        await conclude(IngestStatus.IMPORTED, f"《{item.title}》的内容已全部在目标目录，无需搬运")
     else:
         # 全部文件都已在库（此前处理过/多下载器重复下载）：结论记 imported
         await conclude(IngestStatus.IMPORTED, f"《{item.title}》的内容已全部在库，无需搬运")
@@ -687,7 +715,7 @@ def _transfer(src: Path, dst: Path, strategy: str, version_label: str) -> Path |
     except OSError as exc:
         if exc.errno == errno.EXDEV:
             raise IngestError(
-                f"硬链接失败：监听目录与库主根不在同一文件系统（{src.name}）。"
+                f"硬链接失败：监听目录与目标目录不在同一文件系统（{src.name}）。"
                 "请把该监听目录的策略改为「复制」，或把两者放到同一存储卷"
             ) from exc
         raise IngestError(f"硬链接失败（{exc.strerror}）：{src.name} → {final}") from exc
