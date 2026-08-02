@@ -78,23 +78,39 @@ export function DownloadTargetDialog({
   onClose: () => void;
   onSubmitted: (result: DownloadSubmitResult) => void;
 }) {
+  if (!request) return null;
+  // 以 request 为 key 强制内容组件重新挂载：每次打开都从全新 state（loading=true）
+  // 开始，避免默认选中 effect 读到上一次的旧数据抢先选中错误项
+  return (
+    <DialogContent
+      key={`${request.site_id}:${request.download_url}`}
+      request={request}
+      onClose={onClose}
+      onSubmitted={onSubmitted}
+    />
+  );
+}
+
+function DialogContent({
+  request,
+  onClose,
+  onSubmitted,
+}: {
+  request: DownloadTargetRequest;
+  onClose: () => void;
+  onSubmitted: (result: DownloadSubmitResult) => void;
+}) {
   const [downloader, setDownloader] = useState<ConfiguredDownloader | null>(null);
   const [library, setLibrary] = useState<MediaLibrary | null>(null);
   const [preview, setPreview] = useState<DispatchPreview | null>(null);
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(true);
   const [selected, setSelected] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // 打开时并行拉取：默认下载器（目录候选）、默认库 + 投递预检（智能入库项）
+  // 挂载时并行拉取：默认下载器（目录候选）、默认库 + 投递预检（智能入库项）
   useEffect(() => {
-    if (!request) return;
     let cancelled = false;
-    setLoading(true);
-    setError(null);
-    setSelected(null);
-    setPreview(null);
-    setLibrary(null);
     const identity = request.identity;
     void Promise.all([
       listDownloaders().catch(() => [] as ConfiguredDownloader[]),
@@ -115,7 +131,6 @@ export function DownloadTargetDialog({
   }, [request]);
 
   const options = useMemo<TargetOption[]>(() => {
-    if (!request) return [];
     const result: TargetOption[] = [];
     if (request.identity && library) {
       const folder = `${request.identity.title} (${request.identity.year})`;
@@ -172,10 +187,9 @@ export function DownloadTargetDialog({
     if (loading || options.length === 0 || selected !== null) return;
     const smart = options.find((o) => o.kind === "smart");
     if (smart && !smart.warning) setSelected(smart.key);
-    else setSelected(options[0].key);
+    // 智能入库不可用或有警示时，回落到第一个非智能项（目录 > 下载器默认）
+    else setSelected((options.find((o) => o.kind !== "smart") ?? options[0]).key);
   }, [loading, options, selected]);
-
-  if (!request) return null;
 
   const submit = () => {
     const option = options.find((o) => o.key === selected);
