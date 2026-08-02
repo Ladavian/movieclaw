@@ -38,6 +38,7 @@ export function Modal({
   label,
   width = "md",
   raised = false,
+  topmost = false,
   panelClassName = "",
   children,
 }: {
@@ -50,6 +51,9 @@ export function Modal({
   width?: keyof typeof WIDTH_CLS;
   /** 叠在其他弹窗之上时置 true（z-60 > 普通弹窗的 z-50） */
   raised?: boolean;
+  /** 全站最顶层（z-90 > 搜索面板的 z-80）：仅供确认/输入弹窗（feedback.tsx）——
+   *  它们可能从任何弹层（含搜索面板）内被触发，必须压过一切 */
+  topmost?: boolean;
   /** 追加到玻璃面板容器的类（定制布局，如 flex 限高列布局） */
   panelClassName?: string;
   children: ReactNode;
@@ -73,7 +77,7 @@ export function Modal({
     // globals.css），不越出的话遮罩在屏幕底部留一条没压暗的缝、移动端 bottom
     // sheet 也会悬在物理底边上方。面板内容用加大的 pb 留在视口内（见下方）。
     <div
-      className={`fixed inset-0 [bottom:calc(-1*var(--vp-overshoot))] ${raised ? "z-[60]" : "z-50"} flex items-center justify-center p-6 max-md:items-end max-md:p-0`}
+      className={`fixed inset-0 [bottom:calc(-1*var(--vp-overshoot))] ${topmost ? "z-[90]" : raised ? "z-[60]" : "z-50"} flex items-center justify-center p-6 max-md:items-end max-md:p-0`}
       role="dialog"
       aria-modal="true"
       aria-label={label}

@@ -10,6 +10,7 @@ const SIDEBAR_COLLAPSED_KEY = "movieclaw.sidebar-collapsed";
 /** 进设置前所在的工作台地址（含查询串），设置页「返回工作台」按原样回跳 */
 const SETTINGS_RETURN_KEY = "movieclaw.settings-return";
 
+import { FeedbackProvider } from "@/components/feedback";
 import { MenuIcon } from "@/components/icons";
 import { PAGE_NAV_BUTTON_CLASS } from "@/components/page-nav";
 import { SearchCommand, type SearchSubmitOptions } from "@/components/search-command";
@@ -251,6 +252,9 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     // BackdropProvider 提供全站唯一的背景图数据源（CSS 大图 + 玻璃折射纹理），
     // 让「外观」设置里上传的图能同步作用到 body::before 与所有玻璃面板。
     <BackdropProvider>
+    {/* FeedbackProvider：Toast 回执与确认/输入弹窗的全站唯一挂载点
+      （见 components/feedback.tsx），取代原生 alert/confirm/prompt。 */}
+    <FeedbackProvider>
     {/* SearchPrefsProvider / UiPrefsProvider：搜索偏好与界面样式的全站唯一数据源，
       应用启动各拉取一次、Context 共享，设置页的改动即时同步到所有消费页面。 */}
     <SearchPrefsProvider>
@@ -345,6 +349,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     </AgentConversationsProvider>
     </UiPrefsProvider>
     </SearchPrefsProvider>
+    </FeedbackProvider>
     </BackdropProvider>
   );
 }

@@ -8,14 +8,19 @@ from movieclaw_api.schemas.response import ApiResponse, ok
 from movieclaw_api.schemas.subscription import (
     ActivityView,
     DispatchPreviewView,
+    DownloadUnitView,
+    GrabPayload,
+    GrabResultView,
     MediaBrief,
     PipelineHealthView,
     PreparePayload,
     PrepareView,
     ResolveCandidateView,
+    SearchNowView,
     SeasonOverview,
     SubscriptionCreatePayload,
     SubscriptionDetailView,
+    SubscriptionDownloadView,
     SubscriptionPausePayload,
     SubscriptionUpdatePayload,
     SubscriptionView,
@@ -209,6 +214,28 @@ async def get_subscription(
 
 
 @router.get(
+    "/{subscription_id}/downloads",
+    response_model=ApiResponse[list[SubscriptionDownloadView]],
+    summary="订阅在途种子的实时下载进度（速度/ETA，详情页轮询用）",
+    operation_id="sub.downloads",
+)
+async def list_subscription_downloads(
+    subscription_id: int,
+    session: AsyncSession = Depends(get_session),
+) -> ApiResponse[list[SubscriptionDownloadView]]:
+    """纯读快照：逐个到可用下载器查询在途种子的当前状态，不落库不改工单。
+    只在详情页打开且存在在途工单时被轮询（约 5 秒一次），单订阅种子数很少，
+    对下载器的压力可忽略。"""
+    from movieclaw_api.services.download_progress import subscription_download_snapshot
+
+    # 订阅不存在时给 404 而不是空列表（detail 会抛 NotFoundException）
+    service = _service(session)
+    await service.detail(subscription_id)
+    rows = await subscription_download_snapshot(session, subscription_id)
+    return ok([SubscriptionDownloadView(**row) for row in rows])
+
+
+@router.get(
     "/{subscription_id}/activities",
     response_model=ApiResponse[list[ActivityView]],
     summary="订阅活动时间线（系统对该订阅做过的每个动作，时间倒序）",
@@ -245,6 +272,63 @@ async def update_subscription(
     )
     sub, item, wanted = await service.detail(subscription_id)
     return ok(SubscriptionDetailView.from_detail(sub, item, wanted), message="订阅已调整")
+
+
+@router.post(
+    "/{subscription_id}/search-now",
+    response_model=ApiResponse[SearchNowView],
+    summary="立即搜索：缺口工单跳过冷却重新排队，随即触发一轮缺口搜索",
+    operation_id="sub.search-now",
+)
+async def search_subscription_now(
+    subscription_id: int,
+    session: AsyncSession = Depends(get_session),
+) -> ApiResponse[SearchNowView]:
+    """只重置"本来就能搜"的缺口（未定档/待播出/在途的不碰）；订阅暂停中、
+    或没有可搜缺口时给可读中文错误。"""
+    service = _service(session)
+    reset = await service.search_now(subscription_id)
+    return ok(SearchNowView(reset_count=reset), message=f"{reset} 个缺口已重新排队，正在搜索")
+
+
+@router.post(
+    "/{subscription_id}/grab",
+    response_model=ApiResponse[GrabResultView],
+    summary="手动选种：把一条搜索结果直接投给本订阅（跳过规则组过滤）",
+    operation_id="sub.grab",
+)
+async def grab_subscription_torrent(
+    subscription_id: int,
+    payload: GrabPayload,
+    session: AsyncSession = Depends(get_session),
+) -> ApiResponse[GrabResultView]:
+    """身份匹配不跳过：种子必须确认属于本条目且覆盖至少一个缺口。
+    投递复用自动管线的 dispatch（三级兜底/救援巡检/活动记录全部继承）。"""
+    from movieclaw_api.services.subscription.manual_grab import grab_manual
+
+    covered = await grab_manual(
+        session,
+        subscription_id,
+        site_id=payload.site_id,
+        torrent_id=payload.torrent_id,
+        title=payload.title,
+        subtitle=payload.subtitle,
+        category=payload.category,
+        attrs=payload.attrs,
+        download_url=payload.download_url,
+        size_bytes=payload.size_bytes,
+        seeders=payload.seeders,
+        is_free=payload.is_free,
+        hit_and_run=payload.hit_and_run,
+        imdb_id=payload.imdb_id,
+        douban_id=payload.douban_id,
+        publish_time=payload.publish_time,
+    )
+    units = [
+        DownloadUnitView(season_number=w.season_number, episode_number=w.episode_number)
+        for w in covered
+    ]
+    return ok(GrabResultView(units=units), message=f"已投递，覆盖 {len(units)} 个追踪单元")
 
 
 @router.patch(

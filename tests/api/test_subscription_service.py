@@ -369,6 +369,48 @@ async def test_rule_set_lazy_default_and_delete_guards(db) -> None:
         await rule_service.delete(extra.id)  # 引用解除后可删
 
 
+async def test_rule_set_default_seed_is_safe_preset(db) -> None:
+    """懒种子的默认组带安全预设（1080p 及以上、做种数 ≥1），不再是全不限；
+    已存在的默认组（老部署）保持原样，升级不动用户数据。"""
+    async with db.session() as session:
+        rule_service = RuleSetService(session)
+        default = await rule_service.ensure_default()
+        assert default.spec == {"resolutions": ["2160p", "1080p"], "min_seeders": 1}
+
+    async with db.session() as session:
+        # 模拟老部署：默认组已存在且被用户改成全不限——ensure_default 不得覆盖
+        rule_service = RuleSetService(session)
+        default = await rule_service.ensure_default()
+        default.spec = {}
+        session.add(default)
+        await session.commit()
+        kept = await rule_service.ensure_default()
+        assert kept.id == default.id
+        assert kept.spec == {}
+
+
+async def test_rule_set_set_default_transfers_flag(db) -> None:
+    """设为默认：标记转移且幂等；原默认组卸任后（无引用时）可删。"""
+    async with db.session() as session:
+        rule_service = RuleSetService(session)
+        old_default = await rule_service.ensure_default()
+        preferred = await rule_service.create("4K 优先", {"resolutions": ["2160p"]})
+
+        row = await rule_service.set_default(preferred.id)
+        assert row.is_default is True
+        rows = await rule_service.list_all()
+        assert [r.id for r in rows if r.is_default] == [preferred.id]
+
+        # 幂等：再设一次不报错、结果不变
+        again = await rule_service.set_default(preferred.id)
+        assert again.id == preferred.id and again.is_default is True
+
+        # 新默认组进入禁删保护；原默认组卸任后可删
+        with pytest.raises(BadRequestException):
+            await rule_service.delete(preferred.id)
+        await rule_service.delete(old_default.id)
+
+
 async def test_rule_set_spec_validation(db) -> None:
     """spec 经 RuleSetSpec 校验：类型不合法给可读中文错误；存精简形态。"""
     async with db.session() as session:

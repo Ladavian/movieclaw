@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 import Link from "next/link";
 
+import { useConfirm } from "@/components/feedback";
 import { ChatIcon } from "@/components/icons";
 import { useLlmConfigured } from "@/components/llm-gate";
 import {
@@ -36,6 +37,7 @@ import { useVisiblePolling } from "@/lib/use-visible-polling";
 export function WeixinBindingSection() {
   // null = 探测中(不出码也不提醒,避免闪烁);false = 未配置(拦下并引导)
   const llmConfigured = useLlmConfigured();
+  const confirm = useConfirm();
   const [accounts, setAccounts] = useState<WeixinAccount[] | null>(null);
   const [binding, setBinding] = useState<WeixinBindingSnapshot | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -137,7 +139,16 @@ export function WeixinBindingSection() {
   }
 
   async function handleUnbind(accountId: string) {
-    if (!window.confirm("确定解绑该微信账号？解绑后需重新扫码才能使用。")) return;
+    if (
+      !(await confirm({
+        title: "解绑该微信账号？",
+        description: "解绑后需重新扫码才能使用。",
+        confirmLabel: "解绑",
+        tone: "danger",
+      }))
+    ) {
+      return;
+    }
     setBusy(true);
     setError(null);
     try {

@@ -473,6 +473,40 @@ class SubscriptionService:
             self._kick_search()
         return subscription, requeued
 
+    async def search_now(self, subscription_id: int) -> int:
+        """用户手动触发「立即搜索」：把可搜索的缺口工单全部重置为立刻到期。
+
+        只碰"本来就能搜"的工单——未定档（next_search_at 为 None）没有可用
+        的搜索时机，待播出（air_date 在未来）搜了也只会空手而归并打乱
+        "播出 + 宽限"的原定档期，两者都跳过。已在冷却退避中的工单清零到
+        "现在"，随后踢一次缺口搜索，不必等下个调度周期。返回重置的工单数。
+        """
+        subscription = await self._get_or_404(subscription_id)
+        if subscription.status == SubscriptionStatus.PAUSED:
+            raise BadRequestException("订阅已暂停，请先恢复追踪再触发搜索")
+        now = utcnow()
+        today = now.date()
+        wanted = await self._repo.list_wanted(subscription_id)
+        reset = 0
+        for w in wanted:
+            if w.status != WantedStatus.WANTED or w.next_search_at is None:
+                continue
+            if w.air_date is not None and w.air_date > today:
+                continue
+            w.next_search_at = now
+            self._session.add(w)
+            reset += 1
+        if reset == 0:
+            raise BadRequestException("当前没有可立即搜索的缺口（在途/未定档/待播出的项无需触发）")
+        await self._log(
+            subscription,
+            ActivityType.ADJUSTED,
+            f"用户触发立即搜索：{reset} 个缺口跳过冷却、重新排队",
+            payload={"reset_count": reset, "reason": "search_now"},
+        )
+        self._kick_search()
+        return reset
+
     async def set_paused(self, subscription_id: int, paused: bool) -> Subscription:
         """暂停/恢复。暂停是用户显式状态；恢复后由派生重算落到 active/completed。"""
         subscription = await self._get_or_404(subscription_id)

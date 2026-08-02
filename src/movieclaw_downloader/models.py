@@ -108,6 +108,10 @@ class TorrentStatus(BaseModel):
     ``save_path`` 是**下载器视角**的保存目录；movieclaw 与下载器不同容器/
     机器时该路径可能在本进程不可达，入库管线要对此给出可读的中文报错
     （容器路径映射问题，见 docs/design/library.md 第 6 节风险③）。
+
+    速度/体积/ETA/状态是**展示用快照**（订阅详情页的实时进度），全部可缺省：
+    入库管线只依赖 progress/completed/save_path/files，旧适配器不补这些字段
+    也不影响任何判定逻辑。
     """
 
     info_hash: str
@@ -117,3 +121,12 @@ class TorrentStatus(BaseModel):
     completed: bool
     save_path: str
     files: list[TorrentFile] = Field(default_factory=list)
+    # 任务总体积（已选文件），未知为 None
+    size_bytes: int | None = None
+    # 当前下载速度（字节/秒），未知为 None
+    dlspeed_bytes: int | None = None
+    # 预计剩余秒数；下载器认为无法估算（无速度/已完成）时为 None
+    eta_seconds: int | None = None
+    # 归一化状态词表：downloading / stalled / paused / completed / error / unknown。
+    # 各适配器把自家状态收敛到这几个词，前端据此定色与文案
+    state: str = "unknown"

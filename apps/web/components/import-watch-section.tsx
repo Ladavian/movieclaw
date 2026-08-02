@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { DirectoryPicker } from "@/components/directory-picker";
+import { useConfirm } from "@/components/feedback";
 import { FolderIcon, PlusIcon, XIcon } from "@/components/icons";
 import { Modal } from "@/components/modal";
 import { type ConfiguredDownloader, listDownloaders } from "@/lib/api/downloaders";
@@ -47,6 +48,7 @@ function collectDownloaderDirs(downloaders: ConfiguredDownloader[]): DownloaderD
  * 在这里独立配置，不需要的用户永远不会看到这个概念。
  */
 export function ImportWatchSection() {
+  const confirm = useConfirm();
   const [rules, setRules] = useState<ImportWatchRule[] | null>(null);
   const [libraries, setLibraries] = useState<MediaLibrary[]>([]);
   const [downloaderDirs, setDownloaderDirs] = useState<DownloaderDirOption[]>([]);
@@ -90,13 +92,17 @@ export function ImportWatchSection() {
     [suggestKinds],
   );
 
-  const remove = (rule: ImportWatchRule) => {
+  const remove = async (rule: ImportWatchRule) => {
     if (
-      !window.confirm(
-        `删除对 ${rule.source_path} 的监听？源目录与已导入的文件都不受影响，只是停止监听。`,
-      )
-    )
+      !(await confirm({
+        title: `删除对 ${rule.source_path} 的监听？`,
+        description: "源目录与已导入的文件都不受影响，只是停止监听。",
+        confirmLabel: "删除",
+        tone: "danger",
+      }))
+    ) {
       return;
+    }
     setError(null);
     void deleteImportWatchRule(rule.id)
       .then(reload)
@@ -158,7 +164,7 @@ export function ImportWatchSection() {
               <button
                 type="button"
                 aria-label={`删除对 ${rule.source_path} 的监听`}
-                onClick={() => remove(rule)}
+                onClick={() => void remove(rule)}
                 className="shrink-0 rounded-md p-1.5 text-[var(--text-faint)] transition-colors hover:bg-white/10 hover:text-white"
               >
                 <XIcon className="size-4" />

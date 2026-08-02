@@ -2,11 +2,13 @@
 
 import { useEffect, useMemo, useState } from "react";
 
+import { useConfirm, useToast } from "@/components/feedback";
 import { Modal } from "@/components/modal";
 import {
   createRuleSet,
   deleteRuleSet,
   listRuleSets,
+  setDefaultRuleSet,
   updateRuleSet,
   type RuleSet,
   type RuleSetSpec,
@@ -37,6 +39,8 @@ interface EditorTarget {
 }
 
 export function RuleSetsPanel() {
+  const confirm = useConfirm();
+  const toast = useToast();
   const [ruleSets, setRuleSets] = useState<RuleSet[] | null>(null);
   const [editing, setEditing] = useState<EditorTarget | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -52,8 +56,26 @@ export function RuleSetsPanel() {
 
   useEffect(reload, []);
 
+  const makeDefault = async (rs: RuleSet) => {
+    try {
+      await setDefaultRuleSet(rs.id);
+      toast.success(`「${rs.name}」已设为默认规则组`);
+      reload();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "设置失败，请稍后重试");
+    }
+  };
+
   const remove = async (rs: RuleSet) => {
-    if (!window.confirm(`确定删除规则组「${rs.name}」？`)) return;
+    if (
+      !(await confirm({
+        title: `删除规则组「${rs.name}」？`,
+        confirmLabel: "删除",
+        tone: "danger",
+      }))
+    ) {
+      return;
+    }
     try {
       await deleteRuleSet(rs.id);
       reload();
@@ -135,6 +157,16 @@ export function RuleSetsPanel() {
                     )}
                   </p>
                 </div>
+                {!rs.is_default && (
+                  <button
+                    type="button"
+                    title="新订阅未指定规则组时使用本组（不改已有订阅）"
+                    onClick={() => void makeDefault(rs)}
+                    className="btn-glass shrink-0 px-3 py-1.5 text-sub font-medium"
+                  >
+                    设为默认
+                  </button>
+                )}
                 <button
                   type="button"
                   onClick={() => setEditing({ ruleSet: rs, template: null })}

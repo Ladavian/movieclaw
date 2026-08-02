@@ -5,6 +5,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 
 import { DirectoryPicker } from "@/components/directory-picker";
+import { useConfirm } from "@/components/feedback";
 import { DownloadIcon, FolderIcon, MoreIcon, PlusIcon, XIcon } from "@/components/icons";
 import { useBackdrop } from "@/lib/backdrop";
 import {
@@ -242,6 +243,7 @@ function DownloaderCard({
   onError,
 }: DownloaderCardProps) {
   const { backdrop } = useBackdrop();
+  const confirm = useConfirm();
   const [busy, setBusy] = useState(false);
   const meta = STATUS_META[downloader.status];
 
@@ -328,7 +330,16 @@ function DownloaderCard({
             }
             onDelete={() =>
               void guard(async () => {
-                if (!window.confirm(`确定删除「${downloader.name}」？`)) return;
+                if (
+                  !(await confirm({
+                    title: `删除下载器「${downloader.name}」？`,
+                    description: "下载器中的任务不受影响，只是 movieclaw 不再向它投递。",
+                    confirmLabel: "删除",
+                    tone: "danger",
+                  }))
+                ) {
+                  return;
+                }
                 await deleteDownloader(downloader.id);
                 onDeleted(downloader.id);
               })

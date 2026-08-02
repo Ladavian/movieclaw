@@ -7,6 +7,7 @@ import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import type { Route } from "next";
 import Link from "next/link";
 
+import { useConfirm } from "@/components/feedback";
 import { MoreIcon, XIcon } from "@/components/icons";
 import { PAGE_NAV_BUTTON_CLASS, PageNav } from "@/components/page-nav";
 import { usePageTitle } from "@/lib/use-page-title";
@@ -1168,6 +1169,7 @@ function IssueDrawer({
   movie: boolean;
   onChanged: () => void;
 }) {
+  const confirm = useConfirm();
   const [query, setQuery] = useState("");
   const [busy, setBusy] = useState(false);
 
@@ -1301,11 +1303,14 @@ function IssueDrawer({
             <button
               type="button"
               disabled={busy}
-              onClick={() => {
+              onClick={async () => {
                 if (
-                  !window.confirm(
-                    `清理全部 ${missingFileTotal} 条缺失记录？（只删台账，不动磁盘）`,
-                  )
+                  !(await confirm({
+                    title: `清理全部 ${missingFileTotal} 条缺失记录？`,
+                    description: "只删台账，不动磁盘。",
+                    confirmLabel: "全部清理",
+                    tone: "danger",
+                  }))
                 )
                   return;
                 setBusy(true);
@@ -1323,11 +1328,14 @@ function IssueDrawer({
             <button
               type="button"
               disabled={busy}
-              onClick={() => {
+              onClick={async () => {
                 if (
-                  !window.confirm(
-                    `忽略全部 ${unidentifiedFileTotal} 个待识别文件？之后扫描不再过问它们（不动磁盘；可在「已忽略」里恢复）`,
-                  )
+                  !(await confirm({
+                    title: `忽略全部 ${unidentifiedFileTotal} 个待识别文件？`,
+                    description: "之后扫描不再过问它们（不动磁盘；可在「已忽略」里恢复）。",
+                    confirmLabel: "全部忽略",
+                    tone: "danger",
+                  }))
                 )
                   return;
                 setBusy(true);
@@ -1421,6 +1429,7 @@ function MissingRow({
   item: MissingItem;
   onChanged: () => void;
 }) {
+  const confirm = useConfirm();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState<string | null>(null);
@@ -1477,11 +1486,16 @@ function MissingRow({
             <button
               type="button"
               disabled={busy}
-              onClick={() => {
-                const warning = item.subscription_id
-                  ? `「${item.title}」有正在追踪的订阅，只清记录的话订阅可能把它重新下回来。仍要清理这 ${item.files.length} 条缺失记录？`
-                  : `清理「${item.title}」的 ${item.files.length} 条缺失记录？（只删台账，不动磁盘）`;
-                if (!window.confirm(warning)) return;
+              onClick={async () => {
+                const ok = await confirm({
+                  title: `清理「${item.title}」的 ${item.files.length} 条缺失记录？`,
+                  description: item.subscription_id
+                    ? "该条目有正在追踪的订阅，只清记录的话订阅可能把它重新下回来。（只删台账，不动磁盘）"
+                    : "只删台账，不动磁盘。",
+                  confirmLabel: "清理记录",
+                  tone: "danger",
+                });
+                if (!ok) return;
                 act(() => clearMissing(libraryId, item.media_item_id));
               }}
               className="btn-glass px-3 py-1.5 text-sub font-medium disabled:opacity-50"
@@ -1627,6 +1641,7 @@ function UnidentifiedGroupRow({
   movie: boolean;
   onChanged: () => void;
 }) {
+  const confirm = useConfirm();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [expanded, setExpanded] = useState(false);
@@ -1649,12 +1664,16 @@ function UnidentifiedGroupRow({
   const unreachable = group.code === "tmdb_unreachable";
   const searchOpen = panel?.view === "search";
 
-  const ignoreGroup = () => {
+  const ignoreGroup = async () => {
     if (
       group.file_count > 1 &&
-      !window.confirm(
-        `忽略「${group.label}」的全部 ${group.file_count} 个文件？之后扫描不再过问（不动磁盘；可在「已忽略」里恢复）。适合自录、花絮这类 TMDB 本就不会有条目的内容——只是暂时认不出的建议先搜索认领`,
-      )
+      !(await confirm({
+        title: `忽略「${group.label}」的全部 ${group.file_count} 个文件？`,
+        description:
+          "之后扫描不再过问（不动磁盘；可在「已忽略」里恢复）。适合自录、花絮这类 TMDB 本就不会有条目的内容——只是暂时认不出的建议先搜索认领。",
+        confirmLabel: "全部忽略",
+        tone: "danger",
+      }))
     )
       return;
     act(() => Promise.all(fileIds.map((id) => ignoreFile(id))));
@@ -1701,7 +1720,7 @@ function UnidentifiedGroupRow({
           busy={busy}
           expanded={expanded}
           canExpand={group.file_count > 1}
-          onIgnore={ignoreGroup}
+          onIgnore={() => void ignoreGroup()}
           onToggleFiles={() => setExpanded((v) => !v)}
         />
       </div>

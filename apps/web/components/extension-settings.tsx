@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 
+import { useConfirm } from "@/components/feedback";
 import { CheckIcon, CopyIcon, DownloadIcon, PuzzleIcon, ShieldIcon } from "@/components/icons";
 import { Modal } from "@/components/modal";
 import { EXTENSION_ZIP_URL, useExtensionInstalled } from "@/lib/extension-install";
@@ -120,6 +121,7 @@ export function ExtensionCard() {
  * 生成 / 查看 / 复制 / 重新生成 / 关闭同步都收在这里。
  */
 function TokenModal({ open, onClose }: { open: boolean; onClose: () => void }) {
+  const confirm = useConfirm();
   const [token, setToken] = useState<SyncTokenView | null>(null);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
@@ -142,7 +144,15 @@ function TokenModal({ open, onClose }: { open: boolean; onClose: () => void }) {
   }, [open, load]);
 
   async function onGenerate() {
-    if (token?.enabled && !window.confirm("重新生成将使旧令牌立即失效，已配置的插件需要更新令牌。继续？")) {
+    if (
+      token?.enabled &&
+      !(await confirm({
+        title: "重新生成同步令牌？",
+        description: "重新生成将使旧令牌立即失效，已配置的插件需要更新令牌。",
+        confirmLabel: "重新生成",
+        tone: "danger",
+      }))
+    ) {
       return;
     }
     setBusy(true);
@@ -157,7 +167,16 @@ function TokenModal({ open, onClose }: { open: boolean; onClose: () => void }) {
   }
 
   async function onRevoke() {
-    if (!window.confirm("关闭同步将撤销令牌，所有插件都将无法再同步。继续？")) return;
+    if (
+      !(await confirm({
+        title: "关闭 Cookie 同步？",
+        description: "关闭同步将撤销令牌，所有插件都将无法再同步。",
+        confirmLabel: "关闭同步",
+        tone: "danger",
+      }))
+    ) {
+      return;
+    }
     setBusy(true);
     setError(null);
     try {

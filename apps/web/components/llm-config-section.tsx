@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 
+import { useConfirm } from "@/components/feedback";
 import { SparkIcon } from "@/components/icons";
 import {
   type LlmModelInfo,
@@ -38,6 +39,7 @@ const IN_PROGRESS: LlmProviderStatus[] = ["pending", "verifying"];
  * 保存后后端用所选模型发一次最小对话验证，前端对中间态轮询刷新。
  */
 export function LlmConfigSection() {
+  const confirm = useConfirm();
   const [config, setConfig] = useState<LlmProviderConfig | null>(null);
   const [presets, setPresets] = useState<LlmPreset[]>([]);
   const [loading, setLoading] = useState(true);
@@ -179,7 +181,16 @@ export function LlmConfigSection() {
                   disabled={busy}
                   onClick={() =>
                     void guard(async () => {
-                      if (!window.confirm("确定删除模型供应商配置？")) return;
+                      if (
+                        !(await confirm({
+                          title: "删除模型供应商配置？",
+                          description: "AI 助手与微信通道将无法继续对话，可随时重新接入。",
+                          confirmLabel: "删除",
+                          tone: "danger",
+                        }))
+                      ) {
+                        return;
+                      }
                       await deleteLlmProvider();
                       setConfig(null);
                       setEditing(false);

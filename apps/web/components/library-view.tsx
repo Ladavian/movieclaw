@@ -7,6 +7,7 @@ import Link from "next/link";
 import { createPortal } from "react-dom";
 
 import { DirectoryPicker } from "@/components/directory-picker";
+import { useConfirm } from "@/components/feedback";
 import { HScroller } from "@/components/h-scroller";
 import { FilmIcon, FolderIcon, MoreIcon, PlusIcon, TvIcon, XIcon } from "@/components/icons";
 import { LibraryOrganizeDialog } from "@/components/library-organize-dialog";
@@ -787,6 +788,7 @@ function LibraryCardMenu({
   canMoveRight: boolean;
   onMove: (offset: -1 | 1) => void;
 }) {
+  const confirm = useConfirm();
   const [menuPos, setMenuPos] = useState<{ left: number; top: number } | null>(null);
   const open = menuPos != null;
 
@@ -922,13 +924,14 @@ function LibraryCardMenu({
               disabled={library.scanning || library.organizing}
               onClick={() => {
                 setMenuPos(null);
-                if (
-                  !window.confirm(
-                    `确定删除「${library.name}」？磁盘文件不受影响，挂在它上面的订阅将回落到该类型的默认库。`,
-                  )
-                )
-                  return;
-                guard(() => deleteLibrary(library.id));
+                void confirm({
+                  title: `删除媒体库「${library.name}」？`,
+                  description: "磁盘文件不受影响，挂在它上面的订阅将回落到该类型的默认库。",
+                  confirmLabel: "删除库",
+                  tone: "danger",
+                }).then((ok) => {
+                  if (ok) guard(() => deleteLibrary(library.id));
+                });
               }}
               className="glass-row px-2.5 py-2 text-ui font-medium !text-[var(--danger)] hover:!bg-[rgba(255,107,107,0.12)] disabled:opacity-40"
             >

@@ -32,7 +32,7 @@ def _mappings_to_rows(payload: DownloaderPayload) -> list[dict[str, str]] | None
 @router.post(
     "/submit",
     response_model=ApiResponse[DownloadSubmitView],
-    summary="把一条搜索结果种子提交到默认下载器",
+    summary="把一条搜索结果种子提交到下载器（缺省默认下载器，可指定分流）",
     operation_id="dl.submit",
 )
 async def submit_download(
@@ -73,6 +73,7 @@ async def submit_download(
         save_path=derived_path,
         # 线索只锚**条目级**目录；锚到库主根/监听目录会波及目录下所有文件
         subtitle=payload.subtitle if entry_level else None,
+        downloader_id=payload.downloader_id,
     )
     assert row.id is not None  # 落库记录必有主键
     view = DownloadSubmitView(

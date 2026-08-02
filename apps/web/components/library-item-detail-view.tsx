@@ -273,6 +273,7 @@ export function LibraryItemDetailView({
           <ItemActionsMenu
             reidentifying={reidentifying}
             scraping={scrapingNow}
+            searchHref={`/search?q=${encodeURIComponent(detail.title)}` as Route}
             onReidentify={runReidentify}
             onRefreshMetadata={runMetadataRefresh}
             onTransfer={() => setTransferOpen(true)}
@@ -525,6 +526,7 @@ export function LibraryItemDetailView({
 function ItemActionsMenu({
   reidentifying,
   scraping,
+  searchHref,
   onReidentify,
   onRefreshMetadata,
   onTransfer,
@@ -532,11 +534,14 @@ function ItemActionsMenu({
 }: {
   reidentifying: boolean;
   scraping: boolean;
+  /** 站点资源搜索直达（预填片名）：手动补版本/换版本的入口 */
+  searchHref: Route;
   onReidentify: () => void;
   onRefreshMetadata: () => void;
   onTransfer: () => void;
   onDelete: () => void;
 }) {
+  const router = useRouter();
   const itemClass =
     "glass-row nav-item cursor-pointer px-3 py-2 text-ui font-medium outline-none " +
     "data-[highlighted]:!bg-[var(--glass-fill-hover)] data-[highlighted]:!text-[var(--text)] " +
@@ -565,6 +570,13 @@ function ItemActionsMenu({
           collisionPadding={12}
           className="menu-surface z-50 min-w-[11rem] !rounded-xl p-1"
         >
+          <DropdownMenu.Item
+            onSelect={() => router.push(searchHref)}
+            className={itemClass}
+          >
+            搜索资源
+          </DropdownMenu.Item>
+          <DropdownMenu.Separator className="my-1 h-px bg-white/[0.07]" />
           <DropdownMenu.Item
             onSelect={onReidentify}
             disabled={reidentifying}

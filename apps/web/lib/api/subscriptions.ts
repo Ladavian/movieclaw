@@ -101,6 +101,8 @@ export interface WantedItem {
   grabbed_at: string | null;
   downloaded_at: string | null;
   imported_at: string | null;
+  /** 在途工单锚定的种子 hash；据此与 listSubscriptionDownloads 的进度组对上 */
+  info_hash: string | null;
 }
 
 export interface SubscriptionDetail extends Subscription {
@@ -330,6 +332,44 @@ export function updateSubscription(
   );
 }
 
+/** 立即搜索：缺口工单跳过冷却重新排队（暂停中/无可搜缺口时后端报可读错误）。 */
+export function searchSubscriptionNow(id: number): Promise<{ reset_count: number }> {
+  return unwrap(
+    request<ApiEnvelope<{ reset_count: number }>>(`/subscriptions/${id}/search-now`, {
+      method: "POST",
+    }),
+  );
+}
+
+/** 手动选种的种子字段（搜索结果行原样回传，attrs 即搜索链路的服务端解析）。 */
+export interface GrabPayload {
+  site_id: string;
+  torrent_id: string;
+  title: string;
+  subtitle?: string;
+  category?: string | null;
+  attrs?: Record<string, unknown> | null;
+  download_url?: string | null;
+  size_bytes?: number | null;
+  seeders?: number | null;
+  is_free?: boolean | null;
+  hit_and_run?: boolean | null;
+  publish_time?: string | null;
+}
+
+/** 手动选种：把一条搜索结果直接投给订阅（跳过规则组过滤；身份匹配照常）。 */
+export function grabForSubscription(
+  id: number,
+  payload: GrabPayload,
+): Promise<{ units: { season_number: number; episode_number: number }[] }> {
+  return unwrap(
+    request<ApiEnvelope<{ units: { season_number: number; episode_number: number }[] }>>(
+      `/subscriptions/${id}/grab`,
+      { method: "POST", body: JSON.stringify(payload) },
+    ),
+  );
+}
+
 /** 暂停 / 恢复订阅。 */
 export function pauseSubscription(id: number, paused: boolean): Promise<SubscriptionDetail> {
   return unwrap(
@@ -346,6 +386,32 @@ export function deleteSubscription(id: number): Promise<Record<string, never>> {
     request<ApiEnvelope<Record<string, never>>>(`/subscriptions/${id}`, {
       method: "DELETE",
     }),
+  );
+}
+
+/** 订阅在途种子的实时下载快照（详情页轮询展示进度/速度/ETA）。 */
+export interface SubscriptionDownload {
+  info_hash: string;
+  /** 下载器中的任务名；missing 时为空 */
+  name: string | null;
+  /** 0.0 ~ 1.0；missing 时为空 */
+  progress: number | null;
+  size_bytes: number | null;
+  dlspeed_bytes: number | null;
+  eta_seconds: number | null;
+  /** missing = 种子已不在任何可用下载器中（救援巡检稍后会退回工单重找） */
+  state: "downloading" | "stalled" | "paused" | "completed" | "error" | "missing" | "unknown";
+  downloader_name: string | null;
+  units: { season_number: number; episode_number: number }[];
+}
+
+/** 订阅在途种子的实时下载进度（纯读快照，逐个查询下载器）。 */
+export function listSubscriptionDownloads(
+  id: number,
+  init?: RequestInit,
+): Promise<SubscriptionDownload[]> {
+  return unwrap(
+    request<ApiEnvelope<SubscriptionDownload[]>>(`/subscriptions/${id}/downloads`, init),
   );
 }
 
@@ -406,6 +472,13 @@ export function updateRuleSet(id: number, name: string, spec: RuleSetSpec): Prom
       method: "PUT",
       body: JSON.stringify({ name, spec }),
     }),
+  );
+}
+
+/** 设为默认规则组（新订阅未指定规则组时使用；不改已有订阅的挂靠）。 */
+export function setDefaultRuleSet(id: number): Promise<RuleSet> {
+  return unwrap(
+    request<ApiEnvelope<RuleSet>>(`/rule-sets/${id}/default`, { method: "POST" }),
   );
 }
 

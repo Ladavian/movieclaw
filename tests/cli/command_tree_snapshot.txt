@@ -119,6 +119,7 @@ notices dismiss
 notices list
 people show
 rules create
+rules default
 rules delete
 rules list
 rules update
@@ -143,10 +144,13 @@ sub activities
 sub create
 sub delete
 sub dispatch-preview
+sub downloads
+sub grab
 sub health
 sub list
 sub pause
 sub prepare
+sub search-now
 sub show
 sub update
 ui prefs show
