@@ -199,6 +199,9 @@ export function AppConfigSection() {
                 }
               />
               <input
+                // key 随已保存值变化：一键填入/规范化（去尾斜杠）保存后，
+                // 非受控输入框靠重挂载同步显示最新落库值
+                key={view.external_url}
                 type="text"
                 defaultValue={view.external_url}
                 onBlur={(e) => handleUrlBlur(e.target.value)}
@@ -208,6 +211,22 @@ export function AppConfigSection() {
               />
             </div>
             {urlError && <p className="mt-1.5 text-right text-caption text-red-300">{urlError}</p>}
+            {/* 未设置时的引导：说清设置的收益 + 一键把当前浏览器地址落库 */}
+            {!view.external_url && !urlError && (
+              <div className="mt-2 flex items-center justify-end gap-2.5 max-md:flex-col max-md:items-stretch">
+                <p className="text-caption leading-5 text-[var(--text-faint)]">
+                  尚未设置：设置后 AI 助手的回复和通知才能带上指向本应用的可点击页面链接
+                </p>
+                <button
+                  type="button"
+                  onClick={() => commit({ external_url: currentOrigin })}
+                  disabled={saveState === "saving"}
+                  className="btn-glass shrink-0 px-3 py-1 text-caption font-semibold disabled:opacity-40"
+                >
+                  使用当前地址
+                </button>
+              </div>
+            )}
           </div>
         </div>
       </section>
