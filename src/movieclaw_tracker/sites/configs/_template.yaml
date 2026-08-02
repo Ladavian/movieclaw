@@ -1,5 +1,11 @@
 # PT 站点配置模板
 # 复制此文件并重命名为 <site_id>.yaml
+#
+# 放置位置（二选一）：
+# 1. 内置目录 src/movieclaw_tracker/sites/configs/ —— 随代码/镜像分发，适合提交到仓库
+# 2. 用户自定义目录 data/site-configs/ —— 随 data/ 卷持久化，容器更新不丢，
+#    适合部署者自行适配站点；同 site_id 会覆盖内置配置（如某站改版后自行修选择器）。
+#    改完重启应用生效。
 
 site_id: your_site_id          # 唯一标识，小写下划线
 display_name: Your Site Name   # 显示名称
