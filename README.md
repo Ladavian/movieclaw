@@ -87,6 +87,35 @@
 唯一前提：机器上装好 Docker（群晖用自带的 Container Manager，其他 NAS 用
 各自的 Docker 套件即可）。
 
+#### 一条命令直接跑
+
+会用命令行的话，这是最快的方式——改好两个路径，整段复制执行即可：
+
+```bash
+docker run -d \
+  --name movieclaw \
+  --init \
+  -p 3000:3000 \
+  --restart unless-stopped \
+  -e TZ=Asia/Shanghai \
+  -v "$(pwd)/data:/app/data" \
+  -v /volume1/media:/media \
+  -v /volume1/downloads:/downloads \
+  movieclaw/movieclaw:latest
+```
+
+- 把 `/volume1/media`、`/volume1/downloads` 换成你机器上的真实目录。
+  冒号**左边**是你机器上的目录，**右边**是 movieclaw 在容器里看到的路径——
+  之后在网页设置里填路径时，填的都是右边这个
+- **有多个媒体盘或多个下载目录？完全支持**：每个目录加一行 `-v` 即可，比如
+  再加 `-v /volume2/movies:/movies \`、`-v /volume2/downloads2:/downloads2 \`，
+  数量不限
+- 跑起来后浏览器打开 `http://<主机IP>:3000`，按引导创建管理员账号
+
+#### 用 docker compose（推荐长期使用）
+
+配置写在文件里，日后调整挂载、迁移机器都更省心，NAS 图形界面也走这条路。
+
 **第 1 步**：新建一个文件夹（比如叫 `movieclaw`），在里面创建一个名为
 `docker-compose.yml` 的文本文件，粘贴以下内容：
 
@@ -102,12 +131,15 @@ services:
       - ./data:/app/data              # 运行数据，备份这个文件夹就够了
       - /volume1/media:/media         # ← 改成你的媒体目录
       - /volume1/downloads:/downloads # ← 改成你下载器的保存目录
+      # 有多个媒体盘/下载目录？每个目录加一行即可，数量不限，例如：
+      # - /volume2/movies:/movies
+      # - /volume2/downloads2:/downloads2
     environment:
       - TZ=Asia/Shanghai
     restart: unless-stopped
 ```
 
-**第 2 步**：把 `volumes` 里后两行改成你机器上的真实路径。规则很简单：
+**第 2 步**：把 `volumes` 里的路径改成你机器上的真实路径。规则很简单：
 冒号**左边**是你机器上的目录，冒号**右边**是 movieclaw 在容器里看到的路径——
 之后在网页设置里填路径时，填的都是右边这个。下载器的保存目录一定要挂进来，
 movieclaw 才能整理下载完成的文件。
