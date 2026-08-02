@@ -16,14 +16,14 @@ import { getHealth } from "@/lib/api/health";
  * 应用设置（设置 → 应用设置）。
  *
  * 当前阶段只有「网络」一组配置 + 「维护」里的重启入口：
- *   - 访问端口：后端监听端口，**重启后生效**（uvicorn 启动时一次性绑定，无法热切换）。
- *     Docker 部署下端口由容器钉死（APP_PORT 环境变量），输入框禁用并说明去改
- *     compose 的端口映射；该字段实际面向源码/裸机部署者。
  *   - 外部访问地址：从网络上能访问到本应用的完整地址，保存即生效（纯落库数据，
- *     供后续生成通知链接等绝对 URL 的场景使用）。
+ *     供生成通知链接、Agent 拼页面链接等绝对 URL 的场景使用）。
  *
- * 交互模型与「网络与代理」分区一致：输入框失焦自动落库，无「保存」按钮；
- * 端口改动落库后后端返回 restart_required，此处浮出「重启应用」横幅。
+ * 为什么没有端口设置：用户视角的访问入口是前端（Docker 默认 3000，对外端口由
+ * compose 的 ports 映射决定），后端 8000 只在容器内被反代——两者都不是应用内
+ * 能有意义配置的。
+ *
+ * 交互模型与「网络与代理」分区一致：输入框失焦自动落库，无「保存」按钮。
  *
  * 重启流程：调用 /app/restart → 后端优雅停机、以约定码 42 退出 → Docker 镜像
  * 的 entrypoint 重启循环原地拉起新的后端进程（前端不中断，不依赖 restart 策略；
@@ -37,7 +37,6 @@ export function AppConfigSection() {
   const [failed, setFailed] = useState(false);
   const [saveState, setSaveState] = useState<"idle" | "saving" | "saved" | "error">("idle");
   const [saveError, setSaveError] = useState<string | null>(null);
-  const [portError, setPortError] = useState<string | null>(null);
   const [urlError, setUrlError] = useState<string | null>(null);
   const [restartPhase, setRestartPhase] = useState<RestartPhase>("idle");
   const savedTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -58,12 +57,11 @@ export function AppConfigSection() {
 
   /** 落库一份完整配置（失焦触发），错误信息中文回显在对应字段下方。 */
   const commit = useCallback(
-    (patch: Partial<Pick<AppConfigView, "port" | "external_url">>) => {
+    (patch: Partial<Pick<AppConfigView, "external_url">>) => {
       if (!view) return;
       setSaveState("saving");
       setSaveError(null);
       saveAppConfig({
-        port: patch.port ?? view.port,
         external_url: patch.external_url ?? view.external_url,
       })
         .then((v) => {
@@ -79,22 +77,6 @@ export function AppConfigSection() {
     },
     [view],
   );
-
-  const handlePortBlur = (raw: string) => {
-    const text = raw.trim();
-    if (!text) {
-      setPortError(null);
-      commit({ port: 0 });
-      return;
-    }
-    const port = Number(text);
-    if (!Number.isInteger(port) || port < 1024 || port > 65535) {
-      setPortError("端口必须在 1024~65535 之间；留空使用默认端口");
-      return;
-    }
-    setPortError(null);
-    commit({ port });
-  };
 
   const handleUrlBlur = (raw: string) => {
     const url = raw.trim();
@@ -191,43 +173,6 @@ export function AppConfigSection() {
           </span>
         </div>
         <div className="css-glass divide-y divide-white/[0.055] !rounded-2xl">
-          {/* 访问端口 */}
-          <div className="px-5 py-4">
-            <div className="flex items-center justify-between gap-4 max-md:flex-col max-md:items-stretch max-md:gap-2">
-              <LabelWithHelp
-                label="访问端口"
-                help={
-                  <>
-                    <p>后端 HTTP 服务的监听端口，留空使用默认（{view.default_port}）。</p>
-                    <p className="mt-1.5">
-                      <strong>改动需重启应用后生效</strong>——端口在服务启动时一次性绑定，无法热切换。
-                    </p>
-                    <p className="mt-1.5 text-[var(--text-muted)]">
-                      Docker 部署下容器内端口固定，对外端口请改 docker-compose 的 ports
-                      映射；此设置面向源码/裸机部署。
-                    </p>
-                  </>
-                }
-              />
-              <input
-                type="text"
-                inputMode="numeric"
-                defaultValue={view.port || ""}
-                disabled={view.port_env_locked}
-                onBlur={(e) => handlePortBlur(e.target.value)}
-                onKeyDown={(e) => e.key === "Enter" && (e.target as HTMLInputElement).blur()}
-                placeholder={`${view.default_port}（默认）`}
-                className="w-[180px] rounded-xl border border-white/[0.08] bg-white/[0.04] px-3 py-2 font-mono text-sub text-[var(--text)] outline-none transition-colors placeholder:text-[var(--text-faint)] focus:border-[var(--accent)]/50 disabled:opacity-50 max-md:w-full"
-              />
-            </div>
-            {view.port_env_locked && (
-              <p className="mt-1.5 text-right text-caption text-[var(--text-faint)]">
-                端口已由 APP_PORT 环境变量固定（Docker 部署由容器管理），此处不可修改
-              </p>
-            )}
-            {portError && <p className="mt-1.5 text-right text-caption text-red-300">{portError}</p>}
-          </div>
-
           {/* 外部访问地址 */}
           <div className="px-5 py-4">
             <div className="flex items-center justify-between gap-4 max-md:flex-col max-md:items-stretch max-md:gap-2">
@@ -258,22 +203,6 @@ export function AppConfigSection() {
             {urlError && <p className="mt-1.5 text-right text-caption text-red-300">{urlError}</p>}
           </div>
         </div>
-
-        {/* 端口已保存但未生效：浮出重启提示横幅 */}
-        {view.restart_required && (
-          <div className="mt-3 flex items-center justify-between gap-4 rounded-xl border border-amber-300/25 bg-amber-400/10 px-4 py-3">
-            <p className="text-sub text-amber-200/90">
-              端口修改已保存（当前监听 {view.runtime_port}），重启应用后生效。
-            </p>
-            <button
-              type="button"
-              onClick={() => setRestartPhase("confirming")}
-              className="btn-glass shrink-0 px-3.5 py-1.5 text-sub font-semibold"
-            >
-              立即重启
-            </button>
-          </div>
-        )}
       </section>
 
       {/* —— 维护 —— */}

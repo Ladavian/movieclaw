@@ -1,8 +1,8 @@
 """应用设置接口（「设置 → 应用设置」页的后端）。
 
 三个端点（实现全部在 services/app_config.py，本文件只做参数进出）：
-- GET  /app/config  —— 当前配置 + 端口生效状态（默认值/当前监听端口/是否需重启）；
-- PUT  /app/config  —— 保存；外部访问地址即时生效，端口改动需重启；
+- GET  /app/config  —— 读取当前配置（外部访问地址）；
+- PUT  /app/config  —— 保存，即时生效；
 - POST /app/restart —— 优雅重启应用（Docker 镜像由 entrypoint 重启循环拉起）。
 """
 
@@ -30,7 +30,7 @@ async def get_app_config() -> ApiResponse[AppConfigView]:
 @router.put(
     "/config",
     response_model=ApiResponse[AppConfigView],
-    summary="保存应用设置（端口改动需重启生效）",
+    summary="保存应用设置（即时生效）",
     operation_id="app.set",
 )
 async def save_app_config(payload: AppConfigPayload) -> ApiResponse[AppConfigView]:
