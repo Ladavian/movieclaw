@@ -34,6 +34,7 @@ import {
   type SubtitleStream,
   type TransferPreview,
   type TransferStatus,
+  deleteLibraryFile,
   deleteLibraryItem,
   getItemEpisodes,
   getLibrary,
@@ -65,7 +66,9 @@ import { useVisiblePolling } from "@/lib/use-visible-polling";
  *   4. 底部文件区列出原始文件名 + 尺寸，悬浮看物理路径——识别错了
  *      用户要能立刻知道"这是哪个文件"；
  *   5. 条目级操作：重新识别（识别器升级后的翻案通道）与删除（唯一会
- *      真删磁盘的入口，整个刮削目录一起清，二次确认）。
+ *      真删磁盘的入口，整个刮削目录一起清，二次确认）。文件行与分集
+ *      文件卡上另有单文件删除（多版本洗掉一个 / 删某集重下，同样二次
+ *      确认；最后一个文件升级为整条目删除）。
  */
 export function LibraryItemDetailView({
   libraryId,
@@ -90,6 +93,8 @@ export function LibraryItemDetailView({
   const [artworkOpen, setArtworkOpen] = useState(false);
   // 删除确认弹窗
   const [deleteOpen, setDeleteOpen] = useState(false);
+  // 单文件删除确认弹窗（非 null 即打开；多版本洗版 / 删某集重下的入口）
+  const [deleteFileTarget, setDeleteFileTarget] = useState<LibraryItemFile | null>(null);
   // 转移到其他库的弹窗（选库 → 预览 → 执行 → 进度 → 结论）
   const [transferOpen, setTransferOpen] = useState(false);
 
@@ -425,7 +430,11 @@ export function LibraryItemDetailView({
 
         {/* —— 剧集分集区：季选择 + 分集横滚卡 + 选中集的简介/规格/文件 —— */}
         {!isMovie && detail.seasons.length > 0 && (
-          <SeasonEpisodesSection libraryId={libraryId} detail={detail} />
+          <SeasonEpisodesSection
+            libraryId={libraryId}
+            detail={detail}
+            onDeleteFile={setDeleteFileTarget}
+          />
         )}
 
         {/* —— 演职员：与发现页条目详情共用同一个组件。头像来自 NFO 的 <thumb>，
@@ -449,7 +458,12 @@ export function LibraryItemDetailView({
             : detail.files.filter((f) => f.episode_number === 0);
           if (files.length === 0) return null;
           return (
-            <FileSection files={files} isMovie={isMovie} title={isMovie ? "文件" : "其他文件"} />
+            <FileSection
+              files={files}
+              isMovie={isMovie}
+              title={isMovie ? "文件" : "其他文件"}
+              onDeleteFile={setDeleteFileTarget}
+            />
           );
         })()}
       </div>
@@ -461,6 +475,18 @@ export function LibraryItemDetailView({
         onClose={() => setDeleteOpen(false)}
         onDeleted={() => router.replace(`/library/${libraryId}` as Route)}
         libraryId={libraryId}
+      />
+
+      <DeleteFileDialog
+        file={deleteFileTarget}
+        detail={detail}
+        libraryId={libraryId}
+        onClose={() => setDeleteFileTarget(null)}
+        onDeleted={(deletedItem) => {
+          setDeleteFileTarget(null);
+          if (deletedItem) router.replace(`/library/${libraryId}` as Route);
+          else reload();
+        }}
       />
 
       <TransferDialog
@@ -892,9 +918,11 @@ function seasonLabel(season: number, owned: boolean): string {
 function SeasonEpisodesSection({
   libraryId,
   detail,
+  onDeleteFile,
 }: {
   libraryId: number;
   detail: LibraryItemDetail;
+  onDeleteFile: (file: LibraryItemFile) => void;
 }) {
   const seasons = detail.seasons;
   // 季选择器列的是「元数据的季 ∪ 库里实有的季」，本地没有的季也在里面（看得到
@@ -931,7 +959,10 @@ function SeasonEpisodesSection({
     return () => {
       cancelled = true;
     };
-  }, [libraryId, detail.media_item_id, season]);
+    // detail.file_count：单文件删除后详情重拉，分集的 owned/file_ids 也要
+    // 跟着刷新（用文件数而不是整个 detail 做依赖——刮削轮询也会换 detail
+    // 对象，不该每轮都重拉分集）
+  }, [libraryId, detail.media_item_id, detail.file_count, season]);
 
   const filesById = useMemo(
     () => new Map(detail.files.map((f) => [f.id, f])),
@@ -1026,7 +1057,7 @@ function SeasonEpisodesSection({
                   {currentFiles.map((file) => (
                     <div
                       key={file.id}
-                      className="rounded-xl border border-white/[0.06] bg-white/[0.03] p-4"
+                      className="group/epfile rounded-xl border border-white/[0.06] bg-white/[0.03] p-4"
                     >
                       <div className="flex items-center gap-4">
                         <Tooltip
@@ -1055,6 +1086,15 @@ function SeasonEpisodesSection({
                         <span className="tnum shrink-0 text-caption text-[var(--text-faint)]">
                           {formatRelativeTime(file.added_at)}
                         </span>
+                        <button
+                          type="button"
+                          aria-label="删除此文件"
+                          title="删除此文件"
+                          onClick={() => onDeleteFile(file)}
+                          className="touch-reveal shrink-0 rounded-md p-1.5 text-[var(--text-faint)] opacity-0 transition group-hover/epfile:opacity-100 hover:bg-white/[0.06] hover:text-[#ff9f9f]"
+                        >
+                          <TrashIcon className="size-4" />
+                        </button>
                       </div>
                       <div className="mt-3.5">
                         <SpecRows file={file} />
@@ -1137,10 +1177,12 @@ function FileSection({
   files,
   isMovie,
   title,
+  onDeleteFile,
 }: {
   files: LibraryItemFile[];
   isMovie: boolean;
   title: string;
+  onDeleteFile: (file: LibraryItemFile) => void;
 }) {
   // 剧集按季分组；电影全部落在 0 组
   const groups = useMemo(() => {
@@ -1168,7 +1210,12 @@ function FileSection({
               </p>
             )}
             {groupFiles.map((file) => (
-              <FileRow key={file.id} file={file} isMovie={isMovie} />
+              <FileRow
+                key={file.id}
+                file={file}
+                isMovie={isMovie}
+                onDelete={() => onDeleteFile(file)}
+              />
             ))}
           </div>
         ))}
@@ -1180,7 +1227,15 @@ function FileSection({
   );
 }
 
-function FileRow({ file, isMovie }: { file: LibraryItemFile; isMovie: boolean }) {
+function FileRow({
+  file,
+  isMovie,
+  onDelete,
+}: {
+  file: LibraryItemFile;
+  isMovie: boolean;
+  onDelete: () => void;
+}) {
   // 剧集行可展开看逐集完整规格（电影已有片源规格区，这里保持单行紧凑）
   const [expanded, setExpanded] = useState(false);
   const badges = videoBadges(file).slice(0, 4);
@@ -1193,7 +1248,7 @@ function FileRow({ file, isMovie }: { file: LibraryItemFile; isMovie: boolean })
   return (
     <div className="border-b border-white/[0.05] last:border-b-0">
       <div
-        className={`flex items-center gap-4 px-5 py-3 ${!isMovie ? "cursor-pointer hover:bg-white/[0.03]" : ""}`}
+        className={`group/filerow flex items-center gap-4 px-5 py-3 ${!isMovie ? "cursor-pointer hover:bg-white/[0.03]" : ""}`}
         onClick={!isMovie ? () => setExpanded((v) => !v) : undefined}
       >
         <div className="min-w-0 flex-1">
@@ -1237,6 +1292,18 @@ function FileRow({ file, isMovie }: { file: LibraryItemFile; isMovie: boolean })
         <span className="tnum w-20 shrink-0 text-right text-caption text-[var(--text-faint)]">
           {formatRelativeTime(file.added_at)}
         </span>
+        <button
+          type="button"
+          aria-label="删除此文件"
+          title="删除此文件"
+          onClick={(e) => {
+            e.stopPropagation(); // 剧集行点击是展开规格，别让删除误触发展开
+            onDelete();
+          }}
+          className="touch-reveal shrink-0 rounded-md p-1.5 text-[var(--text-faint)] opacity-0 transition group-hover/filerow:opacity-100 hover:bg-white/[0.06] hover:text-[#ff9f9f]"
+        >
+          <TrashIcon className="size-4" />
+        </button>
       </div>
       {expanded && !isMovie && (
         <div className="border-t border-white/[0.04] bg-white/[0.02] px-5 py-4">
@@ -1704,6 +1771,178 @@ function DeleteDialog({
                 className="mt-1 size-4 accent-[#ff6b6b]"
               />
               我已明白：以上目录及其中全部文件将被永久删除，无法恢复。
+            </label>
+            {error && <p className="mt-3 text-sub text-[#ff9f9f]">{error}</p>}
+            <div className="mt-5 flex justify-end gap-3">
+              <button
+                type="button"
+                onClick={onClose}
+                disabled={busy}
+                className="btn-glass px-4 py-2 text-ui font-medium text-[var(--text)]"
+              >
+                取消
+              </button>
+              <button
+                type="button"
+                onClick={run}
+                disabled={!confirmed || busy}
+                className="flex items-center gap-2 rounded-full bg-[#c73838] px-5 py-2 text-ui font-semibold text-white transition hover:bg-[#d64545] disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                {busy && (
+                  <span className="size-3.5 animate-spin rounded-full border-2 border-white/30 border-t-white" />
+                )}
+                {busy ? "正在删除…" : "彻底删除"}
+              </button>
+            </div>
+          </>
+        )}
+      </div>
+    </Modal>
+  );
+}
+
+/**
+ * 单文件删除确认弹窗：条目删除的文件级姊妹（多版本洗掉一个 / 删某集重下）。
+ * 与 DeleteDialog 同一套三段式：讲透后果 → 勾选确认 → 红色按钮；
+ * 完成后展示实际删除的路径清单。两条必须讲清的规则：
+ * 1. 最后一个文件会升级为整条目删除（后端行为，不留只剩 NFO/海报的空目录）；
+ * 2. 该单元有订阅盯着时，删掉最后一份拷贝订阅会自动重新下载补齐。
+ */
+function DeleteFileDialog({
+  file,
+  detail,
+  libraryId,
+  onClose,
+  onDeleted,
+}: {
+  file: LibraryItemFile | null;
+  detail: LibraryItemDetail;
+  libraryId: number;
+  onClose: () => void;
+  onDeleted: (deletedItem: boolean) => void;
+}) {
+  const [confirmed, setConfirmed] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [result, setResult] = useState<ItemDeleteResult | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  // 条目在本库只剩这一行台账（含 missing 行）→ 后端会升级为整条目删除
+  const isLast = detail.files.length === 1;
+
+  useEffect(() => {
+    if (file) {
+      setConfirmed(false);
+      setResult(null);
+      setError(null);
+    }
+  }, [file]);
+
+  if (!file) return null;
+
+  const run = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      setResult(await deleteLibraryFile(libraryId, detail.media_item_id, file.id));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "删除失败，请稍后重试");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Modal open onClose={busy ? () => {} : onClose} label="删除文件" width="lg">
+      <div className="p-6">
+        {result ? (
+          <>
+            <h3 className="text-title-sm font-semibold text-[var(--text)]">
+              {result.errors.length > 0 ? "删除失败" : "已从磁盘删除"}
+            </h3>
+            <div className="scroll-thin mt-4 max-h-56 overflow-y-auto rounded-xl border border-white/[0.08] bg-white/[0.03] p-3.5">
+              {result.removed_paths.map((p) => (
+                <p key={p} className="tnum break-all py-0.5 font-mono text-caption leading-5 text-white/70">
+                  {p}
+                </p>
+              ))}
+              {result.removed_paths.length === 0 && (
+                <p className="text-sub text-[var(--text-muted)]">
+                  没有删除任何磁盘路径{file.missing ? "（文件本就缺失，仅清除了台账记录）" : ""}
+                </p>
+              )}
+            </div>
+            {result.errors.length > 0 && (
+              <div className="mt-3 space-y-1 text-sub leading-5 text-[#ff9f9f]">
+                {result.errors.map((e) => (
+                  <p key={e}>{e}</p>
+                ))}
+              </div>
+            )}
+            <p className="mt-3 text-sub text-[var(--text-muted)]">
+              已清理 {result.rows_deleted} 条台账，释放 {formatBytes(result.freed_bytes)}。
+            </p>
+            <div className="mt-5 flex justify-end">
+              <button
+                type="button"
+                onClick={() => onDeleted(isLast && result.errors.length === 0)}
+                className="btn-accent rounded-full px-5 py-2 text-ui font-semibold"
+              >
+                完成
+              </button>
+            </div>
+          </>
+        ) : (
+          <>
+            <h3 className="flex items-center gap-2 text-title-sm font-semibold text-[var(--text)]">
+              <TrashIcon className="size-4.5 text-[#ff9f9f]" />
+              删除文件
+            </h3>
+            <p className="mt-3 text-ui leading-6 text-white/80">
+              {file.missing ? (
+                <>该文件在磁盘上已缺失，删除只会清掉这条台账记录。</>
+              ) : (
+                <>
+                  将把下列文件从磁盘
+                  <span className="font-semibold text-[#ff9f9f]">彻底删除</span>
+                  ，同名的 NFO/字幕/图片附属文件一并清除。此操作不可恢复。
+                </>
+              )}
+            </p>
+            <div className="mt-4 rounded-xl border border-white/[0.08] bg-white/[0.03] p-3.5">
+              <p className="text-ui text-[var(--text)]">
+                {detail.kind !== "movie" &&
+                  (file.episode_number > 0 || file.season_number > 0) && (
+                    <span className="tnum mr-2 text-sub font-semibold text-[var(--accent-2)]">
+                      S{String(file.season_number).padStart(2, "0")}E
+                      {String(file.episode_number).padStart(2, "0")}
+                    </span>
+                  )}
+                {file.file_name}
+                <span className="tnum ml-2 text-sub text-[var(--text-muted)]">
+                  {formatBytes(file.size_bytes)}
+                </span>
+              </p>
+              <p className="tnum mt-1 break-all font-mono text-caption leading-5 text-white/50">
+                {file.file_path}
+              </p>
+            </div>
+            {isLast && (
+              <p className="mt-3 rounded-xl border border-[#f5c451]/30 bg-[#f5c451]/[0.06] px-3.5 py-2.5 text-sub leading-6 text-[#f5c451]">
+                这是「{detail.title}」在本库的最后一个文件——删除将升级为整条目删除，
+                整个刮削目录（含 NFO/海报）一并清除，条目将从库存消失。
+              </p>
+            )}
+            <p className="mt-3 text-caption leading-5 text-[var(--text-faint)]">
+              若该作品有订阅且删除后此单元不再有其他拷贝，订阅会将其视为缺失并自动重新下载。
+            </p>
+            <label className="mt-4 flex cursor-pointer items-start gap-2.5 text-sub leading-6 text-white/80">
+              <input
+                type="checkbox"
+                checked={confirmed}
+                onChange={(e) => setConfirmed(e.target.checked)}
+                className="mt-1 size-4 accent-[#ff6b6b]"
+              />
+              我已明白：{isLast ? "整个条目目录及其中全部文件" : "该文件及其同名附属文件"}
+              将被永久删除，无法恢复。
             </label>
             {error && <p className="mt-3 text-sub text-[#ff9f9f]">{error}</p>}
             <div className="mt-5 flex justify-end gap-3">

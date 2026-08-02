@@ -356,6 +356,19 @@ export function setDefaultLibrary(id: number): Promise<MediaLibrary> {
   return unwrap(request<ApiEnvelope<MediaLibrary>>(`/libraries/${id}/default`, { method: "POST" }));
 }
 
+/**
+ * 重排媒体库展示顺序（决定首页卡片与「最近添加」分区的排列）。
+ * 必须一次传入全部库的 id——漏/多/重复都会被后端拒绝。
+ */
+export function reorderLibraries(orderedIds: number[]): Promise<Record<string, never>> {
+  return unwrap(
+    request<ApiEnvelope<Record<string, never>>>(`/libraries/order`, {
+      method: "PUT",
+      body: JSON.stringify({ ordered_ids: orderedIds }),
+    }),
+  );
+}
+
 /** 删除媒体库（不动磁盘文件；其订阅回落到该类型默认库）。 */
 export function deleteLibrary(id: number): Promise<Record<string, never>> {
   return unwrap(request<ApiEnvelope<Record<string, never>>>(`/libraries/${id}`, { method: "DELETE" }));
@@ -922,6 +935,24 @@ export function deleteLibraryItem(
     request<ApiEnvelope<ItemDeleteResult>>(`/libraries/${libraryId}/items/${mediaItemId}`, {
       method: "DELETE",
     }),
+  );
+}
+
+/**
+ * 从磁盘删除条目的**单个文件**（含同名 NFO/字幕/图片附属文件）——多版本
+ * 洗掉一个、删某集重下的出口。同样会真删磁盘，调用前必须明确二次确认；
+ * 该文件是条目在本库的最后一个文件时会升级为整条目删除（确认界面须告知）。
+ */
+export function deleteLibraryFile(
+  libraryId: number,
+  mediaItemId: number,
+  fileId: number,
+): Promise<ItemDeleteResult> {
+  return unwrap(
+    request<ApiEnvelope<ItemDeleteResult>>(
+      `/libraries/${libraryId}/items/${mediaItemId}/files/${fileId}`,
+      { method: "DELETE" },
+    ),
   );
 }
 

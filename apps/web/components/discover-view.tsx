@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import type { Route } from "next";
@@ -397,12 +397,15 @@ const HERO_INTERVAL = 8000;
 /**
  * Hero 大横幅：精选影片自动轮播。
  * 所有帧常驻 DOM 叠放，靠 opacity 交叉淡入淡出（避免切换时图片重新加载闪白）；
- * 文字区跟随当前帧一起淡入。两侧箭头与右下角圆点均可手动切换并重置计时。
+ * 文字区跟随当前帧一起淡入。手动切换（桌面悬停浮现的两侧箭头 / 触屏横向
+ * 滑动 / 右下角圆点）都会重置自动轮播计时。
  * 图片按需装载：帧壳常驻，但 w1280 大图只有轮到（当前帧/下一帧）才写入 src，
  * 首屏不必一次下载解码全部 6 张；已展示过的帧保持已加载，交叉淡出不闪白。
  */
 function HeroBanner({ items }: { items: MediaItem[] }) {
   const [index, setIndex] = useState(0);
+  // 触屏滑动切换的起点（无悬停设备不显示箭头，滑动是唯一的大面积切换手势）
+  const touchStart = useRef<{ x: number; y: number } | null>(null);
 
   const switchSlide = (offset: number) => {
     setIndex((current) => (current + offset + items.length) % items.length);
@@ -421,19 +424,40 @@ function HeroBanner({ items }: { items: MediaItem[] }) {
 
   const next = (index + 1) % items.length;
   return (
-    <div className="group relative h-[46vh] min-h-[320px] w-full overflow-hidden rounded-2xl shadow-[0_24px_70px_-18px_rgba(0,0,0,0.62)] ring-1 ring-white/10 max-md:h-[38vh] max-md:min-h-[230px]">
+    <div
+      className="group relative h-[46vh] min-h-[320px] w-full overflow-hidden rounded-2xl shadow-[0_24px_70px_-18px_rgba(0,0,0,0.62)] ring-1 ring-white/10 max-md:h-[38vh] max-md:min-h-[230px]"
+      onTouchStart={(e) => {
+        const t = e.touches[0];
+        touchStart.current = { x: t.clientX, y: t.clientY };
+      }}
+      onTouchEnd={(e) => {
+        const start = touchStart.current;
+        touchStart.current = null;
+        if (!start || items.length <= 1) return;
+        const t = e.changedTouches[0];
+        const dx = t.clientX - start.x;
+        const dy = t.clientY - start.y;
+        // 水平位移够大且明显横向才算切换手势：纵向滚动起手、普通点按
+        // （tapGuard 负责进详情）都不受影响
+        if (Math.abs(dx) > 48 && Math.abs(dx) > Math.abs(dy) * 1.5) {
+          switchSlide(dx < 0 ? 1 : -1);
+        }
+      }}
+    >
       {items.map((item, i) => (
         <HeroSlide key={item.id} item={item} active={i === index} preload={i === index || i === next} />
       ))}
 
-      {/* 手动切换按钮：首尾相连，触摸设备也保留足够大的点击区域。 */}
+      {/* 手动切换按钮：桌面悬停浮现。无悬停设备直接不渲染出来——常显会压住
+          标题文字（截图实锤），"点一下再浮现"又与整块点击进详情冲突，触屏
+          的切换交给横向滑动与右下圆点。 */}
       {items.length > 1 && (
         <>
           <button
             type="button"
             aria-label="切换到上一部"
             onClick={() => switchSlide(-1)}
-            className="absolute left-3 top-1/2 z-10 flex size-11 -translate-y-1/2 items-center justify-center rounded-full bg-black/35 text-white/80 opacity-100 ring-1 ring-white/15 backdrop-blur-sm transition hover:bg-black/55 hover:text-white focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/80 sm:opacity-0 sm:group-hover:opacity-100"
+            className="absolute left-3 top-1/2 z-10 flex size-11 -translate-y-1/2 items-center justify-center rounded-full bg-black/35 text-white/80 opacity-0 ring-1 ring-white/15 backdrop-blur-sm transition hover:bg-black/55 hover:text-white group-hover:opacity-100 focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/80 [@media(hover:none)]:hidden"
           >
             <ChevronLeftIcon className="size-6" />
           </button>
@@ -441,7 +465,7 @@ function HeroBanner({ items }: { items: MediaItem[] }) {
             type="button"
             aria-label="切换到下一部"
             onClick={() => switchSlide(1)}
-            className="absolute right-3 top-1/2 z-10 flex size-11 -translate-y-1/2 items-center justify-center rounded-full bg-black/35 text-white/80 opacity-100 ring-1 ring-white/15 backdrop-blur-sm transition hover:bg-black/55 hover:text-white focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/80 sm:opacity-0 sm:group-hover:opacity-100"
+            className="absolute right-3 top-1/2 z-10 flex size-11 -translate-y-1/2 items-center justify-center rounded-full bg-black/35 text-white/80 opacity-0 ring-1 ring-white/15 backdrop-blur-sm transition hover:bg-black/55 hover:text-white group-hover:opacity-100 focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/80 [@media(hover:none)]:hidden"
           >
             <ChevronRightIcon className="size-6" />
           </button>

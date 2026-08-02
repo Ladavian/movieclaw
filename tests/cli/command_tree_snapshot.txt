@@ -75,6 +75,7 @@ lib items artwork-download
 lib items artwork-select
 lib items delete
 lib items episodes
+lib items files delete
 lib items ids
 lib items index
 lib items list
@@ -87,6 +88,7 @@ lib list
 lib missing clear
 lib missing list
 lib missing redownload
+lib order set
 lib organize preview
 lib organize start
 lib refresh progress

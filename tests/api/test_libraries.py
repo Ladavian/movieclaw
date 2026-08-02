@@ -189,6 +189,45 @@ def test_delete_default_hands_over_within_kind(client) -> None:
 
 
 # ---------------------------------------------------------------------------
+# 展示顺序（sort_order）
+# ---------------------------------------------------------------------------
+
+
+def test_reorder_changes_list_order_and_new_library_goes_last(client) -> None:
+    """重排后列表按新顺序返回（首页卡片与「最近添加」分区都吃这个顺序）；
+    重排之后新建的库置尾，不打乱用户排好的顺序。"""
+    a = _create(client, name="电影库", kind="movie", root="/media/movies")
+    b = _create(client, name="剧集库", kind="tv", root="/media/tv")
+    c = _create(client, name="动漫库", kind="tv", root="/media/anime")
+    ids = [x["id"] for x in client.get("/api/v1/libraries").json()["data"]]
+    assert ids == [a["id"], b["id"], c["id"]]  # 未排过序时保持创建顺序
+
+    r = client.put(
+        "/api/v1/libraries/order", json={"ordered_ids": [c["id"], a["id"], b["id"]]}
+    )
+    assert r.status_code == 200
+    ids = [x["id"] for x in client.get("/api/v1/libraries").json()["data"]]
+    assert ids == [c["id"], a["id"], b["id"]]
+
+    d = _create(client, name="纪录片库", kind="movie", root="/media/docs")
+    ids = [x["id"] for x in client.get("/api/v1/libraries").json()["data"]]
+    assert ids == [c["id"], a["id"], b["id"], d["id"]]
+
+
+def test_reorder_rejects_partial_duplicate_or_unknown_ids(client) -> None:
+    """排序列表必须与现存库集合完全一致：漏库/重复/不存在的 id 都拒绝。"""
+    a = _create(client, name="电影库", kind="movie", root="/media/movies")
+    b = _create(client, name="剧集库", kind="tv", root="/media/tv")
+    put = lambda ids: client.put("/api/v1/libraries/order", json={"ordered_ids": ids})  # noqa: E731
+    assert put([a["id"]]).status_code == 400  # 漏库
+    assert put([a["id"], a["id"], b["id"]]).status_code == 400  # 重复
+    assert put([a["id"], b["id"], 99999]).status_code == 400  # 不存在
+    # 失败的请求不应改变现有顺序
+    ids = [x["id"] for x in client.get("/api/v1/libraries").json()["data"]]
+    assert ids == [a["id"], b["id"]]
+
+
+# ---------------------------------------------------------------------------
 # save_path 推导（纯函数单元测试）
 # ---------------------------------------------------------------------------
 

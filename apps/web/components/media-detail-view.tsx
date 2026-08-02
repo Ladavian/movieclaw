@@ -25,6 +25,7 @@ import {
 } from "@/lib/api/discover";
 import { useSubscribeEntry } from "@/components/subscribe-entry";
 import { useBackdrop } from "@/lib/backdrop";
+import { useDoubanAppHref } from "@/lib/douban-app-link";
 import { getMediaOrigin, getMediaSeed, useMediaDetail } from "@/lib/media-detail";
 import { usePageTitle } from "@/lib/use-page-title";
 import type { MediaSource, MediaType } from "@/lib/media-types";
@@ -125,6 +126,10 @@ export function MediaDetailView({
     setOverrideBackdrop(immersiveUrl);
     return () => setOverrideBackdrop(null);
   }, [immersiveUrl, setOverrideBackdrop]);
+
+  // 豆瓣外链的移动端 App 直跳：无悬停设备把「豆瓣」外链换成官方分发地址，
+  // 装了豆瓣 App 直接拉起进词条页（桌面/未命中时为 null，回落网页地址）
+  const doubanAppHref = useDoubanAppHref(source === "douban" ? id : null);
 
   // 来路祖先（与影片标题无关）：加载/失败兜底与正常内容共用同一条回跳链路。
   // 兜底态也必须渲染 PageNav——它向外壳登记「本页自带顶栏」，否则移动端的
@@ -267,7 +272,9 @@ export function MediaDetailView({
                 label="TMDB"
               />
             )}
-            {info?.sourceUrl && <SourceLink href={info.sourceUrl} label="豆瓣" />}
+            {info?.sourceUrl && (
+              <SourceLink href={doubanAppHref ?? info.sourceUrl} label="豆瓣" />
+            )}
           </div>
 
           {/* 操作区：已订阅的影片主按钮变为状态展示（点击进入管理弹层可取消订阅） */}

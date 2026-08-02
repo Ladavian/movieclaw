@@ -14,6 +14,8 @@
    彻底删除**（与其他一切"只删台账"的接口截然相反）——整个条目目录
    （视频+NFO+海报+字幕）一起清掉，不留刮削残渣。唯一的克制：目录里
    混有**其他条目**的文件时退化为只删本条目的文件及其同名附属文件。
+   ``delete_single_file`` 是它的文件级姊妹：只删一个版本/一集的文件及
+   同名附属（多版本洗版、删某集重下），最后一个文件时升级为整条目删除。
 """
 
 from __future__ import annotations
@@ -1037,6 +1039,59 @@ async def delete_item_files(
             "已从磁盘删除条目 #%s 的 %d 个路径（库「%s」，释放约 %.1f GB）：%s",
             media_item_id,
             len(result.removed_paths),
+            library.name,
+            result.freed_bytes / 1024**3,
+            "；".join(result.removed_paths),
+        )
+    return result
+
+
+async def delete_single_file(
+    session: AsyncSession,
+    library: Library,
+    row: LibraryFile,
+    item_rows: list[LibraryFile],
+    all_library_files: list[LibraryFile],
+) -> DeleteResult:
+    """从磁盘删除条目的**单个文件**（多版本洗版 / 删某一集重下的出口）。
+
+    与整条目删除（``delete_item_files``）的分工：
+    - 只删这一个主文件及其同名附属文件（NFO/字幕/图片），条目目录与其他
+      文件（含剧集的 tvshow.nfo/海报）纹丝不动；
+    - **该行是条目在本库的最后一行时退化为整条目删除**——只删文件会留下
+      一个装着 NFO/海报的空刮削目录，下次扫描它还在，违背"不留刮削残渣"
+      的原则（调用方须在确认界面明确告知这一升级）；
+    - missing 行没有磁盘实体，直接清台账；
+    - 磁盘删除失败保留台账行（与整条目删除同规则，不制造幽灵账）。
+    """
+    assert row.media_item_id is not None
+    if len(item_rows) == 1:
+        return await delete_item_files(
+            session, library, row.media_item_id, item_rows, all_library_files
+        )
+
+    result = DeleteResult()
+    if row.missing_since is not None:
+        await session.delete(row)
+        result.rows_deleted = 1
+        await session.commit()
+        return result
+
+    path = Path(row.file_path)
+    roots = [Path(p) for p in library.root_paths]
+    if not _safe_inside_roots(path, roots):
+        result.errors.append(f"「{path}」不在库根路径之内，已跳过（不删库外文件）")
+        return result
+
+    ok = await asyncio.to_thread(_remove_file_with_sidecars, path, result)
+    if ok:
+        result.rows_deleted = 1
+        result.freed_bytes = row.size_bytes
+        await session.delete(row)
+        await session.commit()
+        logger.info(
+            "已从磁盘删除条目 #%s 的单个文件（库「%s」，释放约 %.1f GB）：%s",
+            row.media_item_id,
             library.name,
             result.freed_bytes / 1024**3,
             "；".join(result.removed_paths),

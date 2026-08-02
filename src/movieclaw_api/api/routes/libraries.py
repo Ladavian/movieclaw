@@ -27,6 +27,7 @@ from movieclaw_api.schemas.library import (
     LibraryItemDetailView,
     LibraryItemView,
     LibraryPayload,
+    LibraryReorderPayload,
     LibrarySearchGroupView,
     LibraryStats,
     LibraryView,
@@ -73,6 +74,7 @@ from movieclaw_api.services.library.items import (
     build_library_wall,
     build_season_episodes,
     delete_item_files,
+    delete_single_file,
     find_episode_thumb,
     find_local_artwork,
     search_library_items,
@@ -609,6 +611,26 @@ def _assert_not_busy(library_name: str, library_id: int) -> None:
         raise ConflictException(
             f"「{library_name}」正在转移条目，暂不能编辑或删除；请等待转移完成"
         )
+
+
+@router.put(
+    "/order",
+    response_model=ApiResponse[dict],
+    summary="重排媒体库展示顺序（决定首页卡片与「最近添加」分区的排列）",
+    operation_id="lib.order.set",
+)
+async def reorder_libraries(
+    payload: LibraryReorderPayload,
+    session: AsyncSession = Depends(get_session),
+) -> ApiResponse[dict]:
+    """按给定 id 顺序重写全部库的展示顺序。列表必须包含且仅包含现存的
+    全部库 id——部分排序语义不明确，库列表变化过就让前端刷新后重试。
+
+    必须注册在 ``PUT /{library_id}`` 之前：FastAPI 的路径参数按通配段匹配、
+    到校验层才转 int，注册在后面的话 ``/order`` 会被它抢走并报 422。"""
+    service = LibraryConfigService(session)
+    await service.reorder(payload.ordered_ids)
+    return ok({}, message="媒体库顺序已更新")
 
 
 @router.put(
@@ -1389,6 +1411,54 @@ async def delete_library_item(
         message = f"「{item.title}」部分删除失败：{'；'.join(result.errors)}"
     else:
         message = f"「{item.title}」已从磁盘彻底删除"
+    return ok(view, message=message)
+
+
+@router.delete(
+    "/{library_id}/items/{media_item_id}/files/{file_id}",
+    response_model=ApiResponse[ItemDeleteResultView],
+    summary="从磁盘删除条目的单个文件（含同名 NFO/字幕/图片附属文件）",
+    operation_id="lib.items.files.delete",
+    openapi_extra={"x-cli-dangerous": "destructive"},
+)
+async def delete_library_file(
+    library_id: int,
+    media_item_id: int,
+    file_id: int,
+    background_tasks: BackgroundTasks,
+    session: AsyncSession = Depends(get_session),
+) -> ApiResponse[ItemDeleteResultView]:
+    """条目删除的文件级姊妹（多版本洗掉一个 / 删某集重下）——同样会真删
+    磁盘，调用方必须先向用户明确确认。该文件是条目在本库的最后一个文件时
+    升级为整条目删除（不留只剩 NFO/海报的空刮削目录），确认界面须告知。"""
+    service = LibraryConfigService(session)
+    library = await service.get(library_id)
+    _assert_not_busy(library.name, library_id)
+    item, rows = await _item_rows(session, library_id, media_item_id)
+    row = next((r for r in rows if r.id == file_id), None)
+    if row is None:
+        raise NotFoundException(f"台账文件不存在或不属于「{item.title}」：id={file_id}")
+    file_name = PurePath(row.file_path).name
+    all_rows = await LibraryFileRepository(session).list_by_library(library_id)
+    result = await delete_single_file(session, library, row, rows, all_rows)
+
+    # 与整条目删除同一套善后：通知媒体服务器刷新；条目在所有库都没文件了
+    # 且没订阅时连同图片资产一并清掉
+    background_tasks.add_task(notify_media_server_refresh)
+    background_tasks.add_task(media_scrape.cleanup_orphan_items, [media_item_id])
+
+    view = ItemDeleteResultView(
+        removed_paths=result.removed_paths,
+        rows_deleted=result.rows_deleted,
+        freed_bytes=result.freed_bytes,
+        errors=result.errors,
+    )
+    if result.errors:
+        message = f"「{file_name}」删除失败：{'；'.join(result.errors)}"
+    elif len(rows) == 1:
+        message = f"「{item.title}」的最后一个文件已删除，整个条目已从磁盘清除"
+    else:
+        message = f"「{file_name}」已从磁盘删除"
     return ok(view, message=message)
 
 

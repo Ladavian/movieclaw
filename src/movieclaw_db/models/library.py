@@ -43,6 +43,9 @@ class Library(TimestampMixin, table=True):
     )
     # 每 kind 至多一个默认库
     is_default: bool = Field(default=False, description="是否为该类型的默认库")
+    # 展示顺序（越小越靠前），决定媒体库首页卡片区与「最近添加」分区的排列。
+    # 新库置尾（max+1），用户在库卡片菜单里前移/后移调整；同值按 id 兜底
+    sort_order: int = Field(default=0, index=True, description="展示顺序（升序）")
     # 收藏范围声明：条件列表，条件间 AND、条件内 any_of（交集即满足）。
     # 每条形如 {"field": "genres", "op": "any_of", "values": [16]}——
     # genres 存 TMDB genre **ID**（genre 名随刮削语言变化，存名字会在用户

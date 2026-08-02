@@ -2,7 +2,8 @@
 
 覆盖：ffprobe 音轨/字幕轨解析、NFO 展示元数据解析（容错）、详情接口
 （本地美术图优先 / NFO 元数据 / 介质规格懒回填 / 外挂字幕合并）、
-本地美术图接口、真实删除（整目录清除 / 混目录退化 / 库外不删）、
+本地美术图接口、真实删除（整目录清除 / 混目录退化 / 库外不删 /
+单文件删除：保留其他版本 / 最后一个文件升级整删 / missing 行只清账）、
 单条目重新识别（错挂翻案 / NFO 权威提示 / 识别失败进待识别）。
 TMDB 为假实现。
 """
@@ -18,6 +19,7 @@ import movieclaw_api.services.library.items as items_mod
 import movieclaw_api.services.library.scan as scan_mod
 import movieclaw_api.services.media_discover as discover_mod
 from movieclaw_api.api.routes.libraries import (
+    delete_library_file,
     delete_library_item,
     get_item_artwork,
     get_library_item,
@@ -943,6 +945,188 @@ async def test_delete_item_degrades_when_dir_shared(db, tmp_path) -> None:
     async with db.session() as session:
         remaining = (await session.execute(select(LibraryFile))).scalars().all()
         assert [r.file_path for r in remaining] == [str(others)]
+
+
+async def test_delete_single_file_keeps_other_version(db, tmp_path) -> None:
+    """双版本电影删一个版本：仅该文件+同名附属被删，另一版本与条目目录、
+    NFO/海报等刮削产物完好，条目仍在库中。"""
+    root, entry, video = _make_movie_entry(tmp_path)
+    other = entry / "某电影.2020.2160p.WEB-DL.mkv"
+    other.write_bytes(b"movie-4k-bytes")
+    async with db.session() as session:
+        library = await LibraryRepository(session).create(
+            name="电影库", kind="movie", root_paths=[str(root)]
+        )
+    summary = await scan_library(library.id)
+    assert summary.identified == 2
+
+    async with db.session() as session:
+        item = (
+            (await session.execute(select(MediaItem).where(MediaItem.tmdb_id == 300)))
+            .scalars()
+            .one()
+        )
+        target = (
+            (
+                await session.execute(
+                    select(LibraryFile).where(LibraryFile.file_path == str(video))
+                )
+            )
+            .scalars()
+            .one()
+        )
+        resp = await delete_library_file(library.id, item.id, target.id, BackgroundTasks(), session)
+        result = resp.data
+
+    assert result.rows_deleted == 1 and not result.errors
+    assert not video.exists()
+    assert not (entry / "某电影.2020.1080p.WEB-DL.chs&eng.srt").exists()  # 同名附属一起清
+    assert other.exists() and entry.exists()  # 另一版本与条目目录不动
+    assert (entry / "movie.nfo").exists() and (entry / "poster.jpg").exists()
+    async with db.session() as session:
+        detail = (await get_library_item(library.id, item.id, BackgroundTasks(), session)).data
+        assert detail.file_count == 1
+        assert detail.files[0].file_path == str(other)
+
+
+async def test_delete_single_file_last_file_upgrades_to_item_delete(db, tmp_path) -> None:
+    """条目在本库的最后一个文件：升级为整条目删除，刮削目录整个清掉，
+    不留只剩 NFO/海报的空壳。"""
+    root, entry, _video = _make_movie_entry(tmp_path)
+    async with db.session() as session:
+        library = await LibraryRepository(session).create(
+            name="电影库", kind="movie", root_paths=[str(root)]
+        )
+    await scan_library(library.id)
+
+    async with db.session() as session:
+        item = (
+            (await session.execute(select(MediaItem).where(MediaItem.tmdb_id == 300)))
+            .scalars()
+            .one()
+        )
+        row = (await session.execute(select(LibraryFile))).scalars().one()
+        resp = await delete_library_file(library.id, item.id, row.id, BackgroundTasks(), session)
+
+    assert resp.data.rows_deleted == 1 and not resp.data.errors
+    assert resp.data.removed_paths == [str(entry)]
+    assert not entry.exists()
+    assert "最后一个文件" in resp.message
+    async with db.session() as session:
+        assert (await session.execute(select(LibraryFile))).scalars().all() == []
+
+
+async def test_delete_single_file_episode_keeps_show_assets(db, tmp_path) -> None:
+    """剧集删一集：该集文件与同名附属（分集 NFO/缩略图）被删，其他集与
+    剧集级刮削产物（tvshow.nfo/海报）不动。"""
+    root = tmp_path / "media" / "tv"
+    show = root / "测试剧集 (2024)"
+    season = show / "Season 01"
+    season.mkdir(parents=True)
+    (show / "tvshow.nfo").write_text("<tvshow><title>测试剧集</title></tvshow>", encoding="utf-8")
+    (show / "poster.jpg").write_bytes(b"poster")
+    e1 = season / "测试剧集.S01E01.1080p.mkv"
+    e1.write_bytes(b"e1")
+    (season / "测试剧集.S01E01.1080p.nfo").write_text(
+        "<episodedetails><title>E1</title></episodedetails>", encoding="utf-8"
+    )
+    (season / "测试剧集.S01E01.1080p-thumb.jpg").write_bytes(b"thumb")
+    e2 = season / "测试剧集.S01E02.1080p.mkv"
+    e2.write_bytes(b"e2")
+    async with db.session() as session:
+        library = await LibraryRepository(session).create(
+            name="剧集库", kind="tv", root_paths=[str(root)]
+        )
+    summary = await scan_library(library.id)
+    assert summary.identified == 2
+
+    async with db.session() as session:
+        item = (
+            (await session.execute(select(MediaItem).where(MediaItem.tmdb_id == 200)))
+            .scalars()
+            .one()
+        )
+        target = (
+            (await session.execute(select(LibraryFile).where(LibraryFile.file_path == str(e1))))
+            .scalars()
+            .one()
+        )
+        resp = await delete_library_file(library.id, item.id, target.id, BackgroundTasks(), session)
+
+    assert resp.data.rows_deleted == 1 and not resp.data.errors
+    assert not e1.exists()
+    assert not (season / "测试剧集.S01E01.1080p.nfo").exists()
+    assert not (season / "测试剧集.S01E01.1080p-thumb.jpg").exists()
+    assert e2.exists()  # 其他集不动
+    assert (show / "tvshow.nfo").exists() and (show / "poster.jpg").exists()
+    async with db.session() as session:
+        remaining = (await session.execute(select(LibraryFile))).scalars().all()
+        assert [r.file_path for r in remaining] == [str(e2)]
+
+
+async def test_delete_single_file_missing_row_clears_ledger_only(db, tmp_path) -> None:
+    """missing 行没有磁盘实体：删除只清台账，不碰磁盘上的任何东西。"""
+    from datetime import datetime
+
+    root = tmp_path / "media" / "movies"
+    entry = root / "某电影 (2020)"
+    entry.mkdir(parents=True)
+    present = entry / "某电影.2020.1080p.mkv"
+    present.write_bytes(b"a")
+
+    async with db.session() as session:
+        library = await LibraryRepository(session).create(
+            name="电影库", kind="movie", root_paths=[str(root)]
+        )
+        item = MediaItem(kind="movie", tmdb_id=903, title="某电影", original_title="Some")
+        session.add(item)
+        await session.flush()
+        session.add_all(
+            [
+                LibraryFile(
+                    library_id=library.id,
+                    media_item_id=item.id,
+                    season_number=0,
+                    episode_number=0,
+                    file_path=str(present),
+                    size_bytes=1,
+                    source="scanned",
+                ),
+                LibraryFile(
+                    library_id=library.id,
+                    media_item_id=item.id,
+                    season_number=0,
+                    episode_number=0,
+                    file_path=str(entry / "某电影.2020.2160p.mkv"),
+                    size_bytes=1,
+                    source="scanned",
+                    missing_since=datetime(2024, 1, 1),
+                ),
+            ]
+        )
+        await session.commit()
+        item_id = item.id
+
+    async with db.session() as session:
+        missing_row = (
+            (
+                await session.execute(
+                    select(LibraryFile).where(LibraryFile.missing_since.is_not(None))  # type: ignore[union-attr]
+                )
+            )
+            .scalars()
+            .one()
+        )
+        resp = await delete_library_file(
+            library.id, item_id, missing_row.id, BackgroundTasks(), session
+        )
+
+    assert resp.data.rows_deleted == 1 and not resp.data.errors
+    assert resp.data.removed_paths == []  # 没碰磁盘
+    assert present.exists()
+    async with db.session() as session:
+        remaining = (await session.execute(select(LibraryFile))).scalars().all()
+        assert [r.file_path for r in remaining] == [str(present)]
 
 
 # ---------------------------------------------------------------------------
