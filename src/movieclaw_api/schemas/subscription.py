@@ -289,6 +289,8 @@ class WantedView(BaseModel):
     status: str
     air_date: date | None
     priority: int
+    # 在途工单锚定的种子 hash；前端据此把工单行与 sub.downloads 的进度组对上
+    info_hash: str | None
     next_search_at: datetime | None
     search_attempts: int
     last_search_at: datetime | None
@@ -311,6 +313,7 @@ class WantedView(BaseModel):
             status=w.status,
             air_date=w.air_date,
             priority=w.priority,
+            info_hash=w.info_hash,
             next_search_at=w.next_search_at,
             search_attempts=w.search_attempts,
             last_search_at=w.last_search_at,
@@ -338,6 +341,33 @@ class SubscriptionDetailView(SubscriptionView):
             **base.model_dump(),
             wanted=[WantedView.from_model(w) for w in wanted_rows],
         )
+
+
+class DownloadUnitView(BaseModel):
+    """进度组覆盖的追踪单元（电影为 0/0）。"""
+
+    season_number: int
+    episode_number: int
+
+
+class SubscriptionDownloadView(BaseModel):
+    """订阅在途种子的实时下载快照（sub.downloads，详情页轮询展示）。
+
+    state 词表与 TorrentStatus.state 一致，另加 missing——种子已不在任何
+    可用下载器中（可能被手动删除，救援巡检稍后会退回工单重新找资源）。
+    """
+
+    info_hash: str
+    name: str | None = Field(default=None, description="下载器中的任务名；missing 时为空")
+    progress: float | None = Field(default=None, description="0.0~1.0；missing 时为空")
+    size_bytes: int | None = None
+    dlspeed_bytes: int | None = None
+    eta_seconds: int | None = None
+    state: str = Field(
+        description="downloading / stalled / paused / completed / error / missing / unknown"
+    )
+    downloader_name: str | None = None
+    units: list[DownloadUnitView] = Field(default_factory=list)
 
 
 class ActivityView(BaseModel):

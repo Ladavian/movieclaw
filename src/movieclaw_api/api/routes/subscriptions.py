@@ -16,6 +16,7 @@ from movieclaw_api.schemas.subscription import (
     SeasonOverview,
     SubscriptionCreatePayload,
     SubscriptionDetailView,
+    SubscriptionDownloadView,
     SubscriptionPausePayload,
     SubscriptionUpdatePayload,
     SubscriptionView,
@@ -206,6 +207,28 @@ async def get_subscription(
     service = _service(session)
     sub, item, wanted = await service.detail(subscription_id)
     return ok(SubscriptionDetailView.from_detail(sub, item, wanted))
+
+
+@router.get(
+    "/{subscription_id}/downloads",
+    response_model=ApiResponse[list[SubscriptionDownloadView]],
+    summary="订阅在途种子的实时下载进度（速度/ETA，详情页轮询用）",
+    operation_id="sub.downloads",
+)
+async def list_subscription_downloads(
+    subscription_id: int,
+    session: AsyncSession = Depends(get_session),
+) -> ApiResponse[list[SubscriptionDownloadView]]:
+    """纯读快照：逐个到可用下载器查询在途种子的当前状态，不落库不改工单。
+    只在详情页打开且存在在途工单时被轮询（约 5 秒一次），单订阅种子数很少，
+    对下载器的压力可忽略。"""
+    from movieclaw_api.services.download_progress import subscription_download_snapshot
+
+    # 订阅不存在时给 404 而不是空列表（detail 会抛 NotFoundException）
+    service = _service(session)
+    await service.detail(subscription_id)
+    rows = await subscription_download_snapshot(session, subscription_id)
+    return ok([SubscriptionDownloadView(**row) for row in rows])
 
 
 @router.get(

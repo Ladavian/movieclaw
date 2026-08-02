@@ -101,6 +101,8 @@ export interface WantedItem {
   grabbed_at: string | null;
   downloaded_at: string | null;
   imported_at: string | null;
+  /** 在途工单锚定的种子 hash；据此与 listSubscriptionDownloads 的进度组对上 */
+  info_hash: string | null;
 }
 
 export interface SubscriptionDetail extends Subscription {
@@ -346,6 +348,32 @@ export function deleteSubscription(id: number): Promise<Record<string, never>> {
     request<ApiEnvelope<Record<string, never>>>(`/subscriptions/${id}`, {
       method: "DELETE",
     }),
+  );
+}
+
+/** 订阅在途种子的实时下载快照（详情页轮询展示进度/速度/ETA）。 */
+export interface SubscriptionDownload {
+  info_hash: string;
+  /** 下载器中的任务名；missing 时为空 */
+  name: string | null;
+  /** 0.0 ~ 1.0；missing 时为空 */
+  progress: number | null;
+  size_bytes: number | null;
+  dlspeed_bytes: number | null;
+  eta_seconds: number | null;
+  /** missing = 种子已不在任何可用下载器中（救援巡检稍后会退回工单重找） */
+  state: "downloading" | "stalled" | "paused" | "completed" | "error" | "missing" | "unknown";
+  downloader_name: string | null;
+  units: { season_number: number; episode_number: number }[];
+}
+
+/** 订阅在途种子的实时下载进度（纯读快照，逐个查询下载器）。 */
+export function listSubscriptionDownloads(
+  id: number,
+  init?: RequestInit,
+): Promise<SubscriptionDownload[]> {
+  return unwrap(
+    request<ApiEnvelope<SubscriptionDownload[]>>(`/subscriptions/${id}/downloads`, init),
   );
 }
 

@@ -42,6 +42,28 @@ from movieclaw_downloader.models import (
 logger = logging.getLogger("movieclaw_downloader.transmission")
 
 
+def _normalize_state(torrent, completed: bool) -> str:  # noqa: ANN001 -- transmission_rpc.Torrent
+    """把 Transmission 的任务状态收敛到 TorrentStatus.state 的统一词表。
+
+    原始 status 词表（transmission-rpc）：stopped / check pending / checking /
+    download pending / downloading / seed pending / seeding。
+    """
+    if completed:
+        return "completed"
+    if int(torrent.fields.get("error", 0)) != 0:
+        return "error"
+    status = str(torrent.fields.get("status", ""))
+    # fields 里 status 是数字枚举：0=stopped 3=download pending 4=downloading
+    if status == "4":
+        # 有速度才算真在下，零速对齐 qBittorrent 的 stalled 语义
+        return "downloading" if int(torrent.fields.get("rateDownload", 0)) > 0 else "stalled"
+    if status == "3":
+        return "stalled"
+    if status == "0":
+        return "paused"
+    return "unknown"
+
+
 @contextmanager
 def _translate_errors(url: str) -> Iterator[None]:
     """把 transmission-rpc 的异常翻译成本模块的统一异常。"""
@@ -141,17 +163,25 @@ class TransmissionDownloader(BaseDownloader):
                 torrent = client.get_torrent(info_hash)
             except KeyError:
                 return None
+        completed = float(torrent.percent_done) >= 1.0
+        # 直接读原始字段：transmission-rpc 的 .eta 属性在无法估算时抛异常，
+        # fields 里的原始值 -1（未知）/-2（不适用）直接判掉更稳
+        eta = int(torrent.fields.get("eta", -1))
         return TorrentStatus(
             info_hash=info_hash,
             name=torrent.name,
             progress=float(torrent.percent_done),
-            completed=float(torrent.percent_done) >= 1.0,
+            completed=completed,
             save_path=torrent.download_dir,
             files=[
                 # file.name 是种子内相对路径（含顶层目录）
                 TorrentFile(path=file.name, size_bytes=int(file.size))
                 for file in torrent.get_files()
             ],
+            size_bytes=int(torrent.fields.get("sizeWhenDone", 0)) or None,
+            dlspeed_bytes=int(torrent.fields.get("rateDownload", 0)),
+            eta_seconds=eta if eta > 0 else None,
+            state=_normalize_state(torrent, completed=completed),
         )
 
     async def list_torrents(self) -> list[TorrentBrief]:

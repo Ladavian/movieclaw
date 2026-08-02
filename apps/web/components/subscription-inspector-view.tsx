@@ -17,19 +17,23 @@ import {
   getSubscription,
   listRuleSets,
   listSubscriptionActivities,
+  listSubscriptionDownloads,
   pauseSubscription,
   updateSubscription,
   type RuleSet,
   type SubscriptionActivity,
   type SubscriptionDetail,
+  type SubscriptionDownload,
   type WantedItem,
 } from "@/lib/api/subscriptions";
+import { formatBytes, formatDuration } from "@/lib/format";
 import { cachedImageUrl } from "@/lib/image-proxy";
 import {
   subscriptionProgressNote,
   subscriptionStatusMeta,
 } from "@/lib/subscription-ui";
 import { formatDateTime, formatRelativeTime } from "@/lib/time";
+import { useVisiblePolling } from "@/lib/use-visible-polling";
 
 /**
  * 订阅详情分析页（/subscriptions/[id]）：订阅透明化的落点。
@@ -59,6 +63,8 @@ export function SubscriptionInspectorView({ id }: { id: number }) {
   const [switchingRule, setSwitchingRule] = useState(false);
   const [tab, setTab] = useState<"wanted" | "activity">("wanted");
 
+  const [downloads, setDownloads] = useState<SubscriptionDownload[]>([]);
+
   const reload = useCallback(() => {
     Promise.all([
       getSubscription(id),
@@ -76,6 +82,30 @@ export function SubscriptionInspectorView({ id }: { id: number }) {
   useEffect(() => {
     reload();
   }, [reload]);
+
+  // 有在途投递（已提交下载/已下载待入库）时才轮询：
+  // - 5s 拉一次实时进度（速度/ETA，纯读快照）；
+  // - 30s 静默刷一次详情，接住"下载完成→入库→工单关闭"的状态跃迁。
+  // 页面隐藏自动暂停（useVisiblePolling）；无在途工单时零请求。
+  const hasInFlight =
+    detail?.wanted.some((w) => w.status === "grabbed" || w.status === "downloaded") ?? false;
+  useVisiblePolling(
+    () => {
+      listSubscriptionDownloads(id)
+        .then(setDownloads)
+        .catch(() => undefined);
+    },
+    hasInFlight ? 5000 : null,
+    { leading: true },
+  );
+  useVisiblePolling(reload, hasInFlight ? 30000 : null);
+
+  // 工单 → 进度组的索引（同一整季包的多集共享一个种子/一份进度）
+  const downloadByHash = useMemo(() => {
+    const map = new Map<string, SubscriptionDownload>();
+    for (const d of downloads) map.set(d.info_hash, d);
+    return map;
+  }, [downloads]);
 
   const ruleSetName = useMemo(
     () => ruleSets.find((r) => r.id === detail?.rule_set_id)?.name ?? `#${detail?.rule_set_id}`,
@@ -275,7 +305,7 @@ export function SubscriptionInspectorView({ id }: { id: number }) {
 
       <div className="mt-4">
         {tab === "wanted" ? (
-          <WantedBreakdown wanted={detail.wanted} isMovie={isMovie} />
+          <WantedBreakdown wanted={detail.wanted} isMovie={isMovie} downloads={downloadByHash} />
         ) : (
           <ActivityTimeline activities={activities} />
         )}
@@ -535,7 +565,16 @@ function ActivityTimeline({ activities }: { activities: SubscriptionActivity[] }
 }
 
 /** 追踪项按季分组展开；电影是单项的退化形态。 */
-function WantedBreakdown({ wanted, isMovie }: { wanted: WantedItem[]; isMovie: boolean }) {
+function WantedBreakdown({
+  wanted,
+  isMovie,
+  downloads,
+}: {
+  wanted: WantedItem[];
+  isMovie: boolean;
+  /** info_hash → 实时下载快照（无在途工单时为空 Map） */
+  downloads: Map<string, SubscriptionDownload>;
+}) {
   if (wanted.length === 0) {
     return (
       <p className="rounded-2xl border border-white/[0.07] bg-[rgba(14,16,22,0.45)] p-5 text-sub leading-6 text-[var(--text-muted)] backdrop-blur-xl">
@@ -570,7 +609,12 @@ function WantedBreakdown({ wanted, isMovie }: { wanted: WantedItem[]; isMovie: b
             )}
             <ul className="divide-y divide-white/[0.05]">
               {items.map((w) => (
-                <WantedRow key={w.id} wanted={w} isMovie={isMovie} />
+                <WantedRow
+                  key={w.id}
+                  wanted={w}
+                  isMovie={isMovie}
+                  download={w.info_hash ? downloads.get(w.info_hash) : undefined}
+                />
               ))}
             </ul>
           </div>
@@ -583,33 +627,80 @@ function WantedBreakdown({ wanted, isMovie }: { wanted: WantedItem[]; isMovie: b
  * 单个追踪项的透明化行：状态徽标 + 该项此刻"卡在哪、下一步是什么"。
  * 文案与后端调度语义一一对应（补旧排队 / 追新等被动匹配 / 未定档不可调度）。
  */
-function WantedRow({ wanted: w, isMovie }: { wanted: WantedItem; isMovie: boolean }) {
+function WantedRow({
+  wanted: w,
+  isMovie,
+  download,
+}: {
+  wanted: WantedItem;
+  isMovie: boolean;
+  /** 该工单锚定种子的实时下载快照（仅在途工单有，5s 轮询更新） */
+  download?: SubscriptionDownload;
+}) {
   const { label, color, note } = wantedPresentation(w);
+  // 已提交下载且拿到了实时快照：说明行升级为进度行（进度条 + 速度/ETA）
+  const live = w.status === "grabbed" || w.status === "downloaded" ? download : undefined;
   return (
     /* 移动端：顶部对齐 + 更紧的间距——说明文案在窄屏允许折行（见下方 md:truncate），
        折行后徽标要与文案首行齐平，而不是吊在两行的正中 */
-    <li className="flex items-center gap-4 px-5 py-2.5 max-md:items-start max-md:gap-3 max-md:px-4">
-      <span className="tnum w-14 shrink-0 text-sub font-medium text-white/90">
-        {isMovie ? "正片" : `E${String(w.episode_number).padStart(2, "0")}`}
-      </span>
-      <span
-        className="shrink-0 rounded-full px-2 py-0.5 text-micro font-semibold"
-        style={{ backgroundColor: `${color}22`, color }}
-      >
-        {label}
-      </span>
-      {/* 桌面端一行截断（列表要能快速扫读）；移动端改为折行——窄屏截断后只剩
-          半个日期（「将于 202…」），信息量归零，不如让它占两行把话说完 */}
-      <span className="tnum min-w-0 flex-1 text-sub leading-5 text-[var(--text-muted)] md:truncate">
-        {note}
-      </span>
-      {w.search_attempts > 0 && (
-        <span className="tnum shrink-0 text-caption text-[var(--text-faint)]">
-          已搜索 {w.search_attempts} 次
+    <li className="px-5 py-2.5 max-md:px-4">
+      <div className="flex items-center gap-4 max-md:items-start max-md:gap-3">
+        <span className="tnum w-14 shrink-0 text-sub font-medium text-white/90">
+          {isMovie ? "正片" : `E${String(w.episode_number).padStart(2, "0")}`}
         </span>
+        <span
+          className="shrink-0 rounded-full px-2 py-0.5 text-micro font-semibold"
+          style={{ backgroundColor: `${color}22`, color }}
+        >
+          {label}
+        </span>
+        {/* 桌面端一行截断（列表要能快速扫读）；移动端改为折行——窄屏截断后只剩
+            半个日期（「将于 202…」），信息量归零，不如让它占两行把话说完 */}
+        <span className="tnum min-w-0 flex-1 text-sub leading-5 text-[var(--text-muted)] md:truncate">
+          {live ? downloadNote(live) : note}
+        </span>
+        {!live && w.search_attempts > 0 && (
+          <span className="tnum shrink-0 text-caption text-[var(--text-faint)]">
+            已搜索 {w.search_attempts} 次
+          </span>
+        )}
+      </div>
+      {live && live.progress != null && live.state !== "missing" && (
+        <div
+          className="mt-2 h-1 overflow-hidden rounded-full bg-white/[0.08]"
+          role="progressbar"
+          aria-valuenow={Math.round(live.progress * 100)}
+          aria-valuemin={0}
+          aria-valuemax={100}
+        >
+          <div
+            className="h-full rounded-full bg-[#34d399] transition-[width] duration-700"
+            style={{ width: `${Math.min(100, Math.max(1, live.progress * 100))}%` }}
+          />
+        </div>
       )}
     </li>
   );
+}
+
+/** 实时快照 → 一行进度说明。词表见 SubscriptionDownload.state。 */
+function downloadNote(d: SubscriptionDownload): string {
+  if (d.state === "missing") {
+    return "种子已不在下载器中（可能被手动删除），稍后自动重新寻找资源";
+  }
+  const pct = d.progress != null ? `${Math.floor(d.progress * 100)}%` : "";
+  if (d.state === "completed") return "已下载完成，等待整理入库";
+  if (d.state === "paused") return `${pct} · 已在下载器中暂停`;
+  if (d.state === "error") return `${pct} · 下载器报告任务出错`;
+  if (d.state === "stalled") return `${pct} · 等待连接做种`;
+  // downloading / unknown：速度与 ETA 有则展示
+  const parts = [pct];
+  if (d.dlspeed_bytes != null && d.dlspeed_bytes > 0) {
+    parts.push(`${formatBytes(d.dlspeed_bytes)}/s`);
+  }
+  if (d.eta_seconds != null) parts.push(`剩余约 ${formatDuration(d.eta_seconds)}`);
+  if (d.size_bytes != null && parts.length === 1) parts.push(formatBytes(d.size_bytes));
+  return parts.filter(Boolean).join(" · ");
 }
 
 function wantedPresentation(w: WantedItem): { label: string; color: string; note: string } {

@@ -39,6 +39,21 @@ _LOOKUP_ATTEMPTS = 5
 _LOOKUP_INTERVAL = 0.3
 
 
+def _normalize_state(state: str, *, completed: bool) -> str:
+    """把 qBittorrent 的任务状态收敛到 TorrentStatus.state 的统一词表。"""
+    if completed:
+        return "completed"
+    if state in ("downloading", "forcedDL", "metaDL", "allocating", "checkingDL"):
+        return "downloading"
+    if state in ("stalledDL", "queuedDL"):
+        return "stalled"
+    if state in ("pausedDL", "stoppedDL"):
+        return "paused"
+    if state in ("error", "missingFiles"):
+        return "error"
+    return "unknown"
+
+
 @contextmanager
 def _translate_errors(url: str) -> Iterator[None]:
     """把 qbittorrent-api 的异常翻译成本模块的统一异常。"""
@@ -147,18 +162,25 @@ class QBittorrentDownloader(BaseDownloader):
                 return None
             torrent = infos[0]
             files = client.torrents_files(torrent_hash=info_hash)
+        completed = float(torrent.progress) >= 1.0
+        # qBittorrent 用 8640000（100 天）表示"无法估算"
+        eta = int(getattr(torrent, "eta", 0) or 0)
         return TorrentStatus(
             info_hash=info_hash,
             name=torrent.name,
             progress=float(torrent.progress),
             # progress==1 即全部数据落盘（此后进入做种/完成态）
-            completed=float(torrent.progress) >= 1.0,
+            completed=completed,
             save_path=torrent.save_path,
             files=[
                 # f.name 是种子内相对路径（含子目录）
                 TorrentFile(path=f.name, size_bytes=int(f.size))
                 for f in files
             ],
+            size_bytes=int(getattr(torrent, "size", 0) or 0) or None,
+            dlspeed_bytes=int(getattr(torrent, "dlspeed", 0) or 0),
+            eta_seconds=eta if 0 < eta < 8640000 else None,
+            state=_normalize_state(str(getattr(torrent, "state", "")), completed=completed),
         )
 
     async def list_torrents(self) -> list[TorrentBrief]:

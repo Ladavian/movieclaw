@@ -330,6 +330,72 @@ async def _verify_landing(
     )
 
 
+async def subscription_download_snapshot(
+    session: AsyncSession, subscription_id: int
+) -> list[dict]:
+    """订阅详情页的实时下载进度快照。
+
+    把该订阅的在途工单按种子分组，逐个到可用下载器里查当前状态（速度/ETA/
+    进度），返回展示用字典列表。纯读操作：不落库、不改工单——工单的死活
+    仍归上面的救援巡检管，这里只回答"此刻下到哪了"。
+
+    种子在所有下载器中都查不到时 state="missing"（可能刚被手动删除，
+    救援巡检稍后会把工单退回重找），前端据此给出解释而不是显示 0%。
+    """
+    result = await session.execute(
+        select(WantedItem).where(
+            WantedItem.subscription_id == subscription_id,
+            WantedItem.status.in_(_IN_FLIGHT),  # type: ignore[attr-defined]
+            WantedItem.info_hash.is_not(None),  # type: ignore[union-attr]
+        )
+    )
+    groups: dict[str, list[WantedItem]] = {}
+    for row in result.scalars().all():
+        assert row.info_hash is not None
+        groups.setdefault(row.info_hash, []).append(row)
+    if not groups:
+        return []
+
+    downloaders = await _usable_downloaders(session)
+    snapshots: list[dict] = []
+    for info_hash, rows in sorted(groups.items()):
+        units = [
+            {"season_number": w.season_number, "episode_number": w.episode_number}
+            for w in sorted(rows, key=lambda w: (w.season_number, w.episode_number))
+        ]
+        found = await _query_torrent(info_hash, downloaders) if downloaders else None
+        if found is None:
+            snapshots.append(
+                {
+                    "info_hash": info_hash,
+                    "name": None,
+                    "progress": None,
+                    "size_bytes": None,
+                    "dlspeed_bytes": None,
+                    "eta_seconds": None,
+                    "state": "missing",
+                    "downloader_name": None,
+                    "units": units,
+                }
+            )
+            continue
+        downloader_row, status = found
+        snapshots.append(
+            {
+                "info_hash": info_hash,
+                "name": status.name,
+                "progress": status.progress,
+                "size_bytes": status.size_bytes,
+                "dlspeed_bytes": status.dlspeed_bytes,
+                "eta_seconds": status.eta_seconds,
+                "state": status.state,
+                "downloader_name": downloader_row.name,
+                "units": units,
+            }
+        )
+    return snapshots
+
+
 def _stalled(rows: list[WantedItem]) -> bool:
     """整组工单是否已卡死：以最近一次状态推进的时间为基准。"""
     threshold = utcnow() - timedelta(days=STALLED_REQUEUE_DAYS)

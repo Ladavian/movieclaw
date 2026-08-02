@@ -1,0 +1,38 @@
+"""下载器状态归一化（TorrentStatus.state 统一词表）的单元测试。"""
+
+from __future__ import annotations
+
+from movieclaw_downloader.clients.qbittorrent import _normalize_state as qb_state
+from movieclaw_downloader.clients.transmission import _normalize_state as tr_state
+
+
+class _FakeTrTorrent:
+    def __init__(self, fields: dict) -> None:
+        self.fields = fields
+
+
+def test_qbittorrent_state_words() -> None:
+    assert qb_state("downloading", completed=False) == "downloading"
+    assert qb_state("forcedDL", completed=False) == "downloading"
+    assert qb_state("stalledDL", completed=False) == "stalled"
+    assert qb_state("queuedDL", completed=False) == "stalled"
+    assert qb_state("pausedDL", completed=False) == "paused"
+    assert qb_state("error", completed=False) == "error"
+    assert qb_state("missingFiles", completed=False) == "error"
+    # 完成态压过一切原始状态（做种/暂停做种都算 completed）
+    assert qb_state("uploading", completed=True) == "completed"
+    assert qb_state("什么都不是", completed=False) == "unknown"
+
+
+def test_transmission_state_words() -> None:
+    assert tr_state(_FakeTrTorrent({"status": 4, "rateDownload": 1024}), completed=False) == (
+        "downloading"
+    )
+    # 下载态但零速：对齐 qBittorrent 的 stalled 语义
+    assert tr_state(_FakeTrTorrent({"status": 4, "rateDownload": 0}), completed=False) == "stalled"
+    assert tr_state(_FakeTrTorrent({"status": 3}), completed=False) == "stalled"
+    assert tr_state(_FakeTrTorrent({"status": 0}), completed=False) == "paused"
+    # 错误标记优先于状态枚举
+    assert tr_state(_FakeTrTorrent({"status": 4, "error": 3}), completed=False) == "error"
+    assert tr_state(_FakeTrTorrent({"status": 6}), completed=True) == "completed"
+    assert tr_state(_FakeTrTorrent({"status": 6}), completed=False) == "unknown"
