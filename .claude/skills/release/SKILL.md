@@ -12,7 +12,7 @@ description: 发布 movieclaw 新版本。当用户要求发版、发布新版�
 |------|-----------|-----------|
 | 应用 Release（`vX.Y.Z` tag） | 前后端代码变了（最常见） | 设置页一键更新，免拉镜像 |
 | 模型 Release（`torrent-ner-vN` tag） | NER 模型重新训练 | 设置页一键更新模型 |
-| Docker 镜像 | 运行时依赖变了（罕见） | 用户必须重拉镜像 |
+| Docker 镜像 | 随应用 Release 自动发（release.yml 调用 docker-image.yml 推 Docker Hub） | 仅 runtime bump 时用户必须重拉 |
 
 ## 一、应用 Release（日常发版）
 
@@ -35,7 +35,10 @@ description: 发布 movieclaw 新版本。当用户要求发版、发布新版�
    （推不了 tag 的环境——如远程会话：到 Actions → release 手动 Run workflow，
    输入 tag，工作流会在 main HEAD 上一并创建 tag）
 4. release.yml 自动构建并上传 Release assets：
-   app-web.tar.gz / app-backend.tar.gz / manifest.json（可选 manifest.json.sig）
+   app-web.tar.gz / app-backend.tar.gz / manifest.json（可选 manifest.json.sig）；
+   产物上传成功后自动发布多架构 Docker 镜像到 Docker Hub
+   （movieclaw/movieclaw，正式版打 vX.Y.Z + runtime-N + latest，
+   预发布版只打 vX.Y.Z-… 不动 latest）
 5. changelog：写 docs/changelog/vX.Y.Z.md 合入 main，release-notes.yml 会
    自动把它同步为 Release body（应用内更新界面原文展示）；先合 changelog
    后发 Release 也没关系，Release 创建后再触碰一次该文件即可触发同步
@@ -53,7 +56,7 @@ prerelease，应用内更新的检查逻辑会跳过它——beta 不会被推�
 ## 二、何时必须发 Docker 镜像（runtime 契约）
 
 `docker/runtime-version` 是运行时依赖集合的版本代号（唯一事实源）。
-**凡是改了以下任何一项，必须把它 +1，并在合并后构建发布新镜像**：
+**凡是改了以下任何一项，必须把它 +1**：
 
 - `pyproject.toml` 的 dependencies
 - Node 大版本、Dockerfile 里的系统包（ffmpeg 等）或基础镜像
@@ -63,8 +66,11 @@ CI 守卫（runtime-guard.yml）会拦截漏 bump 的 PR。bump 后发的应用
 Release 其 manifest 会声明新的 `requires_runtime`，旧镜像用户在设置页
 会看到「需升级 Docker 镜像」的明确提示，而不是坏掉的更新。
 
-镜像构建：`TMDB_API_KEY=xxx ./scripts/build-image.sh`（详见脚本头注释；
-启用了清单签名的话记得带 `--build-arg UPDATE_MANIFEST_PUBKEY=<公钥>`）。
+镜像发布本身无需额外操作——每次应用 Release 都会自动发布新镜像
+（含 runtime-N 标签）。需要在发版之外单独补发镜像时，到 Actions →
+docker-image 手动 Run workflow 输入标签即可。本地/离线构建仍可用
+`TMDB_API_KEY=xxx ./scripts/build-image.sh`（详见脚本头注释；启用了
+清单签名的话记得带 `--build-arg UPDATE_MANIFEST_PUBKEY=<公钥>`）。
 
 ## 三、模型 Release
 
@@ -91,7 +97,7 @@ Release 其 manifest 会声明新的 `requires_runtime`，旧镜像用户在设�
 ## 五、发版检查清单
 
 - [ ] 版本号三处一致（应用发版）
-- [ ] 本次改动是否触碰运行时依赖？触碰了 → `docker/runtime-version` +1 并计划发镜像
+- [ ] 本次改动是否触碰运行时依赖？触碰了 → `docker/runtime-version` +1（镜像随发版自动发布）
 - [ ] 数据库迁移向前兼容（alembic 迁移是单向的，用户回退靠自动备份）
 - [ ] Release 产物三件齐全（CI 完成后到 Release 页核对）
 - [ ] 启用签名的仓库：`.sig` 已随产物上传

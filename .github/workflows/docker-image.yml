@@ -1,16 +1,22 @@
 # =============================================================================
 # Docker 镜像发布流水线
 #
-# 手动触发（Actions → docker-image → Run workflow），输入镜像标签后：
 # 在 amd64 / arm64 原生 runner 上分别构建，再合并为一个多架构 manifest，
 # 推送到 Docker Hub（docker.io/<DOCKERHUB_USERNAME>/movieclaw）。
+#
+# 两个入口：
+#   1. release.yml 在发版产物构建成功后自动调用（workflow_call）——
+#      每次应用发版都会同步发布同版本号的镜像
+#   2. 手动触发（Actions → docker-image → Run workflow）——补发或
+#      单独发镜像时用
+#
+# 标签策略：正式版打 <tag> + runtime-N + latest 三个标签；
+# 预发布版（tag 含 "-"，如 v0.3.0-beta.1）只打 <tag>，不动 latest，
+# 避免 beta 被 docker pull 默认拉到。
 #
 # 为什么不用 QEMU 单机跨构建：Next.js 构建与 QEMU 模拟阶段并行时会间歇性
 # 挂死（详见 scripts/build-image.sh 头注释）。公开仓库的 arm64 原生 runner
 # 免费，两边都原生构建，又快又稳。
-#
-# 何时触发：docker/runtime-version 被 bump 并合并后（见发布规范），
-# 由维护者手动 Run workflow。日常应用发版走 release.yml，不发镜像。
 #
 # 依赖的仓库配置（Settings → Secrets and variables → Actions）：
 #   变量  DOCKERHUB_USERNAME  Docker Hub 用户名（镜像命名空间）
@@ -25,6 +31,12 @@ on:
       tag:
         description: "镜像标签（如 v0.2.0，一般与当时的应用版本一致）"
         required: true
+  workflow_call:
+    inputs:
+      tag:
+        description: "镜像标签（与应用 Release tag 一致）"
+        required: true
+        type: string
 
 permissions:
   contents: read
@@ -103,12 +115,16 @@ jobs:
       - name: 合并多架构 manifest 并打标签推送
         working-directory: /tmp/digests
         run: |
-          RUNTIME="$(tr -d '[:space:]' < "$GITHUB_WORKSPACE/docker/runtime-version")"
-          docker buildx imagetools create \
-            -t "$IMAGE:${{ inputs.tag }}" \
-            -t "$IMAGE:runtime-$RUNTIME" \
-            -t "$IMAGE:latest" \
-            $(printf "$IMAGE@sha256:%s " *)
+          TAGS=(-t "$IMAGE:${{ inputs.tag }}")
+          # 预发布（tag 含 "-"）只打版本号标签，不推 latest / runtime-N
+          case "${{ inputs.tag }}" in
+            *-*) ;;
+            *)
+              RUNTIME="$(tr -d '[:space:]' < "$GITHUB_WORKSPACE/docker/runtime-version")"
+              TAGS+=(-t "$IMAGE:runtime-$RUNTIME" -t "$IMAGE:latest")
+              ;;
+          esac
+          docker buildx imagetools create "${TAGS[@]}" $(printf "$IMAGE@sha256:%s " *)
 
       - name: 检查推送结果
         run: docker buildx imagetools inspect "$IMAGE:${{ inputs.tag }}"

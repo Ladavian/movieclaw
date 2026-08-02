@@ -3,9 +3,8 @@
 #
 # 打 v* tag 时构建应用内更新产物并上传到 GitHub Release：
 #   app-web.tar.gz / app-backend.tar.gz / manifest.json
-#
-# 注意：这里只发「应用产物」（前后端代码，频繁发）。运行时依赖变了
-# （docker/runtime-version 被 bump）才需要另行构建发布 Docker 镜像。
+# 产物上传成功后自动调用 docker-image.yml，同步发布同版本号的
+# Docker 镜像（多架构，标签策略见该工作流头注释）。
 # =============================================================================
 name: release
 
@@ -84,3 +83,12 @@ jobs:
           assets=(dist/release/app-web.tar.gz dist/release/app-backend.tar.gz dist/release/manifest.json)
           [ -f dist/release/manifest.json.sig ] && assets+=(dist/release/manifest.json.sig)
           gh release upload "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --clobber "${assets[@]}"
+
+  # 产物发布成功后同步发布 Docker 镜像。串在产物之后而非并行，
+  # 是为了避免产物构建失败（版本校验不过等）时 latest 镜像已被推走。
+  docker-image:
+    needs: release-artifacts
+    uses: ./.github/workflows/docker-image.yml
+    with:
+      tag: ${{ inputs.tag || github.ref_name }}
+    secrets: inherit
