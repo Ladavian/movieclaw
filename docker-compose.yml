@@ -13,7 +13,9 @@
 # =============================================================================
 services:
   movieclaw:
-    image: movieclaw:latest
+    # 官方镜像（Docker Hub）。自己用 scripts/build-image.sh 从源码构建的话，
+    # 把这一行改成本地镜像名：movieclaw:latest
+    image: movieclaw/movieclaw:latest
     container_name: movieclaw
     init: true
     ports:
