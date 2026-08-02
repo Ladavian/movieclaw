@@ -179,6 +179,17 @@ async def _probe_target(service: str, session: AsyncSession) -> tuple[str, dict[
 
         base, api_key = await resolve_provider_endpoint(session)
         return f"{base.rstrip('/')}/models", {"Authorization": f"Bearer {api_key}"}
+    if service == "github":
+        # 与应用内更新的检查请求同源（api.github.com 或 UPDATE_API_BASE_URL 反代）
+        settings = get_settings()
+        url = (
+            f"{settings.update_api_base_url.rstrip('/')}"
+            f"/repos/{settings.update_repo}/releases?per_page=1"
+        )
+        return url, {
+            "Accept": "application/vnd.github+json",
+            "User-Agent": "movieclaw-updater",
+        }
     if service.startswith("site:"):
         site_id = service.removeprefix("site:")
         try:
@@ -203,6 +214,14 @@ def _classify_probe(service: str, status_code: int) -> NetworkTestResult:
             message = "网络连通，API Key 有效"
         elif status_code in (401, 403):
             message = "网络连通，但 API Key 无效"
+        else:
+            message = f"网络连通（HTTP {status_code}）"
+        return NetworkTestResult(ok=True, message=message)
+    if service == "github":
+        if status_code == 200:
+            message = "网络连通，可正常检查更新"
+        elif status_code in (403, 429):
+            message = "网络连通，但 GitHub 接口限流中（稍后自动恢复，不影响每日自动检查）"
         else:
             message = f"网络连通（HTTP {status_code}）"
         return NetworkTestResult(ok=True, message=message)

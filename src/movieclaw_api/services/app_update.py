@@ -58,6 +58,7 @@ from movieclaw_api.services.system_notice import resolve_notices, upsert_notice
 from movieclaw_db.engine import get_database
 from movieclaw_db.models import NoticeSeverity, NoticeStatus, SystemNotice
 from movieclaw_db.models.scheduled_task import TriggerType
+from movieclaw_net import egress_transport, resolve_proxy_url
 from movieclaw_scheduler import register_task
 
 logger = logging.getLogger("movieclaw_api.app_update")
@@ -382,7 +383,11 @@ async def _fetch_releases(what: str) -> list[dict]:
     if _releases_etag and _releases_cached is not None:
         headers["If-None-Match"] = _releases_etag
     async with httpx.AsyncClient(
-        timeout=_HTTP_TIMEOUT, follow_redirects=True, headers=headers
+        # 走统一网络出口（服务标签 github）：设置页可为更新流量单独开关代理
+        transport=egress_transport("github"),
+        timeout=_HTTP_TIMEOUT,
+        follow_redirects=True,
+        headers=headers,
     ) as client:
         try:
             resp = await client.get(api_url)
@@ -428,7 +433,11 @@ async def _fetch_latest_release() -> tuple[dict, dict]:
         raise BadRequestException("未找到任何应用发布（vX.Y.Z 的 Release），暂无可用更新")
     headers = {"Accept": "application/vnd.github+json", "User-Agent": "movieclaw-updater"}
     async with httpx.AsyncClient(
-        timeout=_HTTP_TIMEOUT, follow_redirects=True, headers=headers
+        # 走统一网络出口（服务标签 github）：设置页可为更新流量单独开关代理
+        transport=egress_transport("github"),
+        timeout=_HTTP_TIMEOUT,
+        follow_redirects=True,
+        headers=headers,
     ) as client:
         raw = await _download_manifest_bytes(client, release)
     manifest = _parse_manifest(raw)
@@ -633,6 +642,11 @@ def _download_and_apply(manifest: dict) -> None:
         total = sum(int(manifest["files"][n].get("size") or 0) for n in _ARTIFACT_NAMES)
         done = 0
         with httpx.Client(
+            # 出口层的 transport 只有 async 版，同步下载客户端按同一服务
+            # 标签解析代理地址；trust_env=False 与出口层语义对齐——是否
+            # 走代理只由「设置 → 网络与代理」决定，不再隐式吃环境变量
+            proxy=resolve_proxy_url("github"),
+            trust_env=False,
             timeout=_HTTP_TIMEOUT,
             follow_redirects=True,
             headers={"User-Agent": "movieclaw-updater"},
@@ -831,6 +845,11 @@ def _download_and_apply_model(release: dict, manifest: dict) -> None:
         total = sum(int(manifest["files"][n].get("size") or 0) for n in _MODEL_FILES)
         done = 0
         with httpx.Client(
+            # 出口层的 transport 只有 async 版，同步下载客户端按同一服务
+            # 标签解析代理地址；trust_env=False 与出口层语义对齐——是否
+            # 走代理只由「设置 → 网络与代理」决定，不再隐式吃环境变量
+            proxy=resolve_proxy_url("github"),
+            trust_env=False,
             timeout=_HTTP_TIMEOUT,
             follow_redirects=True,
             headers={"User-Agent": "movieclaw-updater"},
@@ -905,7 +924,10 @@ async def start_model_update() -> UpdateProgressView:
             )
         headers = {"User-Agent": "movieclaw-updater"}
         async with httpx.AsyncClient(
-            timeout=_HTTP_TIMEOUT, follow_redirects=True, headers=headers
+            transport=egress_transport("github"),
+            timeout=_HTTP_TIMEOUT,
+            follow_redirects=True,
+            headers=headers,
         ) as client:
             raw = await _download_manifest_bytes(client, release)
         manifest = _parse_model_manifest(raw)
