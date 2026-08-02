@@ -177,6 +177,7 @@ async def dispatch(
                 "units": [[w.season_number, w.episode_number] for w in claimed],
                 "library_id": library.id if library else None,
                 "save_path": decision.entry_dir,
+                "staging_path": staging,
                 "dispatch_dir": dispatch_dir,
             },
         )
