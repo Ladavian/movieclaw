@@ -38,6 +38,7 @@ channels weixin accounts unbind
 channels weixin bindings start
 channels weixin bindings status
 channels weixin bindings verify
+discover douban collection
 discover douban show
 discover hero
 discover layout

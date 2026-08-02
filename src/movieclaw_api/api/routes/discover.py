@@ -28,6 +28,7 @@ from movieclaw_media import (
     DoubanDiscoverService,
     DoubanError,
     DoubanNetworkError,
+    DoubanNotFoundError,
     MediaCard,
     MediaDetail,
     MediaDiscoverService,
@@ -57,7 +58,7 @@ def _translate(exc: TmdbError | DoubanError) -> AppException:
     网络级不可达（含熔断快速失败）给结构化的 UPSTREAM_UNREACHABLE：
     前端据此渲染「原因说明 + 跳转网络设置」的引导错误态。
     """
-    if isinstance(exc, TmdbNotFoundError):
+    if isinstance(exc, (TmdbNotFoundError, DoubanNotFoundError)):
         return NotFoundException(str(exc))
     if isinstance(exc, TmdbNetworkError):
         return UpstreamUnreachableException(
@@ -110,6 +111,25 @@ async def search_media(
     if history and source is DiscoverSource.DOUBAN:
         await _record_media_history(session, q, results)
     return ok(results)
+
+
+@router.get(
+    "/douban/collection/{collection_id}",
+    response_model=ApiResponse[MediaRow],
+    summary="豆瓣完整榜单（「看全部」落地页）",
+    operation_id="discover.douban.collection",
+)
+async def get_douban_full_collection(collection_id: str) -> ApiResponse[MediaRow]:
+    """分页聚合返回一份完整榜单（如 Top 250、豆瓣高分电影 500 条）。
+
+    仅开放服务端白名单内的榜单 ID，其余返回 404；冷缓存时聚合受豆瓣限速
+    影响可能需要数秒，之后命中缓存即时返回。
+    """
+    try:
+        row = await get_douban_media_service().full_collection(collection_id)
+    except DoubanError as exc:
+        raise _translate(exc) from exc
+    return ok(row)
 
 
 @router.get(
