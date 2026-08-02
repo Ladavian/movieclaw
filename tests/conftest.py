@@ -7,6 +7,7 @@ git 历史。本地开发时复制 .env.example 为 .env 并填写即可，CI �
 from __future__ import annotations
 
 import os
+import subprocess
 import tempfile
 from pathlib import Path
 
@@ -17,6 +18,41 @@ _ENV_FILE = _PROJECT_ROOT / ".env"
 # 日志 Handler（见 core/logging.py），不隔离的话测试会在仓库 data/logs
 # 下留下日志文件。先于 .env 加载设置，测试环境始终生效。
 os.environ.setdefault("LOG_DIR", tempfile.mkdtemp(prefix="movieclaw-test-logs-"))
+
+
+def _resolve_ner_model_dir() -> None:
+    """git worktree 里跑测试时，把 NER 模型指向主仓库的 data 目录。
+
+    模型文件是运行期数据（不入 git，从 Release 下载到 data/models/torrent-ner），
+    而 worktree 只共享代码不共享 data/——不做这层回落，enrich 的片名/季集字段
+    在 worktree 里全空，库扫描/enrich 语料等一批测试会稳定失败且原因很隐蔽。
+    主仓库位置由 git 公共目录（.git 所在处）推导；主仓库也没有模型时保持原状，
+    由 enrich 侧照常打"请下载模型"的警告。
+    """
+    if os.environ.get("MOVIECLAW_NER_DIR"):
+        return  # 显式指定的优先
+    local = _PROJECT_ROOT / "data/models/torrent-ner"
+    if (local / "model.int8.onnx").is_file():
+        # 当前检出自己就有模型（主仓库常态）：写成绝对路径，
+        # 免得从其他 cwd 跑 pytest 时 enrich 的相对默认路径落空
+        os.environ["MOVIECLAW_NER_DIR"] = str(local)
+        return
+    try:
+        common = subprocess.run(
+            ["git", "rev-parse", "--git-common-dir"],
+            capture_output=True,
+            text=True,
+            cwd=_PROJECT_ROOT,
+            check=True,
+        ).stdout.strip()
+    except (OSError, subprocess.CalledProcessError):
+        return
+    candidate = (_PROJECT_ROOT / common).resolve().parent / "data/models/torrent-ner"
+    if (candidate / "model.int8.onnx").is_file():
+        os.environ["MOVIECLAW_NER_DIR"] = str(candidate)
+
+
+_resolve_ner_model_dir()
 
 
 def _load_env_file(path: Path) -> None:
