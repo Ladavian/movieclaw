@@ -133,7 +133,7 @@ export const settingsSectionGroups: SettingsSectionGroup[] = [
     label: "智能",
     items: [
       { id: "llm", label: "AI 模型", description: "大语言模型供应商接入", icon: SparkIcon },
-      { id: "weixin", label: "微信绑定", description: "把 AI 助手接入你的微信，扫码即用", icon: ChatIcon },
+      { id: "im-push", label: "消息推送", description: "微信 / Telegram / Discord 推送与 AI 对话", icon: ChatIcon },
     ],
   },
   {

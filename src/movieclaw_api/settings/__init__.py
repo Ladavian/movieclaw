@@ -30,6 +30,9 @@ from movieclaw_api.settings.base import (
     list_descriptors,
     register_setting,
 )
+from movieclaw_api.settings.channel_push import (
+    ChannelPushSetting,
+)
 from movieclaw_api.settings.network import (
     BUILTIN_EGRESS_SERVICES,
     NetworkEgressSetting,
@@ -85,6 +88,7 @@ __all__ = [
     "SessionSecretSetting",
     # 网络与代理
     "NetworkEgressSetting",
+    "ChannelPushSetting",
     "BUILTIN_EGRESS_SERVICES",
     # 应用服务（外部访问地址）
     "AppServerSetting",

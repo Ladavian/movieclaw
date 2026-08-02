@@ -20,6 +20,7 @@ from movieclaw_api.api.routes.app_update import router as app_update_router
 from movieclaw_api.api.routes.appearance import router as appearance_router
 from movieclaw_api.api.routes.auth import router as auth_router
 from movieclaw_api.api.routes.channels import router as channels_router
+from movieclaw_api.api.routes.channels_im import router as channels_im_router
 from movieclaw_api.api.routes.discover import router as discover_router
 from movieclaw_api.api.routes.downloaders import router as downloaders_router
 from movieclaw_api.api.routes.extension import router as extension_router
@@ -63,6 +64,7 @@ _PROTECTED_ROUTERS = [
     llm_router,
     agent_router,
     channels_router,
+    channels_im_router,
     subscriptions_router,
     libraries_router,
     import_watch_router,

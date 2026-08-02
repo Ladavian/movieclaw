@@ -183,6 +183,16 @@ async def dispatch(
         )
     )
     await recompute_subscription_status(session, subscription, item)
+
+    # IM 通道推送(微信/TG/Discord;fire-and-forget,失败不影响投递链路)
+    if not dry_run:
+        from movieclaw_api.services.channel_push import notify_channels
+
+        notify_channels(
+            f"📥 开始下载:《{item.title}》{units_label}\n"
+            f"来自 {candidate.site_id} 的「{candidate.title[:60]}」",
+            event="dispatch",
+        )
     return True
 
 
