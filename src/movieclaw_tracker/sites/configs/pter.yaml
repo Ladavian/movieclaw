@@ -1,0 +1,42 @@
+# 猫站（PTerClub）站点配置
+# 官网：https://pterclub.net/（另有 pterclub.com 域名）
+
+site_id: pter
+display_name: 猫站
+base_url: https://pterclub.net
+framework: nexusphp
+
+selectors:
+  # ── 种子列表 ─────────────────────────────────────────────────────
+  # 行结构与 chdbits 相同：tr 内嵌 table.torrentname
+  torrent_row_css: "table.torrents > tr:has(table.torrentname)"
+
+  # 分类 ID 来自 ?cat=XXX 链接
+  torrent_category_css: "a[href^='?cat=']::attr(href)"
+
+  # 猫站副标题与中文别名、tags 链接混排在同一个 div 里，无干净选择器，
+  # 留空跳过解析（宁缺勿错，避免把"官方 国语 中字"当副标题）
+  torrent_subtitle_css: ""
+
+  # 分页从 0 开始（?page=0 是第一页），发送时需减 1
+  page_offset: -1
+
+  # ── 用户资料 ──────────────────────────────────────────────────────
+  # userdetails.php 裸访问返回 F.A.Q. 页，从顶栏 info_block 解析
+  profile_uid_css: "a[href*='userdetails.php?id=']::attr(href)"
+  profile_username_css: "a[href*='userdetails.php?id=']"
+  profile_class_css: "a[href*='userdetails.php?id=']::attr(class)"
+  profile_uploaded_css: "font.color_uploaded::next_sibling_text"
+  profile_downloaded_css: "font.color_downloaded::next_sibling_text"
+  profile_ratio_css: "font.color_ratio::next_sibling_text"
+  profile_seeding_css: "img[alt='Torrents seeding'] + *"
+  profile_leeching_css: "img[alt='Torrents leeching'] + *"
+
+# ── 分类映射 ──────────────────────────────────────────────────────
+categories:
+  movie:       [401]
+  documentary: [402]
+  anime:       [403]
+  tv:          [404, 405]  # 电视剧 / 综艺
+  music:       [406, 418]  # 音乐 / 舞台演出
+  game:        [409]

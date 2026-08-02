@@ -1,9 +1,9 @@
 # 彩虹岛（CHDBits）站点配置
-# 官网：https://chdbits.co/
+# 官网：https://ptchdbits.co/（原 chdbits.co 域名容器内直连不可达,2026-08-01 换）
 
 site_id: chdbits
 display_name: 彩虹岛
-base_url: https://chdbits.co
+base_url: https://ptchdbits.co
 framework: nexusphp
 
 selectors:

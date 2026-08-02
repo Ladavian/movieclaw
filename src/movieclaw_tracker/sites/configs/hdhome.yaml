@@ -1,0 +1,49 @@
+# HDHome（高清家园）站点配置
+# 官网：https://hdhome.org/
+
+site_id: hdhome
+display_name: 高清家园
+base_url: https://hdhome.org
+framework: nexusphp
+
+selectors:
+  # ── 种子列表 ─────────────────────────────────────────────────────
+  # 行结构与 chdbits 相同：tr 内嵌 table.torrentname
+  torrent_row_css: "table.torrents > tr:has(table.torrentname)"
+
+  # 分类 ID 来自 ?cat=XXX 链接
+  torrent_category_css: "a[href^='?cat=']::attr(href)"
+
+  # 副标题在 tags 之后的无 class span 里（tags 均带 class）
+  torrent_subtitle_css: "td.embedded > span:not([class])"
+
+  # H&R 考核标记（实测类名就叫 hitandrun）
+  torrent_hr_css: "img.hitandrun"
+
+  # 分页从 0 开始（?page=0 是第一页），发送时需减 1
+  page_offset: -1
+
+  # ── 用户资料 ──────────────────────────────────────────────────────
+  # userdetails.php 裸访问无效，从顶栏 info_block 解析（标准 NexusPHP 顶栏）
+  profile_uid_css: "a[href*='userdetails.php?id=']::attr(href)"
+  profile_username_css: "a[href*='userdetails.php?id=']"
+  profile_class_css: "a[href*='userdetails.php?id=']::attr(class)"
+  profile_uploaded_css: "font.color_uploaded::next_sibling_text"
+  profile_downloaded_css: "font.color_downloaded::next_sibling_text"
+  profile_ratio_css: "font.color_ratio::next_sibling_text"
+  profile_bonus_css: "font.color_bonus::next_sibling_text"
+  profile_seeding_css: "img[alt='Torrents seeding'] + *"
+  profile_leeching_css: "img[alt='Torrents leeching'] + *"
+
+# ── 分类映射 ──────────────────────────────────────────────────────
+# 高清家园按「内容 × 规格」细分 60+ 分类，按内容前缀归组
+categories:
+  movie:       [411, 412, 413, 414, 415, 416, 450, 499, 505, 506, 518]
+  documentary: [417, 418, 419, 420, 421, 422, 451, 500, 507, 508, 529]
+  # TVShow(综艺) + TVSeries(剧集) + Sports（体育归 tv，与 ssd 惯例一致）
+  tv:          [425, 426, 427, 428, 429, 430, 431, 432, 433, 434, 435, 436,
+                437, 438, 442, 443, 452, 453, 502, 504, 511, 523, 526]
+  anime:       [444, 445, 446, 447, 448, 449, 454, 501, 509, 510, 531]
+  # Musics(APE/FLAC/MV/Bluray) + TVMusic(电视音乐节目)
+  music:       [439, 440, 441, 503, 423, 424]
+  other:       [409]  # Misc

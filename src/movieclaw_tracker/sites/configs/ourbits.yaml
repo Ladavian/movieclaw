@@ -1,0 +1,46 @@
+# OurBits（我堡）站点配置
+# 官网：https://ourbits.club/
+
+site_id: ourbits
+display_name: OurBits
+base_url: https://ourbits.club
+framework: nexusphp
+
+selectors:
+  # ── 种子列表 ─────────────────────────────────────────────────────
+  # 行结构与 chdbits 相同：tr 内嵌 table.torrentname
+  torrent_row_css: "table.torrents > tr:has(table.torrentname)"
+
+  # 分类 ID 来自 ?cat=XXX 链接
+  torrent_category_css: "a[href^='?cat=']::attr(href)"
+
+  # 副标题是 td.embedded 里 tags 容器 div 之后的裸文本节点
+  # HTML: <br><div>官方 DIY 中字 …</div>幽旅巫咒 [UHD原盘DIY…]
+  torrent_subtitle_css: "td.embedded > div::next_sibling_text"
+
+  # H&R 考核标记（实测类名就叫 hitandrun）
+  torrent_hr_css: "img.hitandrun"
+
+  # 分页从 0 开始（?page=0 是第一页），发送时需减 1
+  page_offset: -1
+
+  # ── 用户资料 ──────────────────────────────────────────────────────
+  # userdetails.php 不带 id 裸访问返回无效页（无 h1/rowhead），
+  # 改从每页顶部导航栏 info_block 解析（与 ssd 同思路）：
+  # 链接文本即用户名，等级编码在 class（如 InsaneUser_Name）
+  profile_uid_css: "a[href*='userdetails.php?id=']::attr(href)"
+  profile_username_css: "a[href*='userdetails.php?id=']"
+  profile_class_css: "a[href*='userdetails.php?id=']::attr(class)"
+  # 标准 NexusPHP 顶栏：font.color_* 空元素后紧跟数值文本
+  profile_uploaded_css: "font.color_uploaded::next_sibling_text"
+  profile_downloaded_css: "font.color_downloaded::next_sibling_text"
+  profile_seeding_css: "img[alt='Torrents seeding'] + *"
+  profile_leeching_css: "img[alt='Torrents leeching'] + *"
+
+# ── 分类映射 ──────────────────────────────────────────────────────
+categories:
+  movie:       [401, 402]            # Movies / Movies-3D
+  tv:          [405, 412, 413, 415]  # TV-Pack / TV-Episode / TV-Show / Sports
+  documentary: [410]
+  anime:       [411]
+  music:       [416, 414, 419]       # Music / Music-Video / Concert
