@@ -12,7 +12,6 @@ import {
   FolderIcon,
   GearIcon,
   GlobeIcon,
-  InfoIcon,
   PaletteIcon,
   ServerIcon,
   SparkIcon,
@@ -140,10 +139,9 @@ export const settingsSectionGroups: SettingsSectionGroup[] = [
   {
     label: "系统",
     items: [
-      { id: "app", label: "应用设置", description: "外部访问地址与重启应用", icon: GearIcon },
+      { id: "app", label: "应用", description: "版本与更新、外部访问地址与重启", icon: GearIcon },
       { id: "network", label: "网络与代理", description: "外部服务的代理与镜像地址，解决 TMDB 等不可达", icon: GlobeIcon },
       { id: "logs", label: "系统日志", description: "后端运行日志，按天存档", icon: TerminalIcon },
-      { id: "about", label: "关于与更新", description: "当前版本、检查更新与版本回退", icon: InfoIcon },
     ],
   },
 ];

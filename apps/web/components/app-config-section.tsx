@@ -40,6 +40,10 @@ export function AppConfigSection() {
   const [urlError, setUrlError] = useState<string | null>(null);
   const [restartPhase, setRestartPhase] = useState<RestartPhase>("idle");
   const savedTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // 外部访问地址的最佳示例就是用户此刻浏览器正在使用的地址（SSR 阶段无 window，
+  // 但表单要等客户端拉到配置才渲染，这里只是兜底给个通用示例）
+  const currentOrigin =
+    typeof window === "undefined" ? "https://movie.example.com" : window.location.origin;
 
   const reload = useCallback(() => {
     setFailed(false);
@@ -180,13 +184,16 @@ export function AppConfigSection() {
                 label="外部访问地址"
                 help={
                   <>
-                    <p>从网络上能访问到本应用的完整地址，保存即生效。</p>
+                    <p>
+                      从网络上能访问到本应用的完整地址，保存即生效。通常就是你浏览器
+                      地址栏正在使用的地址（输入框的提示即当前地址，照填即可）。
+                    </p>
                     <p className="mt-1.5">
-                      例：<code>http://192.168.1.10:3000</code>，或经反向代理后的{" "}
+                      若经反向代理 / 域名访问，请填代理后的对外地址，如{" "}
                       <code>https://movie.example.com</code>。
                     </p>
                     <p className="mt-1.5 text-[var(--text-muted)]">
-                      用于后续生成通知里的跳转链接、对外回调地址等需要绝对 URL 的场景。
+                      用于生成通知里的跳转链接、对外回调地址等需要绝对 URL 的场景。
                     </p>
                   </>
                 }
@@ -196,7 +203,7 @@ export function AppConfigSection() {
                 defaultValue={view.external_url}
                 onBlur={(e) => handleUrlBlur(e.target.value)}
                 onKeyDown={(e) => e.key === "Enter" && (e.target as HTMLInputElement).blur()}
-                placeholder="http://192.168.1.10:3000"
+                placeholder={currentOrigin}
                 className="w-[300px] max-w-[55%] rounded-xl border border-white/[0.08] bg-white/[0.04] px-3 py-2 font-mono text-sub text-[var(--text)] outline-none transition-colors placeholder:text-[var(--text-faint)] focus:border-[var(--accent)]/50 max-md:w-full max-md:max-w-none"
               />
             </div>
