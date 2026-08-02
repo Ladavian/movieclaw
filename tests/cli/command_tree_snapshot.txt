@@ -74,6 +74,7 @@ lib items artwork-download
 lib items artwork-select
 lib items delete
 lib items episodes
+lib items files delete
 lib items ids
 lib items index
 lib items list

@@ -925,6 +925,24 @@ export function deleteLibraryItem(
   );
 }
 
+/**
+ * 从磁盘删除条目的**单个文件**（含同名 NFO/字幕/图片附属文件）——多版本
+ * 洗掉一个、删某集重下的出口。同样会真删磁盘，调用前必须明确二次确认；
+ * 该文件是条目在本库的最后一个文件时会升级为整条目删除（确认界面须告知）。
+ */
+export function deleteLibraryFile(
+  libraryId: number,
+  mediaItemId: number,
+  fileId: number,
+): Promise<ItemDeleteResult> {
+  return unwrap(
+    request<ApiEnvelope<ItemDeleteResult>>(
+      `/libraries/${libraryId}/items/${mediaItemId}/files/${fileId}`,
+      { method: "DELETE" },
+    ),
+  );
+}
+
 /** 重新识别条目：全部在位文件重走识别链（NFO → 名称解析 → TMDB 收敛）。 */
 export function reidentifyLibraryItem(
   libraryId: number,
