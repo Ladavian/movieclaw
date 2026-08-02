@@ -29,13 +29,19 @@ description: 发布 movieclaw 新版本。当用户要求发版、发布新版�
 ### 2. 发版步骤
 
 ```
-1. bump 两处版本号 → 提交 PR 合入 main
+1. bump 两处版本号 → 提交 PR 合入 main（changelog 可同 PR 一起写，见下）
 2. 确认 main 上测试通过（pytest tests/、pnpm web:typecheck、pnpm web:lint）
 3. git tag vX.Y.Z && git push origin vX.Y.Z
+   （推不了 tag 的环境——如远程会话：到 Actions → release 手动 Run workflow，
+   输入 tag，工作流会在 main HEAD 上一并创建 tag）
 4. release.yml 自动构建并上传 Release assets：
    app-web.tar.gz / app-backend.tar.gz / manifest.json（可选 manifest.json.sig）
-5. 验证：到 GitHub Release 页确认三个产物齐全；有条件的话在一个
-   Docker 部署实例上走一遍「设置 → 关于与更新」端到端更新
+5. changelog：写 docs/changelog/vX.Y.Z.md 合入 main，release-notes.yml 会
+   自动把它同步为 Release body（应用内更新界面原文展示）；先合 changelog
+   后发 Release 也没关系，Release 创建后再触碰一次该文件即可触发同步
+6. 验证：到 GitHub Release 页确认三个产物齐全、body 是 changelog 而非
+   自动生成的 PR 清单；有条件的话在一个 Docker 部署实例上走一遍
+   「设置 → 应用」端到端更新
 ```
 
 ### 3. 预发布（beta/rc）
@@ -89,4 +95,5 @@ Release 其 manifest 会声明新的 `requires_runtime`，旧镜像用户在设�
 - [ ] 数据库迁移向前兼容（alembic 迁移是单向的，用户回退靠自动备份）
 - [ ] Release 产物三件齐全（CI 完成后到 Release 页核对）
 - [ ] 启用签名的仓库：`.sig` 已随产物上传
-- [ ] changelog 写在 GitHub Release body（应用内更新界面会原文展示给用户）
+- [ ] changelog 已写入 `docs/changelog/vX.Y.Z.md` 并合入 main（release-notes.yml
+      自动同步为 Release body，应用内更新界面会原文展示给用户）
