@@ -273,8 +273,8 @@ movieclaw/
 └── scripts/                   # dev.sh 本地启动 · build-image.sh 镜像构建 · 发版产物/模型清单/签名密钥
 ```
 
-想了解设计取舍，从 [docs/design/library.md](docs/design/library.md)（媒体库架构）与
-[docs/design/metadata.md](docs/design/metadata.md)（元数据自足）读起。
+各模块的重大设计与取舍都记录在 [docs/design/](docs/design/) 目录，
+一事一档（媒体库、元数据、订阅、应用内更新、CLI……），按文件名找感兴趣的主题即可。
 
 ## 开发
 
