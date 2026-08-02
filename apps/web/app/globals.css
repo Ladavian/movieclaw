@@ -209,6 +209,20 @@ select optgroup {
   color: var(--text);
 }
 
+/* —— Chrome 自动填充配色修正 ——
+   登录/引导页的账号密码框开了 autocomplete，Chrome 自动填充会把输入框刷成
+   浅蓝底 + 深色字（UA 内置样式，普通 background 覆盖不掉），落在暗色玻璃上
+   像坏掉一样，Windows 上尤其常见（密码保存使用率高）。用「无限时长的
+   background-color 过渡」把 UA 的刷底永远拖住，再显式指定文字与光标颜色。
+   Firefox 的自动填充高亮很淡且不可覆盖，无需处理。 */
+input:-webkit-autofill,
+input:-webkit-autofill:hover,
+input:-webkit-autofill:focus {
+  -webkit-text-fill-color: var(--text);
+  caret-color: var(--text);
+  transition: background-color 9999999s ease-out;
+}
+
 body {
   margin: 0;
   color: var(--text);
@@ -483,6 +497,18 @@ a {
   content: "";
   display: block;
   height: var(--safe-bottom);
+}
+
+/* —— 滚动条全局兜底（Windows / Linux） ——
+   macOS 是悬浮式滚动条（overlay，不滚不显示），开发时看不出问题；
+   Windows / Linux 的经典滚动条约 17px 宽、常驻占位，落在暗色玻璃界面上
+   非常抢眼，且全站几十处滚动容器不可能逐个挂 .scroll-thin。这里用零优先级
+   的通配规则统一细化。注意只用标准属性（Chromium 121+ / Firefox 支持，
+   老内核退化为原生深色滚动条，可接受）；不能全局写 ::-webkit-scrollbar——
+   一旦命中，macOS 的 overlay 行为就会被替换成常驻自绘滚动条。 */
+:where(*) {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.16) transparent;
 }
 
 /* —— 细滚动条 —— */
