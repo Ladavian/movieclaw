@@ -41,7 +41,16 @@ description: 发布 movieclaw 新版本。当用户要求发版、发布新版�
    预发布版只打 vX.Y.Z-… 不动 latest）
 5. changelog：写 docs/changelog/vX.Y.Z.md 合入 main，release-notes.yml 会
    自动把它同步为 Release body（应用内更新界面原文展示）；先合 changelog
-   后发 Release 也没关系，Release 创建后再触碰一次该文件即可触发同步
+   后发 Release 也没关系，Release 创建后再触碰一次该文件即可触发同步。
+   **撰写规则（保证不漏、不流水账）**：
+   - 检索范围用 `git log --first-parent 上一tag..HEAD --oneline`，
+     以合并 PR 为单位枚举区间内全部变更（含直接推 main 的提交），
+     一条不落地过目；拿不准的条目再看该 PR 的具体 diff
+   - 内容按「新功能 / 改进 / 修复」分组，写用户视角的中文（用户能感知
+     什么变了、要不要做什么），纯内部重构/CI/文档类改动可合并一句带过
+     或省略
+   - runtime bump 的版本必须在 changelog 显著位置写明「需要更新
+     Docker 镜像」及原因
 6. 验证：到 GitHub Release 页确认三个产物齐全、body 是 changelog 而非
    自动生成的 PR 清单；有条件的话在一个 Docker 部署实例上走一遍
    「设置 → 应用」端到端更新
