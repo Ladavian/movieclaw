@@ -177,8 +177,7 @@ cd "$APP_ROOT"
 # 数据库迁移由后端启动时自动执行（movieclaw_db/migrations.py），无需在此处理
 
 # 容器内后端端口显式钉死为 8000：它是 Next 反代目标（构建时固化），
-# 绝不能被「设置 → 应用设置」里的端口改动影响；容器对外端口请改 compose 的
-# ports 映射。设置页会据此环境变量提示「端口已由容器管理」。
+# 不受部署者环境变量干扰；容器对外端口请改 compose 的 ports 映射。
 start_api() {
     echo "[entrypoint] 启动后端 (FastAPI, 127.0.0.1:8000)……来源：$ACTIVE_SOURCE${ACTIVE_VERSION:+ v$ACTIVE_VERSION}"
     API_START_TS="$(date +%s)"

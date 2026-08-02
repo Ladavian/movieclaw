@@ -1,9 +1,7 @@
 """应用设置的业务服务（routes/app_config 的实现层）。
 
 职责：
-- 配置视图装配：配置本体 + 端口生效状态（默认值 / 当前监听端口 / 是否被
-  环境变量钉死 / 是否需重启）；
-- 保存编排：校验（端口区间、外部地址格式）→ 落库；
+- 配置读写：外部访问地址的校验与落库（保存即生效，纯落库数据）；
 - 重启调度：优雅停机后以约定退出码 ``RESTART_EXIT_CODE``（42）退出进程，
   告知守护方「这是重启请求」——Docker 镜像的 entrypoint 内置重启循环，
   见到 42 原地拉起新的后端进程（前端不中断，也不依赖用户的 restart 策略）；
@@ -14,9 +12,6 @@
 uvloop 的 C 事件循环下信号处理可能长时间得不到执行（实测偶发悬挂）。
 故 main.run 启动时把 Server 实例注册进来，重启直接置 ``should_exit``
 （与收到 SIGTERM 的处理路径殊途同归），完全绕开信号投递。
-
-端口为何不能热切换：uvicorn 在启动时一次性绑定监听端口，运行期无法换绑，
-这是「改端口需重启」的根因；外部访问地址纯属落库数据，保存即生效。
 """
 
 from __future__ import annotations
@@ -32,11 +27,9 @@ from urllib.parse import urlsplit
 if TYPE_CHECKING:
     import uvicorn
 
-from movieclaw_api.core.config import get_settings
 from movieclaw_api.exceptions import BadRequestException
 from movieclaw_api.schemas.app_config import AppConfigPayload, AppConfigView
 from movieclaw_api.settings import AppServerSetting, get_setting_store
-from movieclaw_api.settings.app_server import RUNTIME_PORT_ENV
 
 logger = logging.getLogger("movieclaw_api.app_config")
 
@@ -58,40 +51,14 @@ FULL_RESTART_EXIT_CODE = 43
 # ---------------------------------------------------------------------------
 
 
-def _runtime_port() -> int:
-    """当前进程实际监听的端口（main.run 启动时记录；测试等场景回落配置值）。"""
-    raw = os.environ.get(RUNTIME_PORT_ENV, "")
-    return int(raw) if raw.isdigit() else get_settings().port
-
-
-def _build_view(setting: AppServerSetting) -> AppConfigView:
-    env_settings = get_settings()
-    env_locked = "APP_PORT" in os.environ
-    runtime_port = _runtime_port()
-    # 已保存配置在下次启动时的生效端口：被环境变量钉死时始终是环境变量值
-    effective_port = env_settings.port if env_locked else (setting.port or env_settings.port)
-    return AppConfigView(
-        port=setting.port,
-        external_url=setting.external_url,
-        default_port=env_settings.port,
-        runtime_port=runtime_port,
-        port_env_locked=env_locked,
-        restart_required=effective_port != runtime_port,
-    )
-
-
 async def build_config_view() -> AppConfigView:
-    """装配设置页所需的完整视图。"""
+    """装配设置页所需的配置视图。"""
     setting = await get_setting_store().get(AppServerSetting)
-    return _build_view(setting)
+    return AppConfigView(external_url=setting.external_url)
 
 
 def _validate_payload(payload: AppConfigPayload) -> None:
     """保存前校验，错误信息中文直达前端。"""
-    if payload.port != 0 and not 1024 <= payload.port <= 65535:
-        raise BadRequestException(
-            "端口必须在 1024~65535 之间（1024 以下为系统保留端口）；留空则使用默认端口"
-        )
     url = payload.external_url.strip()
     if url:
         parts = urlsplit(url)
@@ -102,15 +69,14 @@ def _validate_payload(payload: AppConfigPayload) -> None:
 
 
 async def save_config(payload: AppConfigPayload) -> AppConfigView:
-    """校验并保存应用设置。外部地址保存即生效；端口改动需重启（见返回的 restart_required）。"""
+    """校验并保存应用设置（保存即生效）。"""
     _validate_payload(payload)
     setting = AppServerSetting(
-        port=payload.port,
         # 规范化：去掉尾部斜杠，后续拼接路径时不用再处理
         external_url=payload.external_url.strip().rstrip("/"),
     )
     await get_setting_store().set(setting)
-    return _build_view(setting)
+    return AppConfigView(external_url=setting.external_url)
 
 
 # ---------------------------------------------------------------------------
