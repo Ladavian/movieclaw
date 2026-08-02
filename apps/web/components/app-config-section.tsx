@@ -38,6 +38,8 @@ export function AppConfigSection() {
   const [saveState, setSaveState] = useState<"idle" | "saving" | "saved" | "error">("idle");
   const [saveError, setSaveError] = useState<string | null>(null);
   const [urlError, setUrlError] = useState<string | null>(null);
+  // 输入框草稿是否为空：有输入时收起框内的「使用」按钮，避免误点覆盖手填内容
+  const [draftEmpty, setDraftEmpty] = useState(true);
   const [restartPhase, setRestartPhase] = useState<RestartPhase>("idle");
   const savedTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   // 外部访问地址的最佳示例就是用户此刻浏览器正在使用的地址（SSR 阶段无 window，
@@ -198,34 +200,43 @@ export function AppConfigSection() {
                   </>
                 }
               />
-              <input
-                // key 随已保存值变化：一键填入/规范化（去尾斜杠）保存后，
-                // 非受控输入框靠重挂载同步显示最新落库值
-                key={view.external_url}
-                type="text"
-                defaultValue={view.external_url}
-                onBlur={(e) => handleUrlBlur(e.target.value)}
-                onKeyDown={(e) => e.key === "Enter" && (e.target as HTMLInputElement).blur()}
-                placeholder={currentOrigin}
-                className="w-[300px] max-w-[55%] rounded-xl border border-white/[0.08] bg-white/[0.04] px-3 py-2 font-mono text-sub text-[var(--text)] outline-none transition-colors placeholder:text-[var(--text-faint)] focus:border-[var(--accent)]/50 max-md:w-full max-md:max-w-none"
-              />
+              <div className="relative w-[300px] max-w-[55%] max-md:w-full max-md:max-w-none">
+                <input
+                  // key 随已保存值变化：一键填入/规范化（去尾斜杠）保存后，
+                  // 非受控输入框靠重挂载同步显示最新落库值
+                  key={view.external_url}
+                  type="text"
+                  defaultValue={view.external_url}
+                  onChange={(e) => setDraftEmpty(e.target.value.trim() === "")}
+                  onBlur={(e) => handleUrlBlur(e.target.value)}
+                  onKeyDown={(e) => e.key === "Enter" && (e.target as HTMLInputElement).blur()}
+                  placeholder={currentOrigin}
+                  className={`w-full rounded-xl border border-white/[0.08] bg-white/[0.04] px-3 py-2 font-mono text-sub text-[var(--text)] outline-none transition-colors placeholder:text-[var(--text-faint)] focus:border-[var(--accent)]/50 ${
+                    !view.external_url && draftEmpty ? "pr-14" : ""
+                  }`}
+                />
+                {/* 框内快捷按钮：紧贴占位符（= 当前浏览器地址）末尾，点一下
+                    直接落库；保存成功后 external_url 非空，按钮随之消失 */}
+                {!view.external_url && draftEmpty && (
+                  <button
+                    type="button"
+                    onClick={() => commit({ external_url: currentOrigin })}
+                    disabled={saveState === "saving"}
+                    title={`保存为 ${currentOrigin}`}
+                    className="absolute right-1.5 top-1/2 -translate-y-1/2 rounded-lg bg-white/[0.1] px-2 py-1 text-caption font-semibold text-[var(--text-muted)] transition-colors hover:bg-[var(--accent-soft)] hover:text-[var(--accent)] disabled:opacity-40"
+                  >
+                    使用
+                  </button>
+                )}
+              </div>
             </div>
             {urlError && <p className="mt-1.5 text-right text-caption text-red-300">{urlError}</p>}
-            {/* 未设置时的引导：说清设置的收益 + 一键把当前浏览器地址落库 */}
+            {/* 未设置时的引导小字：说清设置的收益 */}
             {!view.external_url && !urlError && (
-              <div className="mt-2 flex items-center justify-end gap-2.5 max-md:flex-col max-md:items-stretch">
-                <p className="text-caption leading-5 text-[var(--text-faint)]">
-                  尚未设置：设置后 AI 助手的回复和通知才能带上指向本应用的可点击页面链接
-                </p>
-                <button
-                  type="button"
-                  onClick={() => commit({ external_url: currentOrigin })}
-                  disabled={saveState === "saving"}
-                  className="btn-glass shrink-0 px-3 py-1 text-caption font-semibold disabled:opacity-40"
-                >
-                  使用当前地址
-                </button>
-              </div>
+              <p className="mt-1.5 text-right text-caption leading-5 text-[var(--text-faint)]">
+                尚未设置：点输入框内的「使用」即可采用当前地址；设置后 AI
+                助手的回复和通知才能带上指向本应用的可点击页面链接
+              </p>
             )}
           </div>
         </div>
