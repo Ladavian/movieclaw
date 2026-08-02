@@ -58,6 +58,17 @@ if [[ "${OFFLINE_BASE:-0}" == "1" ]]; then
     BUILD_ARGS+=(--pull=false)
 fi
 
+# 交叉构建时分两步：先单独把前端阶段跑完，再跑完整构建。
+#
+# 为什么：交叉构建下 BuildKit 会并行执行「前端阶段（跑在构建机原生架构）」与
+# 「后端/运行镜像阶段（跑在 QEMU 模拟的目标架构）」。两者并行时 next build 会
+# 间歇性挂死——CPU 掉到 0、构建缓存零增长，能挂十几个小时；而单独构建前端阶段
+# 从未复现过。拆成两步后前端独占执行，第二步直接命中它的缓存。
+if [[ -n "${PLATFORM:-}" ]]; then
+    echo "预构建前端阶段（与 QEMU 模拟阶段错开，规避并行挂死）……"
+    docker build "${BUILD_ARGS[@]}" --target web-builder -t "${IMAGE}-webstage" .
+fi
+
 echo "构建 $IMAGE ……"
 docker build "${BUILD_ARGS[@]}" -t "$IMAGE" .
 echo "完成：$IMAGE"
