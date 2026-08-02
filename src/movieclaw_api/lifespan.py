@@ -87,8 +87,9 @@ def build_lifespan(settings: Settings):
         from movieclaw_api.services.network_egress import load_network_egress
 
         await load_network_egress()
-        # 加载站点目录（sites/configs/*.yaml → registry），供"可选项"接口使用
-        load_all_sites()
+        # 加载站点目录（内置 sites/configs/*.yaml + 用户自定义 data/site-configs/
+        # → registry），供"可选项"接口使用；用户目录同 site_id 覆盖内置配置
+        load_all_sites(settings.site_configs_dir)
         # 初始化站点访问管理器：进程级单例，持有每站已认证的共享客户端。
         # 须在调度器之前，因为种子同步任务依赖它访问站点。
         init_site_access()

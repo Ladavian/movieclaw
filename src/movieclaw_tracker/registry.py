@@ -129,8 +129,140 @@ def _parse_category_map(raw: dict[str, Any]) -> dict[TorrentCategory, list[str]]
     return category_map
 
 
-def load_all_sites() -> None:
-    """扫描 sites/configs/*.yaml，加载并注册所有站点配置。"""
+def _parse_selectors(raw: dict[str, Any], selector_cls: type) -> Any:
+    """解析选择器：以框架默认值为底，用 YAML 中声明的字段覆盖。
+
+    促销规则在 YAML 中写成字典（可读），加载时转为 tuple of tuples（不可变）。
+    """
+    defaults = selector_cls()
+    overrides = raw.get("selectors", {})
+    for rule_key in ("promo_download_rules", "promo_upload_rules"):
+        if rule_key in overrides and isinstance(overrides[rule_key], dict):
+            overrides[rule_key] = tuple(
+                (css, float(factor)) for css, factor in overrides[rule_key].items()
+            )
+    return dataclasses.replace(defaults, **overrides) if overrides else defaults
+
+
+def _load_site_yaml(
+    yaml_file: Path,
+    framework_defaults: dict[str, tuple[type[BaseSite], type]],
+) -> SiteConfig | None:
+    """加载单个站点 YAML，解析为 SiteConfig。
+
+    任何一步失败（YAML 语法错误、custom_class 导入失败、字段非法）都只记录
+    日志并返回 None，不向上抛异常——单个坏文件不能拖垮其它站点的加载，
+    这对用户自定义配置目录尤其重要（用户手写 YAML 出错是常态）。
+    """
+    try:
+        raw = yaml.safe_load(yaml_file.read_text(encoding="utf-8"))
+    except Exception:
+        logger.exception("站点配置文件解析失败（YAML 语法错误？）: %s", yaml_file)
+        return None
+
+    if not raw or not isinstance(raw, dict):
+        logger.warning("站点配置文件为空或格式不对（应为 YAML 映射）: %s", yaml_file)
+        return None
+
+    site_id = str(raw.get("site_id", "") or "")
+    if not site_id:
+        logger.warning("站点配置缺少必填字段 site_id，已跳过: %s", yaml_file)
+        return None
+
+    framework = raw.get("framework", "")
+    category_map = _parse_category_map(raw)
+    supported_auth_types = _parse_supported_auth_types(raw, framework)
+
+    # 确定站点类和选择器
+    # 若同时指定了 custom_class 和 framework，则：
+    #   - custom_class 替换默认站点类（可继承 framework 的基类并扩展）
+    #   - framework 继续负责解析 selectors，使 YAML 中的选择器覆盖正常生效
+    # 若仅有 custom_class 而无 framework，selectors 为 None（自定义类自行管理）
+    if "custom_class" in raw:
+        try:
+            site_class = _import_class(raw["custom_class"])
+        except Exception:
+            logger.exception(
+                "站点 %s 的 custom_class '%s' 导入失败（类路径写错？），已跳过: %s",
+                site_id,
+                raw["custom_class"],
+                yaml_file,
+            )
+            return None
+        if framework in framework_defaults:
+            _, selector_cls = framework_defaults[framework]
+            selectors = _parse_selectors(raw, selector_cls)
+        else:
+            selectors = None
+    elif framework in framework_defaults:
+        site_class, selector_cls = framework_defaults[framework]
+        selectors = _parse_selectors(raw, selector_cls)
+    else:
+        logger.warning("未知的 framework '%s'（支持: nexusphp），已跳过: %s", framework, yaml_file)
+        return None
+
+    return SiteConfig(
+        site_id=site_id,
+        display_name=raw.get("display_name", site_id),
+        base_url=raw.get("base_url", ""),
+        web_base_url=raw.get("web_base_url"),
+        framework=framework,
+        site_class=site_class,
+        selectors=selectors,
+        category_map=category_map,
+        http2=raw.get("http2", False),
+        timeout=raw.get("timeout", 30.0),
+        max_retries=raw.get("max_retries", 3),
+        min_request_interval=raw.get("min_request_interval"),
+        supported_auth_types=supported_auth_types,
+    )
+
+
+def _load_configs_dir(
+    configs_dir: Path,
+    framework_defaults: dict[str, tuple[type[BaseSite], type]],
+    *,
+    is_user_dir: bool = False,
+) -> None:
+    """扫描目录下所有 *.yaml（下划线开头的模板文件除外）并注册。"""
+    for yaml_file in sorted(configs_dir.glob("*.yaml")):
+        if yaml_file.name.startswith("_"):
+            continue
+        config = _load_site_yaml(yaml_file, framework_defaults)
+        if config is None:
+            continue
+        if is_user_dir and config.site_id in _registry:
+            logger.info("用户自定义配置覆盖内置站点: %s（来自 %s）", config.site_id, yaml_file)
+        register_site(config)
+
+
+def _ensure_user_configs_dir(user_dir: Path) -> None:
+    """确保用户自定义站点目录存在，并播种模板文件方便用户上手。
+
+    模板文件名以下划线开头，加载时会被跳过，仅作参考；已存在则不覆盖
+    （用户可能改过它）。目录创建失败（如只读挂载）只告警，不阻断启动。
+    """
+    try:
+        user_dir.mkdir(parents=True, exist_ok=True)
+        template = user_dir / "_template.yaml"
+        if not template.exists():
+            builtin_template = Path(__file__).parent / "sites" / "configs" / "_template.yaml"
+            template.write_text(builtin_template.read_text(encoding="utf-8"), encoding="utf-8")
+    except OSError:
+        logger.warning("无法创建用户站点配置目录（磁盘只读或无权限？）: %s", user_dir)
+
+
+def load_all_sites(user_configs_dir: str | Path | None = None) -> None:
+    """加载并注册所有站点配置（每次调用先清空注册表再全量重建，可重复调用）。
+
+    两级加载，后者覆盖前者（按 site_id）：
+
+    1. **内置目录** ``sites/configs/*.yaml`` —— 随代码/镜像分发，容器更新会被覆盖。
+    2. **用户自定义目录** ``user_configs_dir``（可选）—— 部署时放在 data/ 卷下
+       （API 层默认 ``data/site-configs/``），容器更新不丢。用户可在这里：
+       - 新增自己适配的站点（复制 ``_template.yaml`` 改写即可，重启后生效）；
+       - 用相同 site_id 覆盖内置站点的配置（如某站改版后自行修选择器）。
+    """
     from movieclaw_tracker.frameworks.nexusphp import NexusPHPSite
     from movieclaw_tracker.selectors import NexusPHPSelectors
 
@@ -138,80 +270,16 @@ def load_all_sites() -> None:
         "nexusphp": (NexusPHPSite, NexusPHPSelectors),
     }
 
+    _registry.clear()
+
     configs_dir = Path(__file__).parent / "sites" / "configs"
-    if not configs_dir.exists():
+    if configs_dir.exists():
+        _load_configs_dir(configs_dir, framework_defaults)
+    else:
         logger.warning("Site configs directory not found: %s", configs_dir)
-        return
 
-    for yaml_file in sorted(configs_dir.glob("*.yaml")):
-        if yaml_file.name.startswith("_"):
-            continue
-
-        try:
-            raw = yaml.safe_load(yaml_file.read_text(encoding="utf-8"))
-        except Exception:
-            logger.exception("Failed to load config: %s", yaml_file)
-            continue
-
-        if not raw or not isinstance(raw, dict):
-            logger.warning("Empty or invalid config: %s", yaml_file)
-            continue
-
-        site_id = raw.get("site_id", "")
-        framework = raw.get("framework", "")
-        category_map = _parse_category_map(raw)
-        supported_auth_types = _parse_supported_auth_types(raw, framework)
-
-        # 确定站点类和选择器
-        # 若同时指定了 custom_class 和 framework，则：
-        #   - custom_class 替换默认站点类（可继承 framework 的基类并扩展）
-        #   - framework 继续负责解析 selectors，使 YAML 中的选择器覆盖正常生效
-        # 若仅有 custom_class 而无 framework，selectors 为 None（自定义类自行管理）
-        if "custom_class" in raw:
-            site_class = _import_class(raw["custom_class"])
-            if framework in framework_defaults:
-                _, selector_cls = framework_defaults[framework]
-                defaults = selector_cls()
-                overrides = raw.get("selectors", {})
-                for rule_key in ("promo_download_rules", "promo_upload_rules"):
-                    if rule_key in overrides and isinstance(overrides[rule_key], dict):
-                        overrides[rule_key] = tuple(
-                            (css, float(factor))
-                            for css, factor in overrides[rule_key].items()
-                        )
-                selectors = dataclasses.replace(defaults, **overrides) if overrides else defaults
-            else:
-                selectors = None
-        elif framework in framework_defaults:
-            site_class, selector_cls = framework_defaults[framework]
-            defaults = selector_cls()
-            overrides = raw.get("selectors", {})
-            # 促销规则在 YAML 中写成字典（可读），加载时转为 tuple of tuples（不可变）
-            for rule_key in ("promo_download_rules", "promo_upload_rules"):
-                if rule_key in overrides and isinstance(overrides[rule_key], dict):
-                    overrides[rule_key] = tuple(
-                        (css, float(factor))
-                        for css, factor in overrides[rule_key].items()
-                    )
-            selectors = dataclasses.replace(defaults, **overrides) if overrides else defaults
-        else:
-            logger.warning("Unknown framework '%s' in %s, skipping", framework, yaml_file)
-            continue
-
-        register_site(
-            SiteConfig(
-                site_id=site_id,
-                display_name=raw.get("display_name", site_id),
-                base_url=raw.get("base_url", ""),
-                web_base_url=raw.get("web_base_url"),
-                framework=framework,
-                site_class=site_class,
-                selectors=selectors,
-                category_map=category_map,
-                http2=raw.get("http2", False),
-                timeout=raw.get("timeout", 30.0),
-                max_retries=raw.get("max_retries", 3),
-                min_request_interval=raw.get("min_request_interval"),
-                supported_auth_types=supported_auth_types,
-            )
-        )
+    if user_configs_dir is not None:
+        user_dir = Path(user_configs_dir)
+        _ensure_user_configs_dir(user_dir)
+        if user_dir.is_dir():
+            _load_configs_dir(user_dir, framework_defaults, is_user_dir=True)
