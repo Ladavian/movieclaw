@@ -253,6 +253,8 @@ movieclaw/
 │   ├── movieclaw_media/       # 影视元数据（TMDB / 豆瓣）与选图策略
 │   ├── movieclaw_llm/         # LLM 接入层：供应商预设与路由
 │   ├── movieclaw_agent/       # 对话式 agent：工具调用与会话事件流
+│   ├── movieclaw_channel/     # IM 通道：把 Agent 接进微信等外部 IM 平台
+│   ├── movieclaw_cli/         # 命令行客户端 mclaw（命令树由 OpenAPI spec 动态生成）
 │   ├── movieclaw_net/         # 统一网络出口层（代理路由、限速）
 │   ├── movieclaw_scheduler/   # 定时任务调度
 │   ├── movieclaw_db/          # 数据模型与持久化
@@ -260,12 +262,15 @@ movieclaw/
 ├── apps/
 │   ├── web/                   # Next.js Web 控制台
 │   └── extension/             # 浏览器扩展（Cookie 同步）
-├── docs/design/               # 架构设计文档（媒体库 / 元数据 / 订阅）
+├── docs/
+│   ├── design/                # 架构设计文档（媒体库/元数据/订阅/应用内更新/CLI…）
+│   └── changelog/             # 各版本 changelog（合入即自动同步为 Release body）
+├── .github/workflows/         # CI：发版产物 + Docker 镜像发布 + changelog 同步 + runtime 守卫
 ├── alembic/                   # 数据库迁移（启动时自动执行）
 ├── ml/                        # NER 模型的训练管线（训练数据与产物不入库）
-├── tests/                     # 后端测试
+├── tests/                     # 后端测试（按领域包分目录）
 ├── docker/ · Dockerfile · docker-compose.yml
-└── scripts/                   # dev.sh 本地启动 · build-image.sh 镜像构建
+└── scripts/                   # dev.sh 本地启动 · build-image.sh 镜像构建 · 发版产物/模型清单/签名密钥
 ```
 
 想了解设计取舍，从 [docs/design/library.md](docs/design/library.md)（媒体库架构）与
@@ -279,6 +284,7 @@ ruff check . && ruff format .   # 后端检查与格式化
 pnpm web:lint                   # 前端 lint
 pnpm web:typecheck              # 前端类型检查
 pnpm ext:build                  # 构建浏览器扩展
+mclaw                           # 命令行客户端（pip install -e . 后可用）
 ```
 
 约定：
@@ -286,6 +292,9 @@ pnpm ext:build                  # 构建浏览器扩展
 - 业务接口成功响应统一 `success/code/message/data`，错误响应统一 `success/code/message/details`
 - 运行期数据（SQLite、日志、图片缓存与资产、上传文件、模型）全部落在 `data/` 目录，部署时挂载该目录即可持久化
 - 站点接入方式见 [src/movieclaw_tracker/sites/configs/_template.yaml](src/movieclaw_tracker/sites/configs/_template.yaml)
+- 发版规范（版本号三处一致、`docker/runtime-version` 运行时契约、changelog
+  撰写规则）见 [.claude/skills/release/SKILL.md](.claude/skills/release/SKILL.md)；
+  打 `v*` tag 即自动完成「Release 产物 + Docker Hub 多架构镜像」双发布
 
 ## License
 
