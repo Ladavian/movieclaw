@@ -34,7 +34,7 @@ router = APIRouter(prefix="/app/update", tags=["app"])
     "/status",
     response_model=ApiResponse[UpdateStatusView],
     summary="读取应用版本与更新能力状态",
-    operation_id="app.update_status",
+    operation_id="app.update.status",
 )
 async def get_update_status() -> ApiResponse[UpdateStatusView]:
     return ok(app_update.build_status())
@@ -44,7 +44,7 @@ async def get_update_status() -> ApiResponse[UpdateStatusView]:
     "/check",
     response_model=ApiResponse[UpdateCheckView],
     summary="检查是否有新版本（比对 GitHub 最新 Release）",
-    operation_id="app.update_check",
+    operation_id="app.update.check",
 )
 async def check_update() -> ApiResponse[UpdateCheckView]:
     return ok(await app_update.check_update_now())
@@ -54,7 +54,7 @@ async def check_update() -> ApiResponse[UpdateCheckView]:
     "/pending",
     response_model=ApiResponse[PendingUpdateView],
     summary="读取待更新快照（最近一次检查的结论，不触网）",
-    operation_id="app.update_pending",
+    operation_id="app.update.pending",
 )
 async def get_pending_update() -> ApiResponse[PendingUpdateView]:
     return ok(await app_update.read_pending())
@@ -64,7 +64,7 @@ async def get_pending_update() -> ApiResponse[PendingUpdateView]:
     "/apply",
     response_model=ApiResponse[UpdateProgressView],
     summary="应用最新版本（下载校验后自动重启生效）",
-    operation_id="app.update_apply",
+    operation_id="app.update.apply",
 )
 async def apply_update() -> ApiResponse[UpdateProgressView]:
     view = await app_update.start_update()
@@ -75,7 +75,7 @@ async def apply_update() -> ApiResponse[UpdateProgressView]:
     "/progress",
     response_model=ApiResponse[UpdateProgressView],
     summary="读取更新执行进度",
-    operation_id="app.update_progress",
+    operation_id="app.update.progress",
 )
 async def get_update_progress() -> ApiResponse[UpdateProgressView]:
     return ok(app_update.get_progress())
@@ -85,7 +85,7 @@ async def get_update_progress() -> ApiResponse[UpdateProgressView]:
     "/model/check",
     response_model=ApiResponse[ModelUpdateCheckView],
     summary="检查 NER 模型是否有新版本",
-    operation_id="app.update_model_check",
+    operation_id="app.update.model-check",
 )
 async def check_model_update() -> ApiResponse[ModelUpdateCheckView]:
     return ok(await app_update.check_model_update_now())
@@ -95,7 +95,7 @@ async def check_model_update() -> ApiResponse[ModelUpdateCheckView]:
     "/model/apply",
     response_model=ApiResponse[UpdateProgressView],
     summary="更新 NER 模型（下载校验后重启后端生效）",
-    operation_id="app.update_model_apply",
+    operation_id="app.update.model-apply",
 )
 async def apply_model_update() -> ApiResponse[UpdateProgressView]:
     view = await app_update.start_model_update()
@@ -106,7 +106,7 @@ async def apply_model_update() -> ApiResponse[UpdateProgressView]:
     "/rollback/options",
     response_model=ApiResponse[RollbackOptionsView],
     summary="回退选择器数据：本地保留的历史版本、数据兼容判定与保留策略",
-    operation_id="app.update_rollback_options",
+    operation_id="app.update.rollback-options",
 )
 async def get_rollback_options() -> ApiResponse[RollbackOptionsView]:
     return ok(await app_update.rollback_options())
@@ -116,7 +116,7 @@ async def get_rollback_options() -> ApiResponse[RollbackOptionsView]:
     "/rollback",
     response_model=ApiResponse[None],
     summary="回退到指定版本/镜像内置版本（不带 target 时回退上一版本）",
-    operation_id="app.update_rollback",
+    operation_id="app.update.rollback",
 )
 async def rollback_update(payload: RollbackPayload | None = None) -> ApiResponse[None]:
     if payload is not None and payload.target:
@@ -131,7 +131,7 @@ async def rollback_update(payload: RollbackPayload | None = None) -> ApiResponse
     "/retention",
     response_model=ApiResponse[None],
     summary="设置本地保留的版本目录数（立即按新策略清理）",
-    operation_id="app.update_retention",
+    operation_id="app.update.retention",
 )
 async def set_update_retention(payload: UpdateRetentionPayload) -> ApiResponse[None]:
     value = await app_update.save_update_retention(payload.keep_versions)

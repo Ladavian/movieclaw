@@ -8,13 +8,16 @@ agent start
 app restart
 app set
 app show
-app update_apply
-app update_check
-app update_model_apply
-app update_model_check
-app update_progress
-app update_rollback
-app update_status
+app update apply
+app update check
+app update model-apply
+app update model-check
+app update pending
+app update progress
+app update retention
+app update rollback
+app update rollback-options
+app update status
 appearance active set
 appearance backdrops delete
 appearance backdrops download
