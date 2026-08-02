@@ -15,6 +15,16 @@
 1. 每一个关键类的设计和实现，补充完善的中文注释，好的注释可以帮助项目其他成员看懂关键设计思路，有利于后续的扩展和迭代。
 2. 日志可以使用中文输出明确的错误信息，这是一款开源软件，非开发者可能也会部署，遇到任何错误，他们需要能够看懂。
 
+## 项目约定
+
+- 业务接口成功响应统一 `success/code/message/data`，错误响应统一
+  `success/code/message/details`
+- 运行期数据（SQLite、日志、图片缓存与资产、上传文件、模型）全部落在
+  `data/` 目录，部署时挂载该目录即可持久化
+- 新站点接入用声明式 YAML，模板见
+  `src/movieclaw_tracker/sites/configs/_template.yaml`
+- 合并前必须通过：`pytest`、`ruff check .`、`pnpm web:lint`、`pnpm web:typecheck`
+
 ### 1. 编码前思考
 
 **不要假设。不要隐藏困惑。呈现权衡。**

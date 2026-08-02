@@ -278,23 +278,20 @@ movieclaw/
 
 ## 开发
 
+本项目采用 **AI 开发**模式：需求与设计决策由维护者提出，代码由 AI 编码代理
+（Claude Code 等）实现与迭代。想贡献代码？**不必手写**——把需求讲给你的
+AI 代理，它会自动读取仓库根目录的 [AGENTS.md](AGENTS.md)（编码原则、
+项目约定与发布硬约束）；发版流程见
+[.claude/skills/release/SKILL.md](.claude/skills/release/SKILL.md)，
+打 `v*` tag 即自动完成「Release 产物 + Docker Hub 多架构镜像」双发布。
+
+无论代码出自谁手，合并前须通过：
+
 ```bash
-pytest                          # 后端测试
-ruff check . && ruff format .   # 后端检查与格式化
-pnpm web:lint                   # 前端 lint
-pnpm web:typecheck              # 前端类型检查
-pnpm ext:build                  # 构建浏览器扩展
-mclaw                           # 命令行客户端（pip install -e . 后可用）
+pytest                                # 后端测试
+ruff check . && ruff format .         # 后端检查与格式化
+pnpm web:lint && pnpm web:typecheck   # 前端 lint 与类型检查
 ```
-
-约定：
-
-- 业务接口成功响应统一 `success/code/message/data`，错误响应统一 `success/code/message/details`
-- 运行期数据（SQLite、日志、图片缓存与资产、上传文件、模型）全部落在 `data/` 目录，部署时挂载该目录即可持久化
-- 站点接入方式见 [src/movieclaw_tracker/sites/configs/_template.yaml](src/movieclaw_tracker/sites/configs/_template.yaml)
-- 发版规范（版本号三处一致、`docker/runtime-version` 运行时契约、changelog
-  撰写规则）见 [.claude/skills/release/SKILL.md](.claude/skills/release/SKILL.md)；
-  打 `v*` tag 即自动完成「Release 产物 + Docker Hub 多架构镜像」双发布
 
 ## License
 
