@@ -2,6 +2,12 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 
+import {
+  ClaimConfirmPanel,
+  ClaimSearchPanel,
+  type ClaimSeed,
+  searchSeedFromLabel,
+} from "@/components/claim-panels";
 import { DirectoryPicker } from "@/components/directory-picker";
 import { useConfirm } from "@/components/feedback";
 import { FolderIcon, PlusIcon, XIcon } from "@/components/icons";
@@ -9,9 +15,16 @@ import { Modal } from "@/components/modal";
 import { type ConfiguredDownloader, listDownloaders } from "@/lib/api/downloaders";
 import {
   type ImportWatchRule,
+  type IngestEntriesData,
+  type IngestEntryRow,
+  type IngestEntryStatus,
+  claimIngestEntry,
   createImportWatchRule,
   deleteImportWatchRule,
+  ignoreIngestEntry,
   listImportWatchRules,
+  listIngestEntries,
+  restoreIngestEntry,
   updateImportWatchRule,
 } from "@/lib/api/import-watch";
 import { type MediaLibrary, listLibraries } from "@/lib/api/libraries";
@@ -141,35 +154,14 @@ export function ImportWatchSection() {
             </p>
           )}
           {rules.map((rule) => (
-            <div
+            <RuleCard
               key={rule.id}
-              className="flex items-center gap-3 rounded-xl border border-white/[0.08] bg-white/[0.04] px-3.5 py-2.5"
-            >
-              <FolderIcon className="size-4 shrink-0 text-[var(--accent)]/80" />
-              <div className="min-w-0 flex-1">
-                <p className="truncate font-mono text-sub text-[var(--text)]" title={rule.source_path}>
-                  {rule.source_path}
-                </p>
-                <p className="mt-0.5 text-caption text-[var(--text-muted)]">
-                  {rule.strategy === "hardlink" ? "硬链接" : "复制"} → {rule.target_label}
-                </p>
-              </div>
-              <button
-                type="button"
-                onClick={() => setEditing(rule)}
-                className="btn-glass shrink-0 px-3 py-1.5 text-sub font-medium"
-              >
-                编辑
-              </button>
-              <button
-                type="button"
-                aria-label={`删除对 ${rule.source_path} 的监听`}
-                onClick={() => void remove(rule)}
-                className="shrink-0 rounded-md p-1.5 text-[var(--text-faint)] transition-colors hover:bg-white/10 hover:text-white"
-              >
-                <XIcon className="size-4" />
-              </button>
-            </div>
+              rule={rule}
+              libraries={libraries}
+              onEdit={() => setEditing(rule)}
+              onRemove={() => void remove(rule)}
+              onStatsChanged={reload}
+            />
           ))}
           <button
             type="button"
@@ -207,6 +199,253 @@ export function ImportWatchSection() {
   );
 }
 
+/* —— 规则卡片：头行（路径/策略/目标）+ 台账摘要行 + 可展开的条目清单 ——
+   摘要行是分档结论的承载面：待处理不是错误、不进全局告警，用户在这里
+   看到数字、点开清单认领或忽略。 —— */
+
+const ENTRY_TABS: { status: IngestEntryStatus; label: string; tone: string }[] = [
+  { status: "pending", label: "待处理", tone: "text-[#f5c451]" },
+  { status: "failed", label: "失败", tone: "text-red-300" },
+  { status: "imported", label: "已入库", tone: "text-[var(--text-muted)]" },
+  { status: "ignored", label: "已忽略", tone: "text-[var(--text-muted)]" },
+];
+
+function RuleCard({
+  rule,
+  libraries,
+  onEdit,
+  onRemove,
+  onStatsChanged,
+}: {
+  rule: ImportWatchRule;
+  libraries: MediaLibrary[];
+  onEdit: () => void;
+  onRemove: () => void;
+  /** 条目动作会改变计数（认领入库/忽略等），让父级刷新规则列表的 stats */
+  onStatsChanged: () => void;
+}) {
+  const [openTab, setOpenTab] = useState<IngestEntryStatus | null>(null);
+  // 条目是电影还是剧集：指定库看库类型，auto/自定义目录看规则声明
+  const kind =
+    rule.library_id != null
+      ? (libraries.find((l) => l.id === rule.library_id)?.kind ?? "movie")
+      : (rule.kind ?? "movie");
+  const stats = rule.stats ?? {};
+  const total = ENTRY_TABS.reduce((sum, t) => sum + (stats[t.status] ?? 0), 0);
+
+  return (
+    <div className="rounded-xl border border-white/[0.08] bg-white/[0.04] px-3.5 py-2.5">
+      <div className="flex items-center gap-3">
+        <FolderIcon className="size-4 shrink-0 text-[var(--accent)]/80" />
+        <div className="min-w-0 flex-1">
+          <p className="truncate font-mono text-sub text-[var(--text)]" title={rule.source_path}>
+            {rule.source_path}
+          </p>
+          <p className="mt-0.5 text-caption text-[var(--text-muted)]">
+            {rule.strategy === "hardlink" ? "硬链接" : "复制"} → {rule.target_label}
+            {!rule.process_existing && "（跳过存量）"}
+          </p>
+        </div>
+        <button type="button" onClick={onEdit} className="btn-glass shrink-0 px-3 py-1.5 text-sub font-medium">
+          编辑
+        </button>
+        <button
+          type="button"
+          aria-label={`删除对 ${rule.source_path} 的监听`}
+          onClick={onRemove}
+          className="shrink-0 rounded-md p-1.5 text-[var(--text-faint)] transition-colors hover:bg-white/10 hover:text-white"
+        >
+          <XIcon className="size-4" />
+        </button>
+      </div>
+
+      {/* 台账摘要：非零状态成为可点开的过滤标签 */}
+      {total > 0 && (
+        <div className="mt-2 flex flex-wrap items-center gap-1.5 border-t border-white/[0.06] pt-2">
+          {ENTRY_TABS.filter((t) => (stats[t.status] ?? 0) > 0).map((t) => (
+            <button
+              key={t.status}
+              type="button"
+              onClick={() => setOpenTab((v) => (v === t.status ? null : t.status))}
+              data-active={openTab === t.status}
+              className="glass-row nav-item !w-auto px-2.5 py-1 text-caption font-medium"
+            >
+              <span className={t.tone}>
+                {t.label} {stats[t.status]}
+              </span>
+            </button>
+          ))}
+        </div>
+      )}
+
+      {openTab !== null && (
+        <RuleEntriesPanel
+          rule={rule}
+          status={openTab}
+          movie={kind === "movie"}
+          onStatsChanged={onStatsChanged}
+        />
+      )}
+    </div>
+  );
+}
+
+function RuleEntriesPanel({
+  rule,
+  status,
+  movie,
+  onStatsChanged,
+}: {
+  rule: ImportWatchRule;
+  status: IngestEntryStatus;
+  movie: boolean;
+  onStatsChanged: () => void;
+}) {
+  const [data, setData] = useState<IngestEntriesData | null>(null);
+  const [failed, setFailed] = useState(false);
+
+  const reload = useCallback(() => {
+    setFailed(false);
+    listIngestEntries(rule.id, status)
+      .then(setData)
+      .catch(() => setFailed(true));
+  }, [rule.id, status]);
+  useEffect(() => {
+    reload();
+  }, [reload]);
+
+  if (failed) {
+    return <p className="mt-2 text-caption text-[var(--text-muted)]">清单加载失败，请重试。</p>;
+  }
+  if (data === null) {
+    return <p className="mt-2 text-caption text-[var(--text-faint)]">加载中…</p>;
+  }
+  if (data.entries.length === 0) {
+    return <p className="mt-2 text-caption text-[var(--text-faint)]">该状态下暂无条目。</p>;
+  }
+  return (
+    <div className="mt-2 space-y-1.5">
+      {status === "pending" && (
+        <p className="text-caption leading-relaxed text-[var(--text-faint)]">
+          这些条目无法自动识别，不会重复尝试也不会报错：搜索认领后立即整理入库；
+          确认不需要整理的（花絮、自录、其他工具管理的内容）可忽略。
+        </p>
+      )}
+      {data.entries.map((entry) => (
+        <EntryRow
+          key={entry.id}
+          entry={entry}
+          movie={movie}
+          onChanged={() => {
+            reload();
+            onStatsChanged();
+          }}
+        />
+      ))}
+    </div>
+  );
+}
+
+function EntryRow({
+  entry,
+  movie,
+  onChanged,
+}: {
+  entry: IngestEntryRow;
+  movie: boolean;
+  onChanged: () => void;
+}) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [panel, setPanel] = useState<{ view: "search" } | { view: "confirm"; seed: ClaimSeed } | null>(
+    null,
+  );
+
+  const act = (fn: () => Promise<unknown>) => {
+    setBusy(true);
+    setError(null);
+    void fn()
+      .then(() => {
+        setPanel(null);
+        onChanged();
+      })
+      .catch((e) => setError((e as Error).message))
+      .finally(() => setBusy(false));
+  };
+  const searchOpen = panel?.view === "search";
+  const actionable = entry.status === "pending" || entry.status === "failed";
+
+  return (
+    <div className="rounded-lg bg-white/[0.03] px-3 py-2">
+      <div className="flex items-center gap-2">
+        <span
+          className="min-w-0 flex-1 truncate font-mono text-sub text-white/85"
+          title={`${entry.name}\n${entry.message ?? ""}`}
+        >
+          {entry.name}
+        </span>
+        {actionable && (
+          <button
+            type="button"
+            disabled={busy}
+            onClick={() => setPanel((p) => (p?.view === "search" ? null : { view: "search" }))}
+            className={`shrink-0 rounded-full px-2.5 py-1 text-sub font-medium transition disabled:opacity-40 ${
+              searchOpen ? "bg-white/[0.14] text-white" : "btn-glass"
+            }`}
+          >
+            认领
+          </button>
+        )}
+        {actionable && (
+          <button
+            type="button"
+            disabled={busy}
+            onClick={() => act(() => ignoreIngestEntry(entry.id))}
+            className="btn-glass shrink-0 px-2.5 py-1 text-sub font-medium disabled:opacity-40"
+          >
+            忽略
+          </button>
+        )}
+        {entry.status === "ignored" && (
+          <button
+            type="button"
+            disabled={busy}
+            onClick={() => act(() => restoreIngestEntry(entry.id))}
+            className="btn-glass shrink-0 px-2.5 py-1 text-sub font-medium disabled:opacity-40"
+          >
+            恢复处理
+          </button>
+        )}
+      </div>
+      {entry.message && (
+        <p className="mt-0.5 line-clamp-2 text-caption leading-relaxed text-[var(--text-faint)]">
+          {entry.message}
+        </p>
+      )}
+      {error && <p className="mt-1 text-caption text-red-300">{error}</p>}
+
+      {panel?.view === "search" && (
+        <ClaimSearchPanel
+          movie={movie}
+          initialQuery={searchSeedFromLabel(entry.name)}
+          onPick={(seed) => setPanel({ view: "confirm", seed })}
+        />
+      )}
+      {panel?.view === "confirm" && (
+        <ClaimConfirmPanel
+          key={panel.seed.tmdbId}
+          seed={panel.seed}
+          movie={movie}
+          fileCount={1}
+          busy={busy}
+          onConfirm={() => act(() => claimIngestEntry(entry.id, panel.seed.tmdbId))}
+          onCancel={() => setPanel(null)}
+        />
+      )}
+    </div>
+  );
+}
+
 /* —— 新建 / 编辑规则的弹窗（库表单同款视觉） —— */
 
 function RuleFormDialog({
@@ -231,6 +470,7 @@ function RuleFormDialog({
   const [error, setError] = useState<string | null>(null);
   const [sourcePath, setSourcePath] = useState("");
   const [strategy, setStrategy] = useState<"hardlink" | "copy">("hardlink");
+  const [processExisting, setProcessExisting] = useState(true);
   // 目标三态：指定库 /「自动路由（电影/剧集）」/ 自定义目录——最后一种
   // 识别改名后落所选目录、不进任何库（整理结果需外部流转再进库的场景）
   const [target, setTarget] = useState<
@@ -247,6 +487,7 @@ function RuleFormDialog({
     setError(null);
     setSourcePath(rule?.source_path ?? "");
     setStrategy(rule?.strategy ?? "hardlink");
+    setProcessExisting(rule?.process_existing ?? true);
     if (rule?.library_id != null) {
       setTarget({ type: "library", id: rule.library_id });
     } else if (rule?.target_path) {
@@ -279,6 +520,7 @@ function RuleFormDialog({
       library_id: target.type === "library" ? target.id : null,
       kind: target.type === "library" ? null : target.kind,
       target_path: target.type === "path" ? target.path : null,
+      process_existing: processExisting,
     };
     void (rule ? updateImportWatchRule(rule.id, payload) : createImportWatchRule(payload))
       .then(onSaved)
@@ -474,6 +716,34 @@ function RuleFormDialog({
                 : target?.type === "path"
                   ? "自定义目录：下载整理（识别改名）后的文件放入该目录，不进入任何媒体库。适合整理结果还需外部流转（如上传网盘、转存、人工确认）再进入媒体库的场景——文件后续出现在某个库的根目录时会被自动扫描入账。目录不得与库根或监听源重叠，每个类型至多一条。"
                   : "指定库：这个目录里的内容固定导入所选库（落其主根）。"}
+            </p>
+          </div>
+
+          <div>
+            <label className={labelClass}>存量内容</label>
+            <div className="flex gap-2">
+              {(
+                [
+                  [true, "整理存量", "目录里已有的内容也识别整理入库"],
+                  [false, "跳过存量", "只处理规则生效后新出现的下载"],
+                ] as const
+              ).map(([value, label, hint]) => (
+                <button
+                  key={String(value)}
+                  type="button"
+                  onClick={() => setProcessExisting(value)}
+                  data-active={processExisting === value}
+                  className="glass-row nav-item !w-auto px-3 py-1.5 text-sub font-medium"
+                  title={hint}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+            <p className="mt-1.5 text-caption leading-relaxed text-[var(--text-faint)]">
+              {processExisting
+                ? "目录里已有的内容也会被识别并整理入库；认不出的进入「待处理」清单，可逐个认领或忽略。"
+                : "规则生效时目录里已有的条目会被标记为「已忽略」（不整理、不报错），之后只处理新增的下载；忽略的条目随时可在清单中恢复处理。适合目录里有其他工具管理的存量内容的场景。"}
             </p>
           </div>
 

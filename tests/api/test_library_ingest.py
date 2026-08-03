@@ -240,8 +240,9 @@ async def test_probe_gate_blocks_partial_file(db, tmp_path, monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_identify_failure_retries_only_on_change(db, tmp_path, monkeypatch):
-    """识别失败记 failed；指纹不变时退避不重试，指纹变化立即重试。"""
+async def test_identify_failure_goes_pending_without_retry(db, tmp_path, monkeypatch):
+    """识别不出记 pending（信息不足，等人拍板）：指纹不变**永不**定时重试
+    （不打 TMDB），指纹变化（用户改名/补文件）才重新处理。"""
     root, watch = tmp_path / "movies", tmp_path / "watch"
     watch.mkdir()
     library_id = await _make_library(db, kind=MediaKind.MOVIE, root=root)
@@ -264,9 +265,10 @@ async def test_identify_failure_retries_only_on_change(db, tmp_path, monkeypatch
     assert calls["n"] == 1
     async with db.session() as session:
         record = (await session.execute(select(IngestEntry))).scalar_one()
-    assert record.status == IngestStatus.FAILED
+    assert record.status == IngestStatus.PENDING
+    assert "认领" in (record.message or "")
 
-    # 指纹不变：退避期内不再尝试
+    # 指纹不变：待处理不定时重试（等的是人，不是时间）
     await _sweep_twice(db, library_id, watch)
     assert calls["n"] == 1
 
@@ -274,6 +276,30 @@ async def test_identify_failure_retries_only_on_change(db, tmp_path, monkeypatch
     video.write_bytes(b"xy")
     await _sweep_twice(db, library_id, watch)
     assert calls["n"] == 2
+
+
+@pytest.mark.asyncio
+async def test_tmdb_outage_goes_failed_not_pending(db, tmp_path, monkeypatch):
+    """TMDB 不可达是环境故障：记 failed（退避重试），不能钉进待处理清单。"""
+    root, watch = tmp_path / "movies", tmp_path / "watch"
+    watch.mkdir()
+    library_id = await _make_library(db, kind=MediaKind.MOVIE, root=root)
+    monkeypatch.setattr(ingest_mod, "probe_media", lambda p: _FAKE_SPEC)
+
+    async def identify_outage(session, kind, watch_root, main, spec):
+        raise ingest_mod.IdentifyUnavailable("TMDB 暂时不可达（模拟）")
+
+    monkeypatch.setattr(ingest_mod, "_identify", identify_outage)
+
+    entry = watch / "some-release"
+    entry.mkdir()
+    (entry / "video.mkv").write_bytes(b"x")
+
+    await _sweep_twice(db, library_id, watch)
+    async with db.session() as session:
+        record = (await session.execute(select(IngestEntry))).scalar_one()
+    assert record.status == IngestStatus.FAILED
+    assert "自动重试" in (record.message or "")
 
 
 @pytest.mark.asyncio

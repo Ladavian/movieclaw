@@ -10,11 +10,20 @@ from movieclaw_db.models.base import TimestampMixin, utcnow
 
 
 class IngestStatus(StrEnum):
-    """ingest_entry.status 的取值。"""
+    """ingest_entry.status 的取值。
+
+    「待处理」与「失败」的分界是能否靠重试自愈：识别不出是**信息不足**，
+    重试一百次 TMDB 也不会改主意，唯一有效的信号是输入变化（用户改名 →
+    指纹变化 → 自动重试）或人来拍板（认领/忽略），所以它安静地待在清单里、
+    不告警不重试；探测失败/搬运出错/TMDB 不可达是**环境故障**，时间驱动
+    的重试有意义，才走退避重试 + 告警。
+    """
 
     IMPORTED = "imported"  # 已搬进库（可能带部分文件的跳过说明）
-    FAILED = "failed"  # 处理失败（识别不出/探测失败/搬运出错），等待重试
-    SKIPPED = "skipped"  # 非影视内容（无视频文件），永久跳过
+    PENDING = "pending"  # 识别不出，等人工认领或忽略；不告警、不定时重试
+    FAILED = "failed"  # 环境故障（探测失败/搬运出错/TMDB 不可达），退避重试
+    SKIPPED = "skipped"  # 非影视内容（无视频文件/原盘），永久跳过
+    IGNORED = "ignored"  # 用户忽略或「跳过存量」基线，永久跳过（指纹变化也不复活）
 
 
 class IngestEntry(TimestampMixin, table=True):
@@ -25,9 +34,12 @@ class IngestEntry(TimestampMixin, table=True):
     留档），没有这张表每轮扫描都会重复处理同一批条目。
 
     重试语义靠 ``fingerprint``（条目全树的 大小:文件数:mtime 摘要）：
-    - 指纹不变：imported/skipped 永久跳过，failed 按时间退避重试；
-    - 指纹变化：任何状态都重新处理——覆盖"下载在继续（此前误判）"与
-      "季包边下边补集"两种场景，已入库的文件靠目标去重天然幂等。
+    - 指纹不变：imported/skipped/pending 不再处理（pending 等的是人，
+      不是时间），failed 按时间退避重试；
+    - 指纹变化：重新处理——覆盖"下载在继续（此前误判）"、"季包边下边
+      补集"与"用户改名后重识别"三种场景，已入库的文件靠目标去重天然幂等；
+    - ignored 例外：用户拍板（或「跳过存量」基线）是永久决定，指纹变化
+      也不复活，恢复处理走接口显式操作。
     """
 
     __tablename__ = "ingest_entry"
@@ -49,7 +61,7 @@ class IngestEntry(TimestampMixin, table=True):
         description="条目绝对路径（监听目录的顶层文件/目录）",
     )
     fingerprint: str = Field(description="处理时的条目指纹（大小:文件数:mtime）")
-    status: str = Field(description="imported / failed / skipped")
+    status: str = Field(description="imported / pending / failed / skipped / ignored")
     message: str | None = Field(
         default=None,
         sa_column=Column(Text, nullable=True),

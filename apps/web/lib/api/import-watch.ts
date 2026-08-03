@@ -31,7 +31,33 @@ export interface ImportWatchRule {
   kind: "movie" | "tv" | null;
   /** 目标展示名：库名 /「自动路由（电影/剧集）」/「自定义目录 …」 */
   target_label: string;
+  /** 是否整理存量（false=跳过存量只处理新增，存量条目被标记为已忽略） */
+  process_existing: boolean;
+  /** 台账状态计数（imported/pending/failed/skipped/ignored → 条目数） */
+  stats: Record<string, number>;
   created_at: string;
+}
+
+/** 台账条目状态：处理结论分档（pending 等人拍板，failed 退避重试）。 */
+export type IngestEntryStatus = "imported" | "pending" | "failed" | "skipped" | "ignored";
+
+/** 监听目录一个条目的处理台账行。 */
+export interface IngestEntryRow {
+  id: number;
+  /** 条目名（源目录顶层的文件/目录名） */
+  name: string;
+  entry_path: string;
+  status: IngestEntryStatus;
+  /** 处理结论（中文） */
+  message: string | null;
+  imported_count: number;
+  attempted_at: string;
+}
+
+/** 一条规则的台账清单 + 各状态计数。 */
+export interface IngestEntriesData {
+  counts: Record<string, number>;
+  entries: IngestEntryRow[];
 }
 
 /**
@@ -44,6 +70,8 @@ export interface ImportWatchPayload {
   library_id: number | null;
   kind?: "movie" | "tv" | null;
   target_path?: string | null;
+  /** 是否整理存量；false=跳过规则生效时已有的内容，只处理新增 */
+  process_existing?: boolean;
 }
 
 /** 列出全部监听导入规则。 */
@@ -78,5 +106,44 @@ export function updateImportWatchRule(
 export function deleteImportWatchRule(id: number): Promise<Record<string, never>> {
   return unwrap(
     request<ApiEnvelope<Record<string, never>>>(`/import-watch/${id}`, { method: "DELETE" }),
+  );
+}
+
+/** 一条规则的台账清单（可按状态过滤）。 */
+export function listIngestEntries(
+  ruleId: number,
+  status?: IngestEntryStatus,
+): Promise<IngestEntriesData> {
+  const query = status ? `?status=${status}` : "";
+  return unwrap(
+    request<ApiEnvelope<IngestEntriesData>>(`/import-watch/${ruleId}/entries${query}`),
+  );
+}
+
+/** 忽略条目：永久跳过（可恢复）。 */
+export function ignoreIngestEntry(entryId: number): Promise<IngestEntryRow> {
+  return unwrap(
+    request<ApiEnvelope<IngestEntryRow>>(`/import-watch/entries/${entryId}/ignore`, {
+      method: "POST",
+    }),
+  );
+}
+
+/** 恢复条目：重新进入处理流程。 */
+export function restoreIngestEntry(entryId: number): Promise<IngestEntryRow> {
+  return unwrap(
+    request<ApiEnvelope<IngestEntryRow>>(`/import-watch/entries/${entryId}/restore`, {
+      method: "POST",
+    }),
+  );
+}
+
+/** 认领条目：钉到指定 TMDB 身份并立即入库；返回处理后的台账行（含结论）。 */
+export function claimIngestEntry(entryId: number, tmdbId: number): Promise<IngestEntryRow> {
+  return unwrap(
+    request<ApiEnvelope<IngestEntryRow>>(`/import-watch/entries/${entryId}/claim`, {
+      method: "POST",
+      body: JSON.stringify({ tmdb_id: tmdbId }),
+    }),
   );
 }

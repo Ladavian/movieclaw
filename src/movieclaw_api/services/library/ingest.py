@@ -29,8 +29,22 @@
    种子恰好静默够久"的残缺文件（moov 在尾部的 mp4 未下完必然探测失败）；
    ffprobe 未安装时此门禁自动放行（与扫描器的降级行为一致）；
 4. **指纹变化自动重试**：结论落 ``ingest_entry`` 台账，指纹变化（下载
-   还在继续/季包补了新集）自动重新处理，失败条目另有小时级退避——
-   这同时给了"边下边补集"的增量导入能力。
+   还在继续/季包补了新集/用户改名）自动重新处理——这同时给了"边下边
+   补集"的增量导入能力。
+
+结论分档（与库扫描"宁可待确认，不静默错挂"同一哲学，见 IngestStatus）：
+- **识别不出 = 待处理（pending）**：不告警、不定时重试——重试改变不了
+  信息不足，等的是人（清单里认领/忽略）或输入变化（改名 → 指纹变化）；
+- **环境故障 = 失败（failed）**：探测失败/搬运出错/TMDB 不可达，时间
+  驱动的重试有意义，小时级退避 + 告警；告警按**源目录聚合**成一条
+  （"某目录 N 个条目失败"），逐条目刷红灯在存量场景是灾难；
+- 识别顺序：订阅工单认领（info_hash）→ NFO 身份声明（第三方整理过的
+  内容常自带 tmdbid，与扫描器同一解析器）→ 名称解析 + TMDB 收敛。
+
+存量基线（规则的「跳过存量」选项）：首轮见到源目录时把当时已完成的
+条目批量标记为已忽略（ignored 台账行，清单中可恢复），之后只处理新增；
+正在下载中的条目不进基线。基线打在首轮巡检而非保存规则时——保存时
+目录可能尚未挂载，空快照会让挂载后出现的存量全被当成新增。
 
 触发机制（事件驱动，尽量不主动扫——监听目录里的保种源会永远留着，
 主动全量 stat 会让 NAS 磁盘永远无法休眠）：
@@ -67,6 +81,7 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from sqlalchemy import update
 from sqlmodel import select
 
 from movieclaw_api.services.import_watch_config import rule_target_label
@@ -254,6 +269,11 @@ async def _sweep_dir(rule: ImportWatch, library: Library | None) -> None:
         except OSError as exc:
             logger.warning("读取监听目录失败（%s）：%s", rule.source_path, exc)
             return
+        if not rule.process_existing and not rule.baseline_done:
+            # 「跳过存量」基线：本轮只盖章不处理，下轮起只有基线外的新条目
+            # 会被消费（正在下载中的条目不进基线，完成后按新增处理）
+            await _baseline_existing(rule, library, entries, briefs)
+            return
         seen = {str(e) for e in entries}
         for entry in entries:
             try:
@@ -266,27 +286,109 @@ async def _sweep_dir(rule: ImportWatch, library: Library | None) -> None:
         for key in [k for k in _stability if k.startswith(prefix) and k not in seen]:
             _stability.pop(key, None)
         from movieclaw_api.services.system_notice import resolve_notices
-        from movieclaw_db.models import NoticeStatus, SystemNotice
 
         db = get_database()
         async with db.session() as session:
-            stale = [
-                row.dedupe_key
-                for row in (
-                    await session.execute(
-                        select(SystemNotice).where(
-                            SystemNotice.source == "ingest",
-                            SystemNotice.status == NoticeStatus.ACTIVE.value,
-                            SystemNotice.dedupe_key.startswith(f"ingest:{prefix}"),  # type: ignore[attr-defined]
-                        )
-                    )
+            # 旧版逐条目告警（dedupe_key "ingest:{条目路径}"）已被按目录聚合
+            # 取代：见到即全部熄灭，不管条目还在不在
+            await resolve_notices(session, prefix=f"ingest:{prefix}")
+            await refresh_source_notice(session, rule.source_path, present=seen)
+
+
+async def _baseline_existing(
+    rule: ImportWatch, library: Library | None, entries: list[Path], briefs: list | None
+) -> None:
+    """「跳过存量」基线：把源目录当前**已完成**的条目批量标记为已忽略。
+
+    实现即"预写台账"：与正常处理共用同一张 ``ingest_entry`` 和同一个
+    跳过查询，零新机制；忽略行躺在清单里，用户可逐条恢复处理。已有结论
+    的条目（此前处理过/手动拍板过）不覆盖。
+    """
+    db = get_database()
+    stamped = 0
+    async with db.session() as session:
+        for entry in entries:
+            snap = await asyncio.to_thread(_snapshot, entry)
+            verdict = _torrent_verdict(_match_briefs(entry.name, briefs))
+            if snap.has_marker or verdict == "downloading":
+                continue  # 还在下载：语义上是"新增"，完成后正常处理
+            existing = (
+                await session.execute(
+                    select(IngestEntry).where(IngestEntry.entry_path == str(entry))
                 )
-                .scalars()
-                .all()
-                if row.dedupe_key.removeprefix("ingest:") not in seen
-            ]
-            for key in stale:
-                await resolve_notices(session, dedupe_key=key)
+            ).scalar_one_or_none()
+            if existing is not None:
+                continue
+            session.add(
+                IngestEntry(
+                    library_id=library.id if library is not None else None,
+                    entry_path=str(entry),
+                    fingerprint=snap.fingerprint,
+                    status=IngestStatus.IGNORED,
+                    message="规则生效时已存在于源目录，按「跳过存量」设置未处理；可在清单中恢复处理",
+                )
+            )
+            stamped += 1
+        await session.execute(
+            update(ImportWatch).where(ImportWatch.id == rule.id).values(baseline_done=True)  # type: ignore[arg-type]
+        )
+        await session.commit()
+    rule.baseline_done = True
+    logger.info(
+        "监听导入基线（%s）：按「跳过存量」标记 %d 个存量条目为已忽略，之后只处理新增",
+        rule.source_path,
+        stamped,
+    )
+
+
+async def refresh_source_notice(
+    session, source_path: str, present: set[str] | None = None
+) -> None:
+    """按源目录聚合失败告警：N 个条目失败 → 一条全局通知，清零即熄灭。
+
+    逐条目告警在存量场景会瞬间刷出上百条红灯，聚合成"这个目录有 N 个
+    失败"才是可行动的信号。待处理（pending）不是错误、不进通知——监听
+    导入清单上的数字承载它。``present`` 给定时只统计仍在源目录里的条目
+    （巡检方已有在场清单）；缺省按磁盘现查（用户拍板等低频路径）。
+    """
+    from movieclaw_api.services.system_notice import resolve_notices, upsert_notice
+
+    source = source_path.rstrip("/")
+    prefix = source + "/"
+    rows = (
+        (
+            await session.execute(
+                select(IngestEntry).where(
+                    IngestEntry.entry_path.startswith(prefix),  # type: ignore[attr-defined]
+                    IngestEntry.status == IngestStatus.FAILED,
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    failed = [
+        r
+        for r in rows
+        # 只算本目录的顶层条目（防嵌套源目录串数），且源仍在场（删源即问题消失）
+        if str(Path(r.entry_path).parent) == source
+        and (r.entry_path in present if present is not None else Path(r.entry_path).exists())
+    ]
+    key = f"ingest-dir:{source}"
+    if not failed:
+        await resolve_notices(session, dedupe_key=key)
+        return
+    names = "、".join(f"「{Path(r.entry_path).name}」" for r in failed[:3])
+    extra = f" 等 {len(failed)} 个条目" if len(failed) > 3 else ""
+    await upsert_notice(
+        session,
+        dedupe_key=key,
+        severity=NoticeSeverity.ERROR,
+        source="ingest",
+        title=f"监听目录 {source} 有 {len(failed)} 个条目导入失败",
+        message=(f"{names}{extra}处理失败，将自动退避重试；具体原因见「设置 → 监听导入」的清单。"),
+        payload={"source_path": source, "failed": len(failed)},
+    )
 
 
 async def _downloader_briefs() -> list | None:
@@ -360,11 +462,14 @@ async def _process_entry(
         record = (
             await session.execute(select(IngestEntry).where(IngestEntry.entry_path == path_str))
         ).scalar_one_or_none()
-        if record is not None and record.fingerprint == snap.fingerprint:
-            if record.status != IngestStatus.FAILED:
-                return  # 已处理且没变化
-            if (utcnow() - record.attempted_at).total_seconds() < FAILED_RETRY_SECONDS:
-                return  # 失败退避中
+        if record is not None:
+            if record.status == IngestStatus.IGNORED:
+                return  # 用户拍板（或存量基线）永久忽略：指纹变化也不复活，恢复走接口
+            if record.fingerprint == snap.fingerprint:
+                if record.status != IngestStatus.FAILED:
+                    return  # 已处理且没变化（pending 等的是人工拍板，不是时间）
+                if (utcnow() - record.attempted_at).total_seconds() < FAILED_RETRY_SECONDS:
+                    return  # 环境故障退避中
 
         if verdict == "complete":
             # 下载器确认完成：跳过静默窗口，立即处理
@@ -398,6 +503,7 @@ async def _ingest_entry(
     snap: _EntrySnapshot,
     record: IngestEntry | None,
     matched_hashes: list[str] | None = None,
+    forced_item: MediaItem | None = None,
 ) -> None:
     strategy = rule.strategy
     # 目标库：指定库规则即入参；auto 规则在识别出作品后才决定（见下），
@@ -432,19 +538,29 @@ async def _ingest_entry(
         )
         return
 
-    # 身份优先级：订阅工单认领（info_hash 命中在途投递 → 继承投递时锚定的
-    # 精确身份，零猜测）→ 名称解析识别链（第三方下载的兜底）。自定义目录
-    # 规则同样认领——身份与落点分离：认领只取身份（免重新识别、命名更准），
-    # 落点始终由规则声明决定（docs/design/strm-workflow.md 2.3）
-    item, pinned_library_id = await _wanted_identity(session, matched_hashes or [])
-    claimed = item is not None
-    if item is None:
-        item = await _identify(session, kind, watch_root, main, spec)
+    # 身份优先级：人工认领（forced_item，用户拍板最高权威）→ 订阅工单认领
+    # （info_hash 命中在途投递 → 继承投递时锚定的精确身份，零猜测）→
+    # NFO/名称解析识别链（第三方下载的兜底）。自定义目录规则同样认领——
+    # 身份与落点分离：认领只取身份（免重新识别、命名更准），落点始终由
+    # 规则声明决定（docs/design/strm-workflow.md 2.3）
+    if forced_item is not None:
+        item, pinned_library_id = forced_item, None
+        claimed = False
+    else:
+        item, pinned_library_id = await _wanted_identity(session, matched_hashes or [])
+        claimed = item is not None
+        if item is None:
+            try:
+                item = await _identify(session, kind, watch_root, main, spec)
+            except IdentifyUnavailable as exc:
+                # 环境故障：网络恢复后重试就能过，不该钉进待处理清单
+                await conclude(IngestStatus.FAILED, f"识别中断：{exc}；将自动重试")
+                return
     if item is None:
         await conclude(
-            IngestStatus.FAILED,
-            f"无法识别「{entry.name}」对应的影视条目；"
-            "可把条目改名为「标题 (年份)」形式后自动重试，或手动整理",
+            IngestStatus.PENDING,
+            f"无法自动识别「{entry.name}」对应的影视条目；"
+            "可在监听导入清单中搜索认领，或把条目改名为「标题 (年份)」形式自动重试",
         )
         return
 
@@ -493,6 +609,9 @@ async def _ingest_entry(
 
     files = [main] if kind is MediaKind.MOVIE else list(snap.videos)
     notes: list[str] = []
+    # 逐文件的失败按性质分档：环境故障（探测失败/搬运出错）→ failed 退避
+    # 重试；解析不出季集 → pending 等人（重试改变不了解析结果，改名才行）
+    env_error = False
     if kind is MediaKind.MOVIE and len(snap.videos) > 1:
         notes.append(f"已取最大文件为正片，忽略其余 {len(snap.videos) - 1} 个视频")
 
@@ -531,12 +650,14 @@ async def _ingest_entry(
         # 探测通过不代表每个文件都完整
         if file_spec is None and ffprobe_available():
             notes.append(f"「{file.name}」探测失败（可能不完整），未入库；文件变化后自动重试")
+            env_error = True
             continue
         label = (file_spec.resolution if file_spec else None) or release_attrs.media_source or "V2"
         try:
             final = await asyncio.to_thread(_transfer, file, target, strategy, label)
         except IngestError as exc:
             notes.append(str(exc))
+            env_error = True
             continue
         if final is None:
             continue  # 同一内容已在目标（重复处理/增量重扫），静默幂等
@@ -601,7 +722,10 @@ async def _ingest_entry(
             message += "；" + "；".join(notes)
         await conclude(IngestStatus.IMPORTED, message, imported)
     elif notes:
-        await conclude(IngestStatus.FAILED, "；".join(notes))
+        # 一个文件都没进：环境故障退避重试；纯解析问题进待处理等人拍板/改名
+        await conclude(
+            IngestStatus.FAILED if env_error else IngestStatus.PENDING, "；".join(notes)
+        )
     elif skipped_owned:
         # 自定义目录条目的全部单元都已回流入库：链路闭环完成，不再搬运
         await conclude(IngestStatus.IMPORTED, f"《{item.title}》的内容已在媒体库，无需整理")
@@ -636,10 +760,57 @@ async def _wanted_identity(session, info_hashes: list[str]) -> tuple[MediaItem |
     return item, library_id
 
 
+class IdentifyUnavailable(Exception):
+    """识别所需的外部依赖（TMDB）暂时不可达。
+
+    与"识别不出"（返回 None）必须区分：前者是环境故障，交退避重试自愈；
+    后者是信息不足，交人工拍板。混为一谈会让一次网络抖动把条目错误地
+    钉进待处理清单——那里没有定时重试。message 是中文句子，直接进台账。
+    """
+
+
+def _entry_nfo_paths(kind: MediaKind, watch_root: Path, main: Path) -> list[Path]:
+    """条目内条目级 NFO 的查找序列（就近优先，与本 kind 同名的先看）。
+
+    只在**条目自身范围**内找：主视频同名 .nfo → 主视频各级父目录（向上
+    到监听目录为止，不含监听目录本身——顶层一份游离的 movie.nfo 会把
+    目录里每个条目都毒成同一部片）的 movie/tvshow.nfo。
+    """
+    names = ["movie.nfo", "tvshow.nfo"] if kind is MediaKind.MOVIE else ["tvshow.nfo", "movie.nfo"]
+    paths = [main.with_suffix(".nfo")]
+    current = main.parent
+    while current != watch_root and current != current.parent:
+        paths.extend(current / n for n in names)
+        current = current.parent
+    return paths
+
+
 async def _identify(
     session, kind: MediaKind, watch_root: Path, main: Path, spec
 ) -> MediaItem | None:
-    """识别条目身份：条目名/文件名解析 → TMDB 证据验证收敛（扫描器同链）。"""
+    """识别条目身份：NFO 身份声明优先 → 条目名/文件名解析 → TMDB 证据收敛。
+
+    第三方工具整理过的内容常自带刮削档案（NFO 内含 tmdbid），是免猜测的
+    精确身份；解析器与扫描器同源（read_entry_identity：只认条目级根元素，
+    演员块里的 person id 天然隔离）。类型与本规则先验不符的 NFO 不采信
+    （TMDB 的 movie/tv 是两套 id 空间），交后续识别链与人工拍板。
+    返回 None = 证据不足以收敛；TMDB 不可达抛 ``IdentifyUnavailable``。
+    """
+    from movieclaw_api.services.library.nfo import read_entry_identity
+
+    for nfo in _entry_nfo_paths(kind, watch_root, main):
+        if not nfo.is_file():
+            continue
+        identity = read_entry_identity(nfo)
+        if identity is None or identity.tmdb_id is None or identity.kind is not kind:
+            continue
+        try:
+            return await MediaLibraryService(session, get_tmdb_client()).ensure_media_item(
+                kind, identity.tmdb_id
+            )
+        except Exception as exc:
+            raise IdentifyUnavailable(f"读到 NFO 身份但 TMDB 建档失败（{exc}）") from exc
+
     evidence = guess_evidence(kind, watch_root, main)
     if evidence is None:
         return None
@@ -651,9 +822,8 @@ async def _identify(
         return await MediaLibraryService(session, get_tmdb_client()).ensure_media_item(
             kind, tmdb_id
         )
-    except Exception as exc:  # noqa: BLE001 -- TMDB 波动不该让条目卡死在 failed
-        logger.warning("TMDB 收敛失败（%s）：%s", main.name, exc)
-        return None
+    except Exception as exc:
+        raise IdentifyUnavailable(f"TMDB 暂时不可达（{exc}）") from exc
 
 
 def _unit(file: Path, entry: Path) -> tuple[int | None, int]:
@@ -774,24 +944,157 @@ async def _save_record(
             record.library_id = library.id  # auto 条目此前失败无归属，路由成功后补上
     await session.commit()
     _stability.pop(entry_path, None)
-    # 全局红灯：处理失败是"不修就不入库"的用户可行动错误（改名/换策略/装
-    # ffprobe），必须跳出台账被感受到；成功或跳过则代表问题消失，就地熄灯
-    from movieclaw_api.services.system_notice import resolve_notices, upsert_notice
-
+    # 全局红灯只留给环境故障（failed），且由 refresh_source_notice 按源目录
+    # 聚合（巡检收尾/人工拍板后刷新）——识别不出（pending）不是错误，
+    # 清单上的数字承载它，不在这里刷屏
     if status is IngestStatus.FAILED:
-        await upsert_notice(
-            session,
-            dedupe_key=f"ingest:{entry_path}",
-            severity=NoticeSeverity.ERROR,
-            source="ingest",
-            title=f"「{Path(entry_path).name}」监听导入失败",
-            message=message,
-            payload={"entry_path": entry_path},
-        )
         logger.warning("监听导入未完成（%s）：%s", entry_path, message)
     else:
-        await resolve_notices(session, dedupe_key=f"ingest:{entry_path}")
         logger.info("监听导入（%s）：%s", entry_path, message)
+
+
+# ---------------------------------------------------------------------------
+# 台账清单与人工拍板（routes/import_watch 的实现层）
+# ---------------------------------------------------------------------------
+
+
+def _is_entry_of(entry_path: str, source_path: str) -> bool:
+    """条目是否属于某源目录（只认顶层直系子项，防嵌套源目录串数）。"""
+    return str(Path(entry_path).parent) == source_path.rstrip("/")
+
+
+async def entry_stats(session, rules: list[ImportWatch]) -> dict[int, dict[str, int]]:
+    """各规则的台账状态计数（规则卡片摘要行的数据源）。"""
+    rows = (await session.execute(select(IngestEntry.entry_path, IngestEntry.status))).all()
+    stats: dict[int, dict[str, int]] = {}
+    for rule in rules:
+        assert rule.id is not None
+        counts = {s.value: 0 for s in IngestStatus}
+        for path, status in rows:
+            if _is_entry_of(path, rule.source_path) and status in counts:
+                counts[status] += 1
+        stats[rule.id] = counts
+    return stats
+
+
+async def list_entries(
+    session, rule: ImportWatch, status: str | None = None
+) -> list[IngestEntry]:
+    """一条规则的台账清单（可按状态过滤），最近处理的在前。"""
+    prefix = rule.source_path.rstrip("/") + "/"
+    rows = (
+        (
+            await session.execute(
+                select(IngestEntry)
+                .where(IngestEntry.entry_path.startswith(prefix))  # type: ignore[attr-defined]
+                .order_by(IngestEntry.updated_at.desc())  # type: ignore[attr-defined]
+            )
+        )
+        .scalars()
+        .all()
+    )
+    rows = [r for r in rows if _is_entry_of(r.entry_path, rule.source_path)]
+    if status:
+        rows = [r for r in rows if r.status == status]
+    return rows
+
+
+async def ignore_entry(session, entry_id: int) -> IngestEntry:
+    """人工忽略：永久跳过（指纹变化也不复活），清单中可恢复。"""
+    from movieclaw_api.exceptions import BadRequestException, NotFoundException
+
+    record = await session.get(IngestEntry, entry_id)
+    if record is None:
+        raise NotFoundException(f"监听导入台账记录不存在：id={entry_id}")
+    if record.status == IngestStatus.IMPORTED:
+        raise BadRequestException("已入库的条目不需要忽略")
+    record.status = IngestStatus.IGNORED
+    record.message = "已手动忽略；如需处理可在清单中恢复"
+    record.updated_at = utcnow()
+    await session.commit()
+    await refresh_source_notice(session, str(Path(record.entry_path).parent))
+    return record
+
+
+async def restore_entry(session, entry_id: int) -> IngestEntry:
+    """恢复处理：置空指纹让下轮巡检必然重处理，并立即请求巡检。
+
+    适用忽略行（存量基线/手动忽略的反悔）与待处理行（TMDB 补录条目后
+    的主动重试——不用改名也能再走一遍识别链）。
+    """
+    from movieclaw_api.exceptions import BadRequestException, NotFoundException
+
+    record = await session.get(IngestEntry, entry_id)
+    if record is None:
+        raise NotFoundException(f"监听导入台账记录不存在：id={entry_id}")
+    if record.status == IngestStatus.IMPORTED:
+        raise BadRequestException("该条目已入库，无需恢复")
+    record.status = IngestStatus.PENDING
+    record.fingerprint = ""  # 与任何真实指纹都不同 → 下轮巡检必然重处理
+    record.message = "已恢复，等待处理（需先通过下载完成检测）"
+    record.updated_at = utcnow()
+    await session.commit()
+    source = str(Path(record.entry_path).parent)
+    await refresh_source_notice(session, source)
+    request_sweep(source)
+    return record
+
+
+async def claim_entry(session, entry_id: int, tmdb_id: int) -> IngestEntry:
+    """人工认领：把条目钉到指定 TMDB 身份并立即走完整入库流程。
+
+    用户拍板是最高权威——跳过工单认领与识别链；kind 先验仍取自规则
+    （指定库=库类型，自动路由/自定义目录=规则声明）。处理结论（成功/
+    失败原因）写回台账行，调用方按状态与 message 呈现。
+    """
+    from movieclaw_api.exceptions import BadRequestException, NotFoundException
+
+    record = await session.get(IngestEntry, entry_id)
+    if record is None:
+        raise NotFoundException(f"监听导入台账记录不存在：id={entry_id}")
+    if record.status == IngestStatus.IMPORTED:
+        raise BadRequestException("该条目已入库，无需认领")
+    entry = Path(record.entry_path)
+    source = str(entry.parent)
+    pair = (
+        await session.execute(
+            select(ImportWatch, Library)
+            .outerjoin(Library, ImportWatch.library_id == Library.id)  # type: ignore[arg-type]
+            .where(ImportWatch.source_path == source)
+        )
+    ).first()
+    if pair is None:
+        raise BadRequestException(f"该条目所属的监听导入规则已删除（{source}），无法认领")
+    rule, library = pair
+    if not entry.exists():
+        raise BadRequestException("条目已不在源目录（可能已被删除），无法认领")
+    snap = await asyncio.to_thread(_snapshot, entry)
+    if snap.has_marker:
+        raise BadRequestException("条目似乎还在下载中（存在未完成标记文件），请等下载完成再认领")
+    kind = MediaKind(library.kind if library is not None else rule.kind)
+    item = await MediaLibraryService(session, get_tmdb_client()).ensure_media_item(kind, tmdb_id)
+    async with _sweep_lock:
+        await _ingest_entry(
+            session,
+            rule,
+            library,
+            entry.parent,
+            entry,
+            snap,
+            record,
+            matched_hashes=None,
+            forced_item=item,
+        )
+    await session.refresh(record)
+    await refresh_source_notice(session, source)
+    return record
+
+
+def request_sweep(source_path: str) -> None:
+    """请求尽快巡检一个源目录：监听器在时走事件通道（秒级），否则等兜底巡检。"""
+    watcher = get_ingest_watcher()
+    if watcher is not None:
+        watcher.poke(source_path)
 
 
 # ---------------------------------------------------------------------------
@@ -922,6 +1225,10 @@ class IngestWatcher:
         return newly_watched
 
     # -- 事件通道 ----------------------------------------------------------
+
+    def poke(self, source_path: str) -> None:
+        """外部请求巡检某源目录（人工恢复处理后的立即重看）。事件循环线程调用。"""
+        self._queue.put_nowait(source_path)
 
     def _enqueue_threadsafe(self, key: str) -> None:
         loop = self._loop
