@@ -330,3 +330,7 @@ def test_presets_endpoint(client) -> None:
     assert presets["bailian"]["base_url"] == "https://dashscope.aliyuncs.com/compatible-mode/v1"
     assert presets["openai_compat"]["requires_base_url"] is True
     assert any(m["id"] == "qwen3.7-max" for m in presets["bailian"]["models"])
+    # SDK 自带 UA 按内部公式现算（AsyncOpenAI/Python x.y.z），设置页占位提示用
+    import openai
+
+    assert presets["openai"]["default_user_agent"] == f"AsyncOpenAI/Python {openai.__version__}"

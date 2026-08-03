@@ -51,6 +51,8 @@ export interface LlmPreset {
   base_url: string | null;
   /** 是否必须填写 base_url（通用兼容端点没有默认值） */
   requires_base_url: boolean;
+  /** 用户不覆盖 User-Agent 时实际发送的 SDK 自带 UA（输入框占位提示） */
+  default_user_agent: string;
   models: LlmModelInfo[];
 }
 

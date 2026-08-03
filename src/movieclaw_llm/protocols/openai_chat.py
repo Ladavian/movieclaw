@@ -47,6 +47,16 @@ from movieclaw_net import egress_transport
 
 logger = logging.getLogger(__name__)
 
+
+def sdk_default_user_agent() -> str:
+    """openai SDK 自带的 User-Agent（用户不覆盖时实际发送的值）。
+
+    按 SDK 内部公式（BaseClient.user_agent：``{类名}/Python {版本}``）拼出，
+    而不是写死字符串——升级 SDK 后设置页展示的默认值自动跟着变。
+    供设置页作为 User-Agent 输入框的占位提示，帮用户排查网关按 UA 放行的场景。
+    """
+    return f"{AsyncOpenAI.__name__}/Python {openai.__version__}"
+
 # OpenAI 的 finish_reason → 统一枚举；未知值按 stop 兜底
 _FINISH_REASON_MAP: dict[str, FinishReason] = {
     "stop": "stop",

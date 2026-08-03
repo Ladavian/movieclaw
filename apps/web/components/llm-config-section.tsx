@@ -475,7 +475,9 @@ function LlmProviderForm({ config, presets, onSubmit, onCancel, onError }: LlmPr
               type="text"
               value={userAgent}
               onChange={(e) => setUserAgent(e.target.value)}
-              placeholder="留空使用 SDK 默认标识"
+              // 占位符直接展示留空时实际发送的 SDK 自带 UA（后端按 SDK 版本现算），
+              // 排查网关按 UA 放行时用户第一眼就能看到「当前到底在发什么」
+              placeholder={preset?.default_user_agent ?? "留空使用 SDK 默认标识"}
               className={inputClass}
               {...NO_AUTOFILL}
             />
@@ -485,7 +487,7 @@ function LlmProviderForm({ config, presets, onSubmit, onCancel, onError }: LlmPr
               }`}
             >
               {userAgentValid
-                ? "留空时按 OpenAI SDK 自带的 UA 发送；网关或 WAF 按 UA 放行、限流时，在此填写它要求的标识。"
+                ? "留空时按上述 SDK 默认标识发送；网关或 WAF 按 UA 放行、限流时，在此填写它要求的标识。"
                 : "只能包含可打印的 ASCII 字符（不能含换行或中文）。"}
             </p>
           </div>
