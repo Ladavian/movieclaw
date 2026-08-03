@@ -44,8 +44,9 @@ class ChannelAccountRepository:
     ) -> ChannelAccount:
         """绑定成功后落库(重复绑定同一 bot 时覆盖凭据并复位状态/游标)。
 
-        游标一并清空:新凭据对应服务端新会话,旧游标已无意义,从头开始
-        拉取即可(服务端只投递未消费的消息)。
+        游标与会话令牌一并清空:新凭据对应服务端新会话,旧值已无意义。
+        游标从头开始拉取即可(服务端只投递未消费的消息);令牌等下一条
+        入站消息重新记住(拿旧令牌推送只会定位到已失效的会话)。
         """
         token_enc = get_secret_box().encrypt(token)
         row = await self.get(account_id)
@@ -62,6 +63,7 @@ class ChannelAccountRepository:
             row.base_url = base_url
             row.bound_user_id = bound_user_id
             row.cursor = None
+            row.context_token = None
             row.status = ChannelAccountStatus.ACTIVE
             row.last_error = None
             row.updated_at = utcnow()
@@ -76,6 +78,16 @@ class ChannelAccountRepository:
         if row is None:
             return
         row.cursor = cursor
+        row.updated_at = utcnow()
+        self._session.add(row)
+        await self._session.commit()
+
+    async def save_context_token(self, account_id: str, context_token: str) -> None:
+        """持久化最近一次入站的会话令牌(仅微信;令牌变化时才写,低频)。"""
+        row = await self.get(account_id)
+        if row is None:
+            return
+        row.context_token = context_token
         row.updated_at = utcnow()
         self._session.add(row)
         await self._session.commit()

@@ -169,7 +169,13 @@ class WeixinClient:
         if context_token:
             msg["context_token"] = context_token
         else:
-            logger.warning("发送时缺少 context_token,将无上下文投递 to=%s", to_user_id)
+            # 唯一会走到这里的场景:绑定后从没在微信里跟 bot 说过话,还没有
+            # 任何一条入站消息下发过会话令牌。给出可操作的引导而不是干报错。
+            logger.warning(
+                "微信发送缺少会话令牌(context_token),消息可能无法送达 to=%s;"
+                "请先在微信里给 bot 发一条消息,之后的主动推送会自动复用该会话",
+                to_user_id,
+            )
         payload = await self._post("ilink/bot/sendmessage", {"msg": msg})
         _raise_for_business_error(payload, "sendmessage")
 
