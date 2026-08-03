@@ -1,0 +1,62 @@
+# =============================================================================
+# 发版点火（远程会话的 tag 通道）
+#
+# 远程会话（Claude Code 等）的 git 凭证只能推分支：推不了 tag，也没有
+# workflow_dispatch 的 API 权限——release.yml 的两个入口都够不着，发版
+# 最后一步只能等人到 Actions 页面手点。本工作流补上这条通道：
+#
+#   推送 release-kick/vX.Y.Z 分支（内容随意，通常就是 main 的快照）
+#     → 校验版本号格式并与 main 的 pyproject 比对
+#     → 以 GITHUB_TOKEN 调 release.yml 的 workflow_dispatch（tag=vX.Y.Z）
+#     → 删除点火分支（一次性信使，用完即焚）
+#
+# 为什么不递归：GITHUB_TOKEN 触发的事件默认不再引发新工作流（防递归），
+# 但 workflow_dispatch / repository_dispatch 是官方明确的例外——正好是
+# 我们需要的那一个。release.yml 的手动通道会在 main HEAD 上创建 tag，
+# 之后构建、Release、Docker 镜像全部照常。
+#
+# 权限说明：能推分支的人本来就能推 tag（本地环境），此通道不扩大权限面。
+# =============================================================================
+name: release-kick
+
+on:
+  push:
+    branches: ["release-kick/v*"]
+
+permissions:
+  contents: write
+  actions: write
+
+jobs:
+  kick:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - name: 校验 tag 并触发 release 工作流
+        run: |
+          TAG="${GITHUB_REF_NAME#release-kick/}"
+          if ! echo "$TAG" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+([-.][0-9A-Za-z.]+)?$'; then
+            echo "::error::点火分支名里的 tag 段不合法：$TAG（应形如 v0.4.0）"
+            exit 1
+          fi
+          # 与 main 的 pyproject 版本比对，拦下「点火分支写错版本号」：
+          # release.yml 的构建脚本也会强校验，这里提前失败、报错更直白
+          PY_VERSION=$(grep -m1 '^version = ' pyproject.toml | sed 's/version = "\(.*\)"/\1/')
+          BARE="${TAG#v}"; BARE="${BARE%%-*}"
+          if [ "$BARE" != "$PY_VERSION" ]; then
+            echo "::error::tag $TAG 与 main 上 pyproject 的 version=$PY_VERSION 不一致"
+            exit 1
+          fi
+          echo "触发 release.yml（tag=$TAG，将在 main HEAD 上创建 tag）"
+          gh workflow run release.yml --repo "$GITHUB_REPOSITORY" --ref main -f tag="$TAG"
+
+      - name: 删除点火分支
+        if: always()
+        run: |
+          gh api -X DELETE "repos/$GITHUB_REPOSITORY/git/refs/heads/$GITHUB_REF_NAME" \
+            && echo "点火分支已清理" || echo "::warning::点火分支删除失败，可手动删除 $GITHUB_REF_NAME"
