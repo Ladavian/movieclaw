@@ -329,12 +329,12 @@ token 的全部合法位置（**我们全部无条件支持**）：`Authorizatio
 - 两个 ProviderId 带 `[Required(AllowEmptyStrings=false)]`，必须非空；
 - ~~CastReceiverId~~ 不要输出 null 键（可空字段，省略即可）。
 
-`SessionInfoDto` 最小集：`Id`（32 hex 会话标识）、`UserId`（非可空 Guid，
-必出现）、`UserName/Client/DeviceId/DeviceName/ApplicationVersion/ServerId`，
-外加恰好九个非可空必出现字段：`PlayableMediaTypes: []`、`SupportedCommands: []`、
-`LastActivityDate`、`LastPlaybackCheckIn`、`IsActive: true`、
-`SupportsMediaControl: false`、`SupportsRemoteControl: false`、
-`HasCustomDeviceName: false`。其余全部可空省略。
+`SessionInfoDto` 最小集：`Id`（32 hex 会话标识）、
+`UserName/Client/DeviceId/DeviceName/ApplicationVersion/ServerId`，外加九个
+非可空必出现字段：`UserId`（Guid）、`PlayableMediaTypes: []`、
+`SupportedCommands: []`、`LastActivityDate`、`LastPlaybackCheckIn`、
+`IsActive: true`、`SupportsMediaControl: false`、
+`SupportsRemoteControl: false`、`HasCustomDeviceName: false`。其余全部可空省略。
 
 ### 4.3 movieclaw 侧账号模型
 
@@ -880,13 +880,26 @@ id），调同一套领域服务——**不**让自家前端去消费 Jellyfin �
 
 合并前照例全绿：`pytest`、`ruff check .`、`pnpm web:lint`、`pnpm web:typecheck`。
 
-## 11. 开放问题（实施前需拍板）
+## 11. 开放问题与实现状态
 
 已决：兼容层**默认开启**（2026-08-03 用户拍板，落地见 8.4）；发现地址
 三层策略（见 3.1）；收藏接口**做**（v1.1 复核确认四条路由与响应结构，
 与已看接口完全同构、复用 handler 骨架，成本极低，列入 P1，见 §2）；
 流媒体接口**要求 token**（偏离③，理由见 6.4，若实测遇到问题再评估开关）。
 
+**实现状态（2026-08-03，两轮实现↔源码对抗终验后）**：P0 + P1 已全量落地
+（`src/movieclaw_jellyfin/` 协议层 + `src/movieclaw_playback/` 领域层，
+55 个协议测试全绿），终验发现的 28 项缺陷已修复。此外把 ASP.NET 的
+**query 键大小写不敏感**语义补进了 §1 同款归一化中间件（v1.1 调研只覆盖
+了路径，实为同一差异的两半——教训记档）。
+
+**已知差距**（有意留下的小缺口，不影响 Infuse 主链路）：
+- `GET /Search/Hints` 未实现（P2 兜底项，主流播放器搜索走 /Items?searchTerm）；
+- `imageTypeLimit`/`enableImageTypes`/`enableTotalRecordCount` 接受但忽略
+  （超集输出，协议宽容）；
+- `PrimaryImageAspectRatio` 不输出（本地未存图片尺寸，纯排版观感）；
+- 图片两种 404 body 未细分（均给 text 文案；客户端不解析 body）。
+
 1. **外挂字幕台账**：library_file 目前只有内封 `subtitle_streams`；同目录
-   `.srt/.ass` 的发现、命名解析（语言后缀）、台账落位是独立小设计，P1 前
-   补一节到 library.md 或单开短文档。
+   `.srt/.ass` 的发现、命名解析（语言后缀）、台账落位是独立小设计（§6.5
+   字幕接口随台账一起实施），补一节到 library.md 或单开短文档。
