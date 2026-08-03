@@ -25,6 +25,10 @@ class ImportWatch(TimestampMixin, table=True):
       结果还需外部流转（上传网盘、转存、人工确认）再进库的场景：文件
       后续出现在某个库根时由扫描自动入账。每 kind 至多一条（同 auto 理由）。
 
+    存量语义（``process_existing``）：默认整理源目录里已有的内容；关闭时
+    首轮巡检把当时已下载完成的存量条目批量标记为已忽略（``ingest_entry``
+    台账行，清单中可恢复），之后只处理新增——正在下载中的条目不算存量。
+
     约束（写入侧校验，import_watch_config）：
     - ``library_id`` 与 ``target_path`` 互斥；
     - 源目录全局唯一，且不得与**任何**库的根路径前缀重叠——落在库根下
@@ -61,4 +65,18 @@ class ImportWatch(TimestampMixin, table=True):
         default=None,
         sa_column=Column(Text, nullable=True),
         description="自定义目录目标（绝对路径）；与 library_id 互斥，非空时 kind 必填",
+    )
+    process_existing: bool = Field(
+        default=True,
+        description=(
+            "是否整理规则生效时源目录里已有的内容；False=跳过存量、只处理之后"
+            "新增的（存量条目在首轮巡检被批量标记为已忽略，可在清单中恢复）"
+        ),
+    )
+    baseline_done: bool = Field(
+        default=False,
+        description=(
+            "「跳过存量」的基线是否已打（首轮见到源目录时把当时的存量标记忽略"
+            "并置位；改源目录或重新关闭「整理存量」时复位，下轮重打）"
+        ),
     )

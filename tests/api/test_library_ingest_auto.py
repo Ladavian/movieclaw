@@ -220,7 +220,7 @@ async def test_auto_claimed_entry_uses_pinned_library(db, tmp_path, monkeypatch)
 
 @pytest.mark.asyncio
 async def test_auto_unidentified_entry_recorded_without_library(db, tmp_path, monkeypatch):
-    """识别失败的 auto 条目：台账落账（退避幂等依赖它），无归属库。"""
+    """识别不出的 auto 条目：台账落账为待处理（幂等依赖它），无归属库。"""
     tv_root, watch = tmp_path / "tv", tmp_path / "watch"
     watch.mkdir()
     await _make_library(db, name="剧集库", root=tv_root)
@@ -239,9 +239,9 @@ async def test_auto_unidentified_entry_recorded_without_library(db, tmp_path, mo
 
     async with db.session() as session:
         record = (await session.execute(select(IngestEntry))).scalar_one()
-    assert record.status == IngestStatus.FAILED
+    assert record.status == IngestStatus.PENDING
     assert record.library_id is None
-    assert "无法识别" in (record.message or "")
+    assert "无法自动识别" in (record.message or "")
 
 
 @pytest.mark.asyncio
