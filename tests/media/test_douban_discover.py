@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from types import SimpleNamespace
 from typing import Any
 
 import httpx
@@ -305,6 +306,46 @@ async def test_full_collection_returns_partial_when_tail_page_fails() -> None:
         await DoubanDiscoverService(failing).full_collection("movie_high_score")  # type: ignore[arg-type]
 
 
+async def test_full_collection_truncated_result_cached_briefly(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """半截榜单只短缓存：几分钟后重试即可补全；补全后的完整结果回到 6 小时档。"""
+    from movieclaw_cache import memory as cache_memory
+
+    now = 0.0
+    monkeypatch.setattr(cache_memory, "time", SimpleNamespace(monotonic=lambda: now))
+
+    client = StubDoubanClient(
+        {
+            ("movie_high_score", 0): {
+                "subject_collection_items": [_item(i) for i in range(1, 51)]
+            },
+            ("movie_high_score", 50): DoubanError("模拟失败"),
+        }
+    )
+    service = DoubanDiscoverService(client)  # type: ignore[arg-type]
+    assert len((await service.full_collection("movie_high_score")).items) == 50
+
+    # 短 TTL 未过期时仍命中缓存，不重复打豆瓣
+    calls_before = len(client.calls)
+    assert len((await service.full_collection("movie_high_score")).items) == 50
+    assert len(client.calls) == calls_before
+
+    # 尾页恢复后，过了短 TTL（5 分钟）应重新聚合出完整榜单
+    client.responses[("movie_high_score", 50)] = {
+        "subject_collection_items": [_item(i) for i in range(51, 101)]
+    }
+    client.responses[("movie_high_score", 100)] = {"subject_collection_items": []}
+    now += 6 * 60
+    assert len((await service.full_collection("movie_high_score")).items) == 100
+
+    # 完整结果按 6 小时缓存：再过 6 分钟不应再回源
+    calls_after = len(client.calls)
+    now += 6 * 60
+    assert len((await service.full_collection("movie_high_score")).items) == 100
+    assert len(client.calls) == calls_after
+
+
 async def test_full_collection_rejects_unlisted_id() -> None:
     """白名单外的榜单 ID 一律 404，避免接口沦为豆瓣任意榜单的开放代理。"""
     with pytest.raises(DoubanNotFoundError):
@@ -322,6 +363,7 @@ async def test_layout_lists_all_collections_without_requests() -> None:
         f"douban-{spec.collection_id}" for spec in _TV_COLLECTIONS
     ]
     assert layout.rows[0].ranked
-    assert service.layout(MediaKind.MOVIE).rows[0].id == f"douban-{_MOVIE_COLLECTIONS[0].collection_id}"
+    expected_row_id = f"douban-{_MOVIE_COLLECTIONS[0].collection_id}"
+    assert service.layout(MediaKind.MOVIE).rows[0].id == expected_row_id
     assert await service.discover_hero(MediaKind.TV) == []
     assert client.calls == []

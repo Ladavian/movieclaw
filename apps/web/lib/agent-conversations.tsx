@@ -448,7 +448,10 @@ export function AgentConversationsProvider({ children }: { children: React.React
   // 已从服务端取回的条数 = 下一页的 offset。用「取回条数」而不是「列表长度」：
   // 本地新建的会话也在列表里，用长度当 offset 会跳过服务端的真实数据。
   const fetchedCount = useRef(0);
-  const [hasMore, setHasMore] = useState(true);
+  // 初始为 false：首页请求完成前不允许 loadMore。否则侧栏的「列表没撑满就补页」
+  // effect 会在挂载时与首页请求并发拉同一批数据（loadingRef 只挡 loadMore 自己），
+  // 两边都把 fetchedCount 加 20，下一页 offset 直接跳到 40，第 21–40 条永远丢失。
+  const [hasMore, setHasMore] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
   // setState 是异步的，触底事件会连发好几次——并发闸门必须是 ref
   const loadingRef = useRef(false);

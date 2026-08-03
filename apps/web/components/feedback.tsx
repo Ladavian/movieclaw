@@ -167,6 +167,23 @@ export function FeedbackProvider({ children }: { children: ReactNode }) {
     };
   }, []);
 
+  // 当前在场弹窗的镜像 ref：打开新弹窗时需要同步拿到上一个请求去结算，
+  // 走 state 闭包可能读到旧值，ref 始终是最新的
+  const dialogRef = useRef<DialogRequest | null>(null);
+
+  /** 打开弹窗。UI 上同一时刻只渲染一个弹窗，若上一个还没被用户处理就来了
+   * 新请求（如快捷键与按钮几乎同时触发），先按「取消」结算上一个 Promise，
+   * 否则前一个调用方的 await 会永远悬挂。 */
+  const openDialog = useCallback((next: DialogRequest) => {
+    const previous = dialogRef.current;
+    if (previous) {
+      if (previous.kind === "confirm") previous.resolve(false);
+      else previous.resolve(null);
+    }
+    dialogRef.current = next;
+    setDialog(next);
+  }, []);
+
   const api = useMemo<FeedbackApi>(
     () => ({
       toast: {
@@ -175,18 +192,19 @@ export function FeedbackProvider({ children }: { children: ReactNode }) {
         info: (message, options) => push("info", message, options),
       },
       confirm: (options) =>
-        new Promise<boolean>((resolve) => setDialog({ kind: "confirm", options, resolve })),
+        new Promise<boolean>((resolve) => openDialog({ kind: "confirm", options, resolve })),
       prompt: (options) =>
-        new Promise<string | null>((resolve) => setDialog({ kind: "prompt", options, resolve })),
+        new Promise<string | null>((resolve) => openDialog({ kind: "prompt", options, resolve })),
     }),
-    [push],
+    [push, openDialog],
   );
 
-  // 关闭弹窗并回传结果：同一时刻只会有一个确认/输入弹窗在场
+  // 关闭弹窗并回传结果
   const settle = (result: boolean | string | null) => {
     if (!dialog) return;
     if (dialog.kind === "confirm") dialog.resolve(Boolean(result));
     else dialog.resolve(typeof result === "string" ? result : null);
+    dialogRef.current = null;
     setDialog(null);
   };
 
