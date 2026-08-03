@@ -70,6 +70,7 @@ _KNOWN_QUERY_KEYS = [
     "season",
     "isSpecialSeason",
     "seriesId",
+    "personIds",
     "groupItems",
     "static",
     "mediaSourceId",

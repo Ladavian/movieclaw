@@ -27,8 +27,10 @@ from movieclaw_db.models import (
     LibraryFile,
     MediaEpisode,
     MediaItem,
+    MediaItemPerson,
     MediaMetadata,
     MediaSeason,
+    Person,
     PlaybackState,
 )
 from movieclaw_jellyfin.identity import format_datetime
@@ -36,6 +38,7 @@ from movieclaw_jellyfin.ids import (
     episode_guid,
     item_guid,
     library_guid,
+    person_guid,
     root_guid,
     season_guid,
 )
@@ -77,6 +80,8 @@ class ItemBundle:
     seasons: dict[int, MediaSeason] = field(default_factory=dict)
     episodes: dict[tuple[int, int], MediaEpisode] = field(default_factory=dict)
     states: dict[tuple[int, int], PlaybackState] = field(default_factory=dict)
+    # (department, character, credit_order, Person)，演员按 credit_order 升序
+    people: list[tuple[str, str | None, int, Person]] = field(default_factory=list)
 
     @property
     def units(self) -> list[tuple[int, int]]:
@@ -160,6 +165,22 @@ async def load_bundles(
         b = bundles.get(st.media_item_id)
         if b is not None:
             b.states[(st.season_number, st.episode_number)] = st
+
+    # 演职员：media_item_person ⋈ person（人物页同款数据，头像经图片代理）
+    people_rows = (
+        await session.execute(
+            select(MediaItemPerson, Person)
+            .join(Person, Person.id == MediaItemPerson.person_id)
+            .where(MediaItemPerson.media_item_id.in_(item_ids))
+        )
+    ).all()
+    for link, person in people_rows:
+        b = bundles.get(link.media_item_id)
+        if b is not None:
+            b.people.append((link.department, link.character, link.credit_order, person))
+    for b in bundles.values():
+        # 演员在前（按剧组主次序），导演/主创随后——对齐 Jellyfin People 惯例
+        b.people.sort(key=lambda t: (0 if t[0] == "cast" else 1, t[2]))
 
     # 没有任何在位文件的条目不对外呈现
     return {k: v for k, v in bundles.items() if v.files}
@@ -354,6 +375,30 @@ def _apply_metadata_fields(
         dto["Taglines"] = [meta.tagline]
 
 
+def people_dto(bundle: ItemBundle) -> list[dict[str, Any]]:
+    """BaseItemPerson 列表：Name/Id/Role/Type/PrimaryImageTag（BaseItemPerson.cs）。"""
+    result: list[dict[str, Any]] = []
+    for department, character, _order, person in bundle.people:
+        entry: dict[str, Any] = {
+            "Name": person.name,
+            "Id": person_guid(person.id),
+            "Type": "Actor" if department == "cast" else "Director",
+        }
+        if character:
+            entry["Role"] = character
+        if person.profile_path:
+            entry["PrimaryImageTag"] = hashlib.md5(
+                person.profile_path.encode()
+            ).hexdigest()
+        result.append(entry)
+    return result
+
+
+def _apply_people(dto: dict[str, Any], bundle: ItemBundle, options: DtoOptions) -> None:
+    if options.has("People") and bundle.people:
+        dto["People"] = people_dto(bundle)
+
+
 def _apply_parent_id(dto: dict[str, Any], parent: str | None, options: DtoOptions) -> None:
     if parent and options.has("ParentId"):
         dto["ParentId"] = parent
@@ -406,6 +451,7 @@ def movie_dto(ctx: DtoContext, bundle: ItemBundle, options: DtoOptions) -> dict[
     _apply_provider_ids(dto, bundle, options)
     _apply_item_images(dto, ctx, bundle, options)
     _apply_parent_id(dto, _item_library_guid(bundle), options)
+    _apply_people(dto, bundle, options)
     if options.has("Path"):
         files = bundle.files.get((0, 0), [])
         if files:
@@ -442,6 +488,7 @@ def series_dto(ctx: DtoContext, bundle: ItemBundle, options: DtoOptions) -> dict
     _apply_provider_ids(dto, bundle, options)
     _apply_item_images(dto, ctx, bundle, options)
     _apply_parent_id(dto, _item_library_guid(bundle), options)
+    _apply_people(dto, bundle, options)
     if options.has("ChildCount"):
         dto["ChildCount"] = len({s for s, _ in bundle.units})
     if options.has("RecursiveItemCount"):
@@ -559,6 +606,7 @@ def episode_dto(
             dto["MediaSources"] = sources
         if options.has("MediaStreams") and sources:
             dto["MediaStreams"] = sources[0]["MediaStreams"]
+    _apply_people(dto, bundle, options)
     if options.enable_user_data:
         dto["UserData"] = _leaf_user_data(bundle, season, episode, guid)
     return dto

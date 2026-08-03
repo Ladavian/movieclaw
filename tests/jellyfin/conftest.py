@@ -27,8 +27,10 @@ from movieclaw_db.models import (
     LibraryFile,
     MediaEpisode,
     MediaItem,
+    MediaItemPerson,
     MediaMetadata,
     MediaSeason,
+    Person,
 )
 
 
@@ -201,12 +203,54 @@ def seeded(tmp_path: Path, media_root: Path, monkeypatch) -> dict:
                         source=FileSource.SCANNED,
                     )
                 )
+            # 演职员：2 演员 + 1 导演挂电影（People 输出与 personIds 过滤用）
+            dicaprio = Person(
+                tmdb_person_id=6193,
+                name="莱昂纳多·迪卡普里奥",
+                original_name="Leonardo DiCaprio",
+                profile_path="/leo.jpg",
+            )
+            page = Person(tmdb_person_id=27578, name="艾伦·佩吉")
+            nolan = Person(
+                tmdb_person_id=525,
+                name="克里斯托弗·诺兰",
+                original_name="Christopher Nolan",
+                profile_path="/nolan.jpg",
+            )
+            session.add_all([dicaprio, page, nolan])
+            await session.flush()
+            session.add_all(
+                [
+                    MediaItemPerson(
+                        media_item_id=movie.id,
+                        person_id=dicaprio.id,
+                        department="cast",
+                        character="Cobb",
+                        credit_order=0,
+                    ),
+                    MediaItemPerson(
+                        media_item_id=movie.id,
+                        person_id=page.id,
+                        department="cast",
+                        character="Ariadne",
+                        credit_order=1,
+                    ),
+                    MediaItemPerson(
+                        media_item_id=movie.id,
+                        person_id=nolan.id,
+                        department="director",
+                        credit_order=0,
+                    ),
+                ]
+            )
             await session.commit()
             ids.update(
                 {
                     "movie_lib": movie_lib.id,
                     "tv_lib": tv_lib.id,
                     "movie": movie.id,
+                    "dicaprio": dicaprio.id,
+                    "nolan": nolan.id,
                     "show": show.id,
                 }
             )

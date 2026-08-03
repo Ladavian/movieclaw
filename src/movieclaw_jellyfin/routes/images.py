@@ -29,6 +29,38 @@ from movieclaw_jellyfin.routes.common import dto_context
 router = APIRouter()
 
 
+async def _person_image(person_id: int, image_type: str) -> Response:
+    """影人头像：TMDB profile 经图片代理（SSRF 防护 + 本地缓存）落盘直出。
+
+    离线/图床不可达时 404——播放器按无头像降级，不阻断详情页。"""
+    if image_type.lower() != "primary":
+        raise JellyfinError(404, text=f"Item does not have an image of type {image_type}")
+    from movieclaw_api.core.config import get_settings
+    from movieclaw_api.services.image_cache import get_image_cache
+    from movieclaw_db.models import Person
+
+    async with get_database().session() as session:
+        person = await session.get(Person, person_id)
+    if person is None or not person.profile_path:
+        raise JellyfinError(404, text="Item does not have an image of type Primary")
+    base = get_settings().tmdb_image_base_url.rstrip("/")
+    try:
+        cached = await get_image_cache().get_or_fetch(f"{base}/w300{person.profile_path}")
+    except Exception:
+        raise not_found() from None
+    import hashlib
+
+    tag = hashlib.md5(person.profile_path.encode()).hexdigest()
+    return FileResponse(
+        cached.path,
+        media_type=cached.content_type,
+        headers={
+            "Cache-Control": "public, max-age=31536000, immutable",
+            "ETag": f'"{tag}"',
+        },
+    )
+
+
 async def _resolve_asset(
     session: AsyncSession, item_id: str, image_type: str
 ) -> str | None:
@@ -109,6 +141,8 @@ async def get_item_image(
                 "ETag": f'"{cover[1]}"',
             },
         )
+    if ref is not None and ref.kind == EntityKind.PERSON:
+        return await _person_image(ref.entity_id, image_type)
     async with get_database().session() as session:
         rel_path = await _resolve_asset(session, item_id, image_type)
     if not rel_path:

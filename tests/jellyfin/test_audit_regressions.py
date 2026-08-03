@@ -286,3 +286,56 @@ def test_image_scaling_params(client: TestClient, seeded: dict) -> None:
         f"/Items/{guid}/Images/Primary", params={"ApiKey": token, "maxWidth": "4000"}
     )
     assert Image.open(BytesIO(big.content)).width == 100
+
+
+def test_people_in_item_detail(client: TestClient, seeded: dict) -> None:
+    """VidHub 实测缺陷：演职员必须随详情输出（People 字段 + 头像 tag）。"""
+    token = jf_login(client)
+    guid = item_guid(seeded["movie"])
+    people = client.get(f"/Items/{guid}", params={"ApiKey": token}).json()["People"]
+    assert [p["Name"] for p in people] == [
+        "莱昂纳多·迪卡普里奥",
+        "艾伦·佩吉",
+        "克里斯托弗·诺兰",
+    ]  # 演员按主次序在前，导演在后
+    leo = people[0]
+    assert leo["Type"] == "Actor" and leo["Role"] == "Cobb"
+    assert len(leo["PrimaryImageTag"]) == 32
+    assert "PrimaryImageTag" not in people[1]  # 无头像的不给 tag
+    assert people[2]["Type"] == "Director" and "Role" not in people[2]
+
+    # 列表接口：不传 fields=People 不输出；传了才有（fields 门控）
+    plain = client.get("/Items", params={"ApiKey": token, "ids": guid}).json()["Items"][0]
+    assert "People" not in plain
+    gated = client.get(
+        "/Items", params={"ApiKey": token, "ids": guid, "fields": "People"}
+    ).json()["Items"][0]
+    assert len(gated["People"]) == 3
+
+
+def test_person_item_and_filter(client: TestClient, seeded: dict) -> None:
+    """点开演员：人物条目可取，personIds 反查参演作品。"""
+    from movieclaw_jellyfin.ids import person_guid
+
+    token = jf_login(client)
+    pguid = person_guid(seeded["dicaprio"])
+    person = client.get(f"/Items/{pguid}", params={"ApiKey": token}).json()
+    assert person["Type"] == "Person"
+    assert person["Name"] == "莱昂纳多·迪卡普里奥"
+    assert person["OriginalTitle"] == "Leonardo DiCaprio"
+
+    body = client.get(
+        "/Items",
+        params={
+            "ApiKey": token,
+            "personIds": pguid,
+            "recursive": "true",
+            "includeItemTypes": "Movie,Series",
+        },
+    ).json()
+    assert body["TotalRecordCount"] == 1
+    assert body["Items"][0]["Id"] == item_guid(seeded["movie"])
+
+    # 头像：测试环境图床离线 → 404 优雅降级（生产为图片代理缓存直出）
+    avatar = client.get(f"/Items/{pguid}/Images/Primary", params={"ApiKey": token})
+    assert avatar.status_code == 404

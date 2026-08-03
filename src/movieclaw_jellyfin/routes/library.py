@@ -51,6 +51,31 @@ router = APIRouter(dependencies=[Depends(require_device)])
 Entry = tuple[str, ItemBundle, int, int]
 
 
+async def _items_with_persons(
+    session: AsyncSession, person_guids: list[str]
+) -> set[int]:
+    """personIds 过滤：解出人物 id → 反查参演/执导的条目集合。"""
+    from sqlalchemy import select as sa_select
+
+    from movieclaw_db.models import MediaItemPerson
+
+    ids = [
+        r.entity_id
+        for r in (decode_guid(g) for g in person_guids)
+        if r is not None and r.kind == EntityKind.PERSON
+    ]
+    if not ids:
+        return set()
+    rows = (
+        await session.execute(
+            sa_select(MediaItemPerson.media_item_id).where(
+                MediaItemPerson.person_id.in_(ids)
+            )
+        )
+    ).scalars()
+    return set(rows)
+
+
 async def _cover_tag(library_id: int) -> str | None:
     """库封面拼贴的版本 key（惰性渲染，素材不变零成本）。"""
     from movieclaw_api.services.library.cover import ensure_library_cover
@@ -283,6 +308,11 @@ async def _query_items(request: Request) -> JSONResponse:
                     for lib in libraries
                 ]
                 return JSONResponse(query_result(dtos, len(dtos)))
+
+        person_ids_raw = parse_comma(q.get("personIds"))
+        if person_ids_raw:
+            member_ids = await _items_with_persons(session, person_ids_raw)
+            entries = [e for e in entries if e[1].item.id in member_ids]
 
     if exclude_types:
         entries = [e for e in entries if e[0] not in exclude_types]
@@ -622,6 +652,31 @@ async def get_item(request: Request, item_id: str, user_id: str | None = None) -
     options = DtoOptions(all_fields=True)
 
     async with get_database().session() as session:
+        if ref.kind == EntityKind.PERSON:
+            from movieclaw_db.models import Person
+
+            person = await session.get(Person, ref.entity_id)
+            if person is None:
+                raise not_found()
+            import hashlib
+
+            dto: dict[str, Any] = {
+                "Name": person.name,
+                "ServerId": ctx.server_id,
+                "Id": item_id.lower().replace("-", ""),
+                "Type": "Person",
+                "MediaType": "Unknown",
+                "IsFolder": False,
+                "ImageTags": (
+                    {"Primary": hashlib.md5(person.profile_path.encode()).hexdigest()}
+                    if person.profile_path
+                    else {}
+                ),
+                "BackdropImageTags": [],
+            }
+            if person.original_name and person.original_name != person.name:
+                dto["OriginalTitle"] = person.original_name
+            return JSONResponse(dto)
         if ref.kind == EntityKind.LIBRARY:
             library = await session.get(Library, ref.entity_id)
             if library is None:

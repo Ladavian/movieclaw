@@ -422,8 +422,12 @@ Movie/Episode=`"Video"`，Series/Season=`"Unknown"`）`IndexNumber`
 `OriginalTitle` `ChildCount` `RecursiveItemCount`。
 
 **绝不输出清单**（协议合法且是"明确不做"的前提）：`PartCount`（否则客户端
-调 /AdditionalParts）、`Trickplay`（否则调 Trickplay 接口）、`People`
-（我们不实现演员页/头像接口，从源头消除依赖）。
+调 /AdditionalParts）、`Trickplay`（否则调 Trickplay 接口）。
+（`People` 原在此清单，2026-08-03 按用户反馈改为正式支持：受 fields 门控
+输出 BaseItemPerson（Name/Id/Role/Type/PrimaryImageTag，演员按主次序在前、
+导演随后，数据源 media_item_person ⋈ person）；配套人物头像接口
+（TMDB profile 经图片代理缓存直出）、人物条目 GUID（类型 0x06）与
+`/Items?personIds=` 反查参演作品。）
 
 **单条目接口特例**：`GET /Items/{itemId}` 与 legacy **没有 fields 参数、
 全字段语义**（含 Overview/MediaSources/MediaStreams/Path/ParentId/Studios/
@@ -901,6 +905,8 @@ id），调同一套领域服务——**不**让自家前端去消费 Jellyfin �
 - `imageTypeLimit`/`enableImageTypes`/`enableTotalRecordCount` 接受但忽略
   （超集输出，协议宽容）；
 - `PrimaryImageAspectRatio` 不输出（本地未存图片尺寸，纯排版观感）；
+- `/Persons/*` 独立命名空间未实现（人物条目走 `/Items/{personGuid}` +
+  `personIds` 过滤已覆盖主流客户端的演员页链路）；
 - 图片两种 404 body 未细分（均给 text 文案；客户端不解析 body）。
 
 1. **外挂字幕台账**：library_file 目前只有内封 `subtitle_streams`；同目录

@@ -30,6 +30,7 @@ class EntityKind(IntEnum):
     SEASON = 0x03
     EPISODE = 0x04
     MEDIA_SOURCE = 0x05
+    PERSON = 0x06
 
 
 # 固定实体的载荷常量（FIXED 类型下细分）
@@ -74,6 +75,10 @@ def episode_guid(media_item_id: int, season: int, episode: int) -> str:
 
 def media_source_guid(library_file_id: int) -> str:
     return _pack(EntityKind.MEDIA_SOURCE, library_file_id)
+
+
+def person_guid(person_id: int) -> str:
+    return _pack(EntityKind.PERSON, person_id)
 
 
 def user_guid() -> str:
