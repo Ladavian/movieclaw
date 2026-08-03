@@ -16,6 +16,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
+from types import EllipsisType
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -298,9 +299,13 @@ class SubscriptionService:
         selected_seasons: list[int] | None = None,
         follow_future: bool | None = None,
         rule_set_id: int | None = None,
-        library_id: int | None = None,
+        library_id: int | None | EllipsisType = ...,
     ) -> Subscription:
         """修改 E 的定义（季选择/追新/规则组/入库目标库），diff 重算工单。
+
+        ``library_id`` 用 ``...``（Ellipsis）作「未传=不变」的哨兵：显式传 None
+        表示清除指定库、改回按默认库路由——旧订阅（library_id 为空）需要这条
+        双向通道。
 
         diff 规则（不变量③）：
         - 新入域的单元 → 补工单（调度语义按当下重新判定）；
@@ -315,8 +320,9 @@ class SubscriptionService:
         if rule_set_id is not None and rule_set_id != subscription.rule_set_id:
             new_rule_set = await self._rule_sets.get(rule_set_id)
             subscription.rule_set_id = rule_set_id
-        if library_id is not None and library_id != subscription.library_id:
-            await self._validate_library(subscription.kind, library_id)
+        if library_id is not ... and library_id != subscription.library_id:
+            if library_id is not None:
+                await self._validate_library(subscription.kind, library_id)
             subscription.library_id = library_id
 
         kind = MediaKind(subscription.kind)

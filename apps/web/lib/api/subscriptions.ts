@@ -320,8 +320,8 @@ export function updateSubscription(
     selected_seasons?: number[];
     follow_future?: boolean;
     rule_set_id?: number;
-    /** 换入库目标库；缺省不变 */
-    library_id?: number;
+    /** 换入库目标库；显式传 null=清除指定、改回按默认库路由；缺省不变 */
+    library_id?: number | null;
   },
 ): Promise<SubscriptionDetail> {
   return unwrap(

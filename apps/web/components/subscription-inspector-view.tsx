@@ -3,7 +3,7 @@
 import Link from "next/link";
 import type { Route } from "next";
 import { useRouter } from "next/navigation";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { useConfirm, useToast } from "@/components/feedback";
 import { ArrowLeftIcon } from "@/components/icons";
@@ -94,11 +94,19 @@ export function SubscriptionInspectorView({ id }: { id: number }) {
   // 页面隐藏自动暂停（useVisiblePolling）；无在途工单时零请求。
   const hasInFlight =
     detail?.wanted.some((w) => w.status === "grabbed" || w.status === "downloaded") ?? false;
+  // 在途请求守卫：下载器响应慢于轮询间隔时跳过本 tick，
+  // 避免请求堆叠、以及慢的旧响应乱序覆盖新数据
+  const downloadsPending = useRef(false);
   useVisiblePolling(
     () => {
+      if (downloadsPending.current) return;
+      downloadsPending.current = true;
       listSubscriptionDownloads(id)
         .then(setDownloads)
-        .catch(() => undefined);
+        .catch(() => undefined)
+        .finally(() => {
+          downloadsPending.current = false;
+        });
     },
     hasInFlight ? 5000 : null,
     { leading: true },

@@ -33,10 +33,15 @@ class BaseDownloader(abc.ABC):
         """提交一个下载任务。"""
 
     @abc.abstractmethod
-    async def get_torrent(self, info_hash: str) -> TorrentStatus | None:
+    async def get_torrent(
+        self, info_hash: str, *, include_files: bool = True
+    ) -> TorrentStatus | None:
         """按 infohash 查询下载任务的进度与文件清单；不存在返回 None。
 
         入库管线据此判断"下载器确认完成"（completed）并拿到文件的落盘位置。
+
+        ``include_files=False`` 时跳过文件清单的获取（``files`` 返回空列表）：
+        进度快照类的高频轮询只需要 info 字段，省掉一次逐文件查询的开销。
         """
 
     @abc.abstractmethod

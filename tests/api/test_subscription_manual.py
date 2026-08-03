@@ -247,6 +247,28 @@ async def test_grab_manual_rejects_identity_mismatch(db) -> None:
         assert all(w.status == WantedStatus.WANTED for w in wanted.values())
 
 
+async def test_grab_manual_malformed_attrs_falls_back_to_enrich(db) -> None:
+    """前端回传的 attrs 结构不合法 → 不抛 pydantic ValidationError（500），
+    而是退回服务端 enrich 重新推导；标题本身可识别（别名 + SxxEyy），
+    兜底路径照样完成投递。"""
+    async with db.session() as session:
+        service = _service(session)
+        sub = await service.create(MediaKind.TV, 200, selected_seasons=[1])
+        covered = await grab_manual(
+            session,
+            sub.id,
+            site_id="testsite",
+            torrent_id="m4",
+            title="Test Show S01E01 1080p WEB-DL x264-GRP",
+            category="tv",
+            # seasons/episodes 传成非法类型：TorrentAttrs 校验必失败
+            attrs={"media_type": "tv", "seasons": "第一季", "episodes": {"bad": 1}},
+        )
+        assert [(w.season_number, w.episode_number) for w in covered] == [(1, 1)]
+        wanted = await _wanted_map(session, sub.id)
+        assert wanted[(1, 1)].status == WantedStatus.GRABBED
+
+
 async def test_grab_manual_rejects_uncovered_unit(db) -> None:
     """身份命中但集号不在缺口里（该集已 GRABBED）→ 报"没有可满足的追踪项"。"""
     async with db.session() as session:

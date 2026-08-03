@@ -151,17 +151,20 @@ class QBittorrentDownloader(BaseDownloader):
         logger.warning("提交成功但暂未在 qBittorrent 中查到种子: %s", info_hash)
         return ""
 
-    async def get_torrent(self, info_hash: str) -> TorrentStatus | None:
-        return await asyncio.to_thread(self._get_torrent_sync, info_hash)
+    async def get_torrent(
+        self, info_hash: str, *, include_files: bool = True
+    ) -> TorrentStatus | None:
+        return await asyncio.to_thread(self._get_torrent_sync, info_hash, include_files)
 
-    def _get_torrent_sync(self, info_hash: str) -> TorrentStatus | None:
+    def _get_torrent_sync(self, info_hash: str, include_files: bool = True) -> TorrentStatus | None:
         client = self._client()
         with _translate_errors(self.config.url):
             infos = client.torrents_info(torrent_hashes=info_hash)
             if not infos:
                 return None
             torrent = infos[0]
-            files = client.torrents_files(torrent_hash=info_hash)
+            # 文件清单是独立的 API 请求：进度快照类调用不需要它，省一次往返
+            files = client.torrents_files(torrent_hash=info_hash) if include_files else []
         completed = float(torrent.progress) >= 1.0
         # qBittorrent 用 8640000（100 天）表示"无法估算"
         eta = int(getattr(torrent, "eta", 0) or 0)

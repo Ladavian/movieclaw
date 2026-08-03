@@ -426,7 +426,10 @@ export function RuleSetEditorDialog({
             />
           </Field>
 
-          <Field label="分辨率" hint="点击依次选择，先选的优先（选中顺序 = 下载偏好）；不选 = 不限">
+          <Field
+            label="分辨率"
+            hint="点击依次选择，先选的优先（选中顺序 = 下载偏好）；不选 = 不限。限定分辨率后，无法从种子名识别出分辨率的资源也会被排除，可用「手动选种」兜底"
+          >
             <div className="flex flex-wrap gap-1.5">
               {RESOLUTION_OPTIONS.map((option) => {
                 const index = resolutions.indexOf(option);

@@ -153,10 +153,12 @@ class TransmissionDownloader(BaseDownloader):
         logger.info("已提交种子到 Transmission: hash=%s name=%s", result_hash, torrent.name)
         return SubmitResult(info_hash=result_hash, name=torrent.name)
 
-    async def get_torrent(self, info_hash: str) -> TorrentStatus | None:
-        return await asyncio.to_thread(self._get_torrent_sync, info_hash)
+    async def get_torrent(
+        self, info_hash: str, *, include_files: bool = True
+    ) -> TorrentStatus | None:
+        return await asyncio.to_thread(self._get_torrent_sync, info_hash, include_files)
 
-    def _get_torrent_sync(self, info_hash: str) -> TorrentStatus | None:
+    def _get_torrent_sync(self, info_hash: str, include_files: bool = True) -> TorrentStatus | None:
         client = self._client()
         with _translate_errors(self.config.url):
             try:
@@ -173,11 +175,16 @@ class TransmissionDownloader(BaseDownloader):
             progress=float(torrent.percent_done),
             completed=completed,
             save_path=torrent.download_dir,
-            files=[
-                # file.name 是种子内相对路径（含顶层目录）
-                TorrentFile(path=file.name, size_bytes=int(file.size))
-                for file in torrent.get_files()
-            ],
+            files=(
+                [
+                    # file.name 是种子内相对路径（含顶层目录）
+                    TorrentFile(path=file.name, size_bytes=int(file.size))
+                    for file in torrent.get_files()
+                ]
+                # 进度快照类调用不需要文件清单，跳过逐文件的构造
+                if include_files
+                else []
+            ),
             size_bytes=int(torrent.fields.get("sizeWhenDone", 0)) or None,
             dlspeed_bytes=int(torrent.fields.get("rateDownload", 0)),
             eta_seconds=eta if eta > 0 else None,

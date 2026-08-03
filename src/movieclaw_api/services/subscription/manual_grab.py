@@ -20,6 +20,7 @@ from __future__ import annotations
 import logging
 from datetime import datetime
 
+from pydantic import ValidationError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
 
@@ -101,12 +102,27 @@ async def grab_manual(
             f"《{item.title}》当前没有缺口——所有追踪项都已投递或入库，无需手动选种"
         )
 
+    # attrs 是前端原样回传的解析结果：结构不合法（陈旧客户端/字段漂移）不算
+    # 致命错误，退回服务端 enrich 重新推导兜底，别把 500 甩给用户
+    parsed_attrs: TorrentAttrs | None = None
+    if attrs:
+        try:
+            parsed_attrs = TorrentAttrs.model_validate(attrs)
+        except ValidationError:
+            logger.warning(
+                "手动选种回传的种子属性无法解析，改用服务端重新推导：site=%s torrent=%s",
+                site_id,
+                torrent_id,
+            )
+    if parsed_attrs is None:
+        parsed_attrs = enrich(title, subtitle, category)
+
     candidate = TorrentCandidate(
         site_id=site_id,
         torrent_id=torrent_id,
         title=title,
         subtitle=subtitle,
-        attrs=TorrentAttrs.model_validate(attrs) if attrs else enrich(title, subtitle, category),
+        attrs=parsed_attrs,
         imdb_id=imdb_id,
         douban_id=douban_id,
         size_bytes=size_bytes,
