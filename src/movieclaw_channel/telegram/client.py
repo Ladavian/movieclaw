@@ -1,8 +1,9 @@
 """Telegram Bot API 的最小 HTTP 客户端。
 
-只封装本项目用到的四个方法(getMe / getUpdates / sendMessage / sendChatAction),
-不引入 python-telegram-bot 这类重依赖。出口走 egress_transport("telegram"):
-国内部署 api.telegram.org 被墙,用户在「设置 → 网络」勾选 telegram 走代理即可。
+只封装本项目用到的方法(getMe / getUpdates / sendMessage / sendPhoto /
+sendChatAction),不引入 python-telegram-bot 这类重依赖。出口走
+egress_transport("telegram"):国内部署 api.telegram.org 被墙,用户在
+「设置 → 网络」勾选 telegram 走代理即可。
 """
 
 from __future__ import annotations
@@ -42,6 +43,10 @@ class TelegramClient:
 
     async def _call(self, method: str, payload: dict[str, Any] | None = None) -> Any:
         resp = await self._http.post(f"{self._base}/{method}", json=payload or {})
+        return self._parse(method, resp)
+
+    def _parse(self, method: str, resp: httpx.Response) -> Any:
+        """Bot API 响应的统一解析:凭据错误分类 + ok=false 抛业务错。"""
         if resp.status_code in _AUTH_ERROR_STATUS:
             raise TelegramApiError(
                 f"Telegram bot token 无效或已吊销(HTTP {resp.status_code})", auth_failed=True
@@ -89,6 +94,15 @@ class TelegramClient:
         # 纯文本发送:Agent 输出是 Markdown,但 TG 的 parse_mode 对不配对的
         # 星号/下划线会整条报错,宁可裸发也不能丢消息
         await self._call("sendMessage", {"chat_id": chat_id, "text": text})
+
+    async def send_photo(self, chat_id: str | int, photo: bytes, caption: str) -> None:
+        """发送图文消息:图片字节 multipart 上传,文案作 caption(≤1024 字符)。"""
+        resp = await self._http.post(
+            f"{self._base}/sendPhoto",
+            data={"chat_id": str(chat_id), "caption": caption},
+            files={"photo": ("poster.jpg", photo)},
+        )
+        self._parse("sendPhoto", resp)
 
     async def send_chat_action(self, chat_id: str | int, action: str = "typing") -> None:
         await self._call("sendChatAction", {"chat_id": chat_id, "action": action})

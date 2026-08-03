@@ -190,3 +190,10 @@ class DiscordAdapter:
             reply.user_id
         )
         await self._client.send_message(str(channel_id), text)
+
+    async def send_photo(self, reply: ReplyContext, photo: bytes, caption: str) -> None:
+        """图文消息(通道协议的可选能力,发送泵 getattr 探测后调用)。"""
+        channel_id = reply.token.get("dm_channel_id") or await self._client.get_dm_channel(
+            reply.user_id
+        )
+        await self._client.send_photo(str(channel_id), photo, caption)

@@ -186,12 +186,15 @@ async def dispatch(
 
     # IM 通道推送(微信/TG/Discord;fire-and-forget,失败不影响投递链路)
     if not dry_run:
-        from movieclaw_api.services.channel_push import notify_channels
+        from movieclaw_api.services.channel_push import notify_channels, tmdb_push_image_url
 
+        year_text = f"({item.year}) " if item.year else ""
         notify_channels(
-            f"📥 开始下载:《{item.title}》{units_label}\n"
-            f"来自 {candidate.site_id} 的「{candidate.title[:60]}」",
+            f"📥 开始下载:《{item.title}》{year_text}{units_label}\n"
+            f"来自 {candidate.site_id} 的「{candidate.title[:60]}」\n"
+            f"{spec_text}",
             event="dispatch",
+            image_url=tmdb_push_image_url(item.backdrop_path, item.poster_path),
         )
     return True
 

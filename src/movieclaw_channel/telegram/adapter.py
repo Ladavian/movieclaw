@@ -112,6 +112,10 @@ class TelegramAdapter:
         # 主动推送时 token 里没有 chat_id,私聊场景 chat_id == user_id
         await self._client.send_message(reply.token.get("chat_id") or reply.user_id, text)
 
+    async def send_photo(self, reply: ReplyContext, photo: bytes, caption: str) -> None:
+        """图文消息(通道协议的可选能力,发送泵 getattr 探测后调用)。"""
+        await self._client.send_photo(reply.token.get("chat_id") or reply.user_id, photo, caption)
+
     @staticmethod
     async def _sleep(stop: asyncio.Event, seconds: float) -> None:
         with contextlib.suppress(TimeoutError):

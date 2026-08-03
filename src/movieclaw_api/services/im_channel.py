@@ -476,8 +476,8 @@ class ImChannelService:
     # ------------------------------------------------------------------
     # 主动推送
     # ------------------------------------------------------------------
-    async def push_text(self, text: str) -> int:
-        """把一条文本推给所有已绑定且在运行的账号;返回送达队列的账号数。"""
+    async def push_text(self, text: str, photo: bytes | None = None) -> int:
+        """把一条文本(可附图)推给所有已绑定且在运行的账号;返回送达队列的账号数。"""
         count = 0
         # 快照迭代:推送中途账号凭据失效/解绑会并发修改地址簿,直接迭代会炸
         for key, reply in list(self._push_targets.items()):
@@ -485,7 +485,9 @@ class ImChannelService:
             dispatcher = self.manager.get_dispatcher(channel_id, account_id)
             if dispatcher is None:
                 continue
-            await dispatcher.push_outbound(OutboundEnvelope(reply=reply, text=text, origin="push"))
+            await dispatcher.push_outbound(
+                OutboundEnvelope(reply=reply, text=text, origin="push", photo=photo)
+            )
             count += 1
         return count
 
