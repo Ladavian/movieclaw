@@ -9,6 +9,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from types import SimpleNamespace
 
 import pytest
@@ -50,10 +51,11 @@ async def db(tmp_path, monkeypatch):
     get_settings.cache_clear()
     init_db(get_settings().database_url, echo=False)
     await run_migrations()
-    # 每个测试独立的静默观察表 + 立即落定的静默窗口（两次巡检即可导入：
-    # 第一轮记录指纹，第二轮确认稳定）；下载器概览缓存清空（默认无下载器
-    # → 权威信号缺席 → 走启发式路径）
+    # 每个测试独立的静默观察表/挂起表 + 立即落定的静默窗口（两次巡检即可
+    # 导入：第一轮记录指纹，第二轮确认稳定）；下载器概览缓存清空（默认无
+    # 下载器 → 权威信号缺席 → 走启发式路径）
     monkeypatch.setattr(ingest_mod, "_stability", {})
+    monkeypatch.setattr(ingest_mod, "_deferred", {})
     monkeypatch.setattr(ingest_mod, "QUIET_SECONDS", 0)
     monkeypatch.setattr(ingest_mod, "_briefs_cache", (float("-inf"), None))
     yield get_database()
@@ -361,16 +363,19 @@ async def test_downloader_signal_is_authoritative(db, tmp_path, monkeypatch):
     entry.mkdir()
     (entry / "movie.mkv").write_bytes(b"video")
 
-    # 下载器说没完成：静默窗口为 0 也不能导入（暂停种子的根治场景）
+    # 下载器说没完成：静默窗口为 0 也不能导入（暂停种子的根治场景）；
+    # 条目须进入挂起表——完成瞬间 API 慢半拍时全靠它被轮询/兜底接住（回归）
     await _sweep_twice(db, library_id, watch)
     await _sweep_twice(db, library_id, watch)
     assert not (root / "某电影 (2020)").exists()
+    assert str(entry) in ingest_mod._deferred
 
-    # 下载器确认完成：无需静默等待，单轮巡检立即导入
+    # 下载器确认完成：无需静默等待，单轮巡检立即导入，挂起记录清除
     brief.completed = True
     library = await _get_library(db, library_id)
     await ingest_mod._sweep_dir(_fixed_rule(watch, library_id=library_id), library)
     assert (root / "某电影 (2020)" / "某电影 (2020).mkv").read_bytes() == b"video"
+    assert str(entry) not in ingest_mod._deferred
 
 
 @pytest.mark.asyncio
@@ -506,6 +511,84 @@ async def test_fallback_only_sweeps_unwatched_dirs(db, tmp_path, monkeypatch):
 
     await ingest_mod.ingest_tick()
     assert swept == [str(watch2)]
+
+
+@pytest.mark.asyncio
+async def test_fallback_sweeps_watched_dir_with_pending_entries(db, tmp_path, monkeypatch):
+    """回归：被监听目录里还有等待中的条目时，兜底巡检不再跳过它。
+
+    线上实证 bug：下载完成瞬间下载器 API 仍报「未完成」→ 条目被挂起后
+    无人唤醒（无新事件、静默自检挂不上、兜底又一刀切跳过被监听目录），
+    入库延迟 1 小时+ 且全程无告警。兜底巡检是自检链死亡后的最后保险。
+    """
+    root = tmp_path / "movies"
+    watch1, watch2 = tmp_path / "watch1", tmp_path / "watch2"
+    watch1.mkdir()
+    watch2.mkdir()
+    library_id = await _make_library(db, kind=MediaKind.MOVIE, root=root)
+    await _make_rule(db, library_id=library_id, source=watch1)
+    await _make_rule(db, library_id=library_id, source=watch2)
+
+    swept: list[str] = []
+
+    async def record_sweep(rule, library):
+        swept.append(rule.source_path)
+
+    monkeypatch.setattr(ingest_mod, "_sweep_dir", record_sweep)
+
+    class _StubWatcher:
+        """两个目录都在监听的假观察者。"""
+
+        def watched_keys(self):
+            return frozenset({str(watch1), str(watch2)})
+
+        async def refresh_watches(self):
+            pass
+
+    monkeypatch.setattr(ingest_mod, "_watcher", _StubWatcher())
+    # watch1 里有一个挂起条目（下载器报未完成）；watch2 没有任何等待
+    ingest_mod._deferred[str(watch1 / "Some.Movie.2020")] = 0.0
+
+    await ingest_mod.ingest_tick()
+    assert swept == [str(watch1)]
+
+
+@pytest.mark.asyncio
+async def test_deferred_recheck_polls_api_and_wakes_on_flip(db, tmp_path, monkeypatch):
+    """挂起条目的状态轮询自检：种子未完成时只查 API 重挂下一轮（不触发
+    巡检）；翻转成完成后立即唤醒对应目录的巡检。"""
+    from movieclaw_downloader import TorrentBrief
+
+    watch = tmp_path / "watch"
+    watch.mkdir()
+    brief = TorrentBrief(name="Some.Movie.2020", content_name="Some.Movie.2020", completed=False)
+
+    async def briefs():
+        return [brief]
+
+    monkeypatch.setattr(ingest_mod, "_downloader_briefs", briefs)
+    monkeypatch.setattr(ingest_mod, "DEFERRED_POLL_SECONDS", 0.01)
+    ingest_mod._deferred[str(watch / "Some.Movie.2020")] = 0.0
+
+    watcher = ingest_mod.IngestWatcher()
+    try:
+        watcher._arm_recheck(str(watch))
+        await asyncio.sleep(0.1)
+        assert watcher._queue.empty()  # 未翻转：不巡检，持续重挂
+        brief.completed = True
+        await asyncio.sleep(0.1)
+        assert watcher._queue.get_nowait() == str(watch)  # 翻转：唤醒巡检
+    finally:
+        for task in watcher._rechecks.values():
+            task.cancel()
+
+
+def test_ingest_event_filter_ignores_read_only_events():
+    """只读事件（做种上传/ffprobe 读文件）不触发巡检；写类事件放行。"""
+    assert not ingest_mod._is_ingest_relevant(SimpleNamespace(event_type="opened"))
+    assert not ingest_mod._is_ingest_relevant(SimpleNamespace(event_type="closed_no_write"))
+    for kind in ("created", "modified", "moved", "deleted", "closed"):
+        assert ingest_mod._is_ingest_relevant(SimpleNamespace(event_type=kind))
 
 
 @pytest.mark.asyncio

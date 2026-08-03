@@ -49,15 +49,24 @@
 触发机制（事件驱动，尽量不主动扫——监听目录里的保种源会永远留着，
 主动全量 stat 会让 NAS 磁盘永远无法休眠）：
 - 正常路径：``IngestWatcher`` 对监听目录挂 watchdog，有事件才去抖巡检
-  对应目录；下载写入持续产生事件，事件停止本身就是静默的开端；
+  对应目录（只读事件不算：做种上传/ffprobe 读文件不改变结论，见
+  ``_is_ingest_relevant``）；下载写入持续产生事件，事件停止本身就是
+  静默的开端；
 - 静默到点自检：事件停了之后没人会再叫醒我们，每轮巡检后若仍有条目在
   等静默窗口，按最近到期时间挂一次性自检，全部落定即归零；
+- 下载器状态轮询：被权威信号判为「未完成」的条目记入挂起表——完成的
+  一瞬 fs 事件已停、下载器 API 又慢半拍（最后分片校验完 progress 才翻 1，
+  概览另有短缓存），事件路径必然错过这次翻转。自检对挂起条目先做纯 API
+  核对（不碰磁盘，暂停的种子可无限期挂着不扰磁盘休眠），翻转成完成才
+  巡检入库；
 - 唯一的主动扫：目录**初次纳入监听**时补扫该目录一次——监听建立之前
   完成的下载（停机期间/目录刚就绪/刚加进配置）不会再产生事件，只有
   这一次能接住；之后该目录全靠事件驱动；
-- 兜底：每小时重建一次失效监听，并只巡检**监听覆盖不到**的目录
+- 兜底：每小时重建一次失效监听，并巡检**监听覆盖不到**的目录
   （目录不存在/watchdog 缺失/挂载不产生 fs 事件）；正被实时监听的目录
-  绝不重复主动扫。
+  只在仍有挂起/待静默条目时纳入巡检（自检链异常死亡的最后保险，
+  否则条目会无限期静默——线上实证过入库延迟 1 小时+且无告警），
+  其余情况绝不重复主动扫。
 
 幂等与安全：
 - 源文件**永不改动**：硬链保种零占用（需与主根同盘），复制适合跨盘；
@@ -123,6 +132,8 @@ logger = logging.getLogger("movieclaw_api.library_ingest")
 FALLBACK_SWEEP_SECONDS = 3600
 # 静默窗口：指纹连续稳定 5 分钟才认为下载落定（写入中 mtime 持续变化）
 QUIET_SECONDS = 300
+# 挂起条目（下载器报未完成）的状态轮询节奏：纯 API 核对，不产生磁盘 IO
+DEFERRED_POLL_SECONDS = 300
 # 失败条目的重试退避：指纹没变化时每小时才重试一次（避免反复打 TMDB）
 FAILED_RETRY_SECONDS = 3600
 # 下载器种子概览的缓存：一轮事件风暴中的多个目录巡检共享一次 API 调用
@@ -134,6 +145,11 @@ _IGNORE_MARKERS = ("sample",)
 # 进程内的静默观察：条目路径 -> (指纹, 首次见到该指纹的单调时钟)。
 # 重启丢失只是重新等一个静默窗口，无需持久化
 _stability: dict[str, tuple[str, float]] = {}
+# 进程内的挂起表：被下载器权威信号判为「未完成」的条目路径 -> 首次挂起的
+# 单调时钟。挂起条目由状态轮询自检 + 每小时兜底巡检共同照看——绝不能
+# 「弹出即失忆」：完成瞬间 API 常慢半拍，误判一次就再没有事件叫醒它了。
+# 重启丢失无妨：启动时新纳入监听的目录会补扫一次，条目重新入表
+_deferred: dict[str, float] = {}
 # 巡检串行锁：事件驱动与兜底巡检可能同时到达同一目录，串行化防同条目双处理
 _sweep_lock = asyncio.Lock()
 # 下载器种子概览缓存：(取样时刻, 概览列表或 None=不可用)
@@ -228,8 +244,9 @@ async def _load_rules() -> list[tuple[ImportWatch, Library | None]]:
     trigger_type=TriggerType.INTERVAL,
     interval_seconds=FALLBACK_SWEEP_SECONDS,
     description=(
-        "低频兜底：重建失效的目录监听，并巡检监听覆盖不到的源目录"
-        "（正在被实时监听的目录由事件驱动，不主动扫）。"
+        "低频兜底：重建失效的目录监听，并巡检监听覆盖不到的源目录；"
+        "被实时监听的目录只在仍有等待中的条目（等静默窗口/等下载器完成）时"
+        "纳入巡检，其余由事件驱动、不主动扫。"
     ),
 )
 async def ingest_tick() -> None:
@@ -241,8 +258,8 @@ async def ingest_tick() -> None:
     watched = watcher.watched_keys() if watcher is not None else frozenset()
 
     for rule, library in await _load_rules():
-        if rule.source_path in watched:
-            continue  # watchdog 在实时盯着：事件路径负责，不重复主动扫
+        if rule.source_path in watched and not _has_pending(rule.source_path):
+            continue  # watchdog 在实时盯着且没有等待中的条目：事件路径负责
         try:
             await _sweep_dir(rule, library)
         except Exception:  # noqa: BLE001 -- 单目录失败不拖垮整轮
@@ -251,6 +268,18 @@ async def ingest_tick() -> None:
                 rule_target_label(rule, library.name if library else None),
                 rule.source_path,
             )
+
+
+def _has_pending(source_path: str) -> bool:
+    """该源目录下是否还有等待中的条目（等静默窗口 / 等下载器状态翻转）。
+
+    兜底巡检对这类目录不再跳过——这是自检链意外死亡时的最后一道保险：
+    目录里有货没人管时兜底必须看得见，最坏一小时后条目仍会被接住。
+    """
+    prefix = source_path.rstrip("/") + "/"
+    return any(p.startswith(prefix) for p in _stability) or any(
+        p.startswith(prefix) for p in _deferred
+    )
 
 
 async def _sweep_dir(rule: ImportWatch, library: Library | None) -> None:
@@ -280,11 +309,13 @@ async def _sweep_dir(rule: ImportWatch, library: Library | None) -> None:
                 await _process_entry(rule, library, root, entry, briefs)
             except Exception:  # noqa: BLE001 -- 单条目失败不断整轮
                 logger.exception("处理监听条目失败：%s", entry)
-        # 条目从监听目录消失（用户删源）后清掉它的静默观察，防字典无界增长；
-        # 它的失败告警（若有）也一并熄灭——源没了，问题就不存在了
+        # 条目从监听目录消失（用户删源）后清掉它的静默观察与挂起记录，
+        # 防字典无界增长；它的失败告警（若有）也一并熄灭——源没了，问题
+        # 就不存在了
         prefix = str(root).rstrip("/") + "/"
-        for key in [k for k in _stability if k.startswith(prefix) and k not in seen]:
-            _stability.pop(key, None)
+        for table in (_stability, _deferred):
+            for key in [k for k in table if k.startswith(prefix) and k not in seen]:
+                table.pop(key, None)
         from movieclaw_api.services.system_notice import resolve_notices
 
         db = get_database()
@@ -293,6 +324,12 @@ async def _sweep_dir(rule: ImportWatch, library: Library | None) -> None:
             # 取代：见到即全部熄灭，不管条目还在不在
             await resolve_notices(session, prefix=f"ingest:{prefix}")
             await refresh_source_notice(session, rule.source_path, present=seen)
+    # 巡检收尾必挂自检：仍有条目在等静默窗口/等下载器翻转时，保证有人
+    # 回来看——无论这轮巡检由事件、自检还是兜底触发（集中在此处挂，
+    # 任何一条触发路径都不会漏）
+    watcher = get_ingest_watcher()
+    if watcher is not None:
+        watcher._arm_recheck(rule.source_path)
 
 
 async def _baseline_existing(
@@ -444,16 +481,52 @@ def _torrent_verdict(matches: list) -> str | None:
     return "complete" if all(b.completed for b in matches) else "downloading"
 
 
+async def _deferred_flipped(prefix: str) -> bool:
+    """挂起条目（下载器报未完成）是否值得重新巡检。纯 API 核对，零磁盘 IO。
+
+    任一条目的种子翻转成完成、或从下载器消失（用户删了任务 → 退回启发式
+    检测）、或下载器整体不可达（权威信号缺席 → 同样退回启发式）都算翻转
+    ——巡检自会走完整判定链得出结论，这里只回答"要不要去巡检"。
+    """
+    paths = [p for p in _deferred if p.startswith(prefix)]
+    if not paths:
+        return False
+    briefs = await _downloader_briefs()
+    if briefs is None:
+        return True
+    return any(
+        _torrent_verdict(_match_briefs(Path(p).name, briefs)) != "downloading" for p in paths
+    )
+
+
 async def _process_entry(
     rule: ImportWatch, library: Library | None, watch_root: Path, entry: Path, briefs: list | None
 ) -> None:
     path_str = str(entry)
-    snap = await asyncio.to_thread(_snapshot, entry)
-    # 权威信号优先：能匹配到下载器种子时以下载器状态为准；标记文件与权威
-    # 信号矛盾（说完成却还有 .!qB 等）说明匹配可疑，从严按下载中处理
+    # 权威信号优先：能匹配到下载器种子时以下载器状态为准。报未完成的条目
+    # 记入挂起表后返回（不做磁盘快照，状态轮询期间零磁盘 IO）——绝不能
+    # 一忘了之：下载完成的一瞬 fs 事件已经停了，下载器 API 又常慢半拍
+    # （最后分片校验完 progress 才翻 1，概览另有短缓存），此处若不留痕，
+    # 事件/自检/兜底三条触发路径会同时失灵，条目无限期卡住且无告警
+    # （线上实证 bug）。挂起表由状态轮询自检 + 兜底巡检共同照看
     matches = _match_briefs(entry.name, briefs)
     verdict = _torrent_verdict(matches)
-    if snap.has_marker or verdict == "downloading":
+    if verdict == "downloading":
+        _stability.pop(path_str, None)
+        if path_str not in _deferred:
+            _deferred[path_str] = time.monotonic()
+            logger.info(
+                "「%s」匹配到未完成的下载器种子，挂起等待其完成（约每 %d 秒核对一次状态）",
+                entry.name,
+                DEFERRED_POLL_SECONDS,
+            )
+        return
+    _deferred.pop(path_str, None)
+
+    snap = await asyncio.to_thread(_snapshot, entry)
+    # 标记文件与权威信号矛盾（说完成却还有 .!qB 等）说明匹配可疑，从严按
+    # 下载中处理；标记消失（下载器改名/删除它）必产生文件事件，无需挂起
+    if snap.has_marker:
         _stability.pop(path_str, None)
         return
 
@@ -944,6 +1017,7 @@ async def _save_record(
             record.library_id = library.id  # auto 条目此前失败无归属，路由成功后补上
     await session.commit()
     _stability.pop(entry_path, None)
+    _deferred.pop(entry_path, None)
     # 全局红灯只留给环境故障（failed），且由 refresh_source_notice 按源目录
     # 聚合（巡检收尾/人工拍板后刷新）——识别不出（pending）不是错误，
     # 清单上的数字承载它，不在这里刷屏
@@ -1106,13 +1180,29 @@ _EVENT_QUIET_SECONDS = 3.0
 _EVENT_MAX_WAIT_SECONDS = 30.0
 
 
+def _is_ingest_relevant(event) -> bool:  # noqa: ANN001
+    """该文件事件是否值得触发巡检（观察者线程调用，只做纯判定）。
+
+    只读事件（打开 / 未写关闭）忽略：做种上传、入库前的 ffprobe 终检、
+    外部工具浏览都会**读**监听目录里的文件，读不改变条目指纹与完成结论，
+    触发巡检只是无谓的磁盘扫描和下载器查询（库根监听在同一问题上吃过
+    无限自激的亏，见 library/watch.py 的 _is_relevant_event）。其余事件
+    （增删改/移动，含目录与标记文件）都放行——完成检测靠条目全树指纹，
+    任何写动作都可能改变结论，不做扩展名过滤。
+    """
+    from watchdog.events import EVENT_TYPE_CLOSED_NO_WRITE, EVENT_TYPE_OPENED
+
+    return event.event_type not in (EVENT_TYPE_OPENED, EVENT_TYPE_CLOSED_NO_WRITE)
+
+
 class IngestWatcher:
     """下载监听目录的文件事件观察者。
 
     事件驱动是本功能的既定形态（不做常驻轮询）：下载写入持续产生 fs
     事件，事件停止即静默的开端；没有下载活动时零开销，NAS 磁盘可以休眠。
-    静默窗口的"到点检查"没有事件会叫醒——每轮巡检后若仍有条目在等静默，
-    按最近到期时间挂一个一次性自检任务，条目全部落定后自然归零。
+    静默窗口的"到点检查"没有事件会叫醒——每轮巡检后若仍有条目在等静默
+    或在挂起表里等下载器完成，挂一个一次性自检任务（前者按最近到期时间，
+    后者按固定轮询节奏且醒来先纯 API 核对、不碰磁盘），全部落定后归零。
     """
 
     def __init__(self) -> None:
@@ -1202,7 +1292,8 @@ class IngestWatcher:
                 self._key = source_path
 
             def on_any_event(self, event) -> None:  # noqa: ANN001
-                watcher._enqueue_threadsafe(self._key)
+                if _is_ingest_relevant(event):
+                    watcher._enqueue_threadsafe(self._key)
 
         self._stop_observer()
         observer = Observer()
@@ -1269,24 +1360,43 @@ class IngestWatcher:
         if pair is None:
             return  # 规则已删除（refresh_watches 稍后会拆掉监听）
         rule, library = pair
-        await _sweep_dir(rule, library)
-        self._arm_recheck(source_path)
+        await _sweep_dir(rule, library)  # 收尾会重挂自检（_sweep_dir 统一负责）
 
     def _arm_recheck(self, source_path: str) -> None:
-        """仍有条目在等静默窗口时，按最近到期时间挂一次性自检。"""
+        """仍有条目在等静默窗口或等下载器状态翻转时，挂一次性自检。
+
+        静默窗口按最近到期时间挂；只剩挂起条目时按固定节奏轮询——自检
+        醒来先纯 API 核对状态（见 _recheck_later），不打扰磁盘休眠。
+        """
         prefix = source_path.rstrip("/") + "/"
-        pending = [since for path, (_fp, since) in _stability.items() if path.startswith(prefix)]
-        if not pending:
+        quiet = [since for path, (_fp, since) in _stability.items() if path.startswith(prefix)]
+        if not quiet and not any(path.startswith(prefix) for path in _deferred):
             return
         existing = self._rechecks.get(source_path)
         if existing is not None and not existing.done():
             return
-        delay = min(pending) + QUIET_SECONDS - time.monotonic() + 1.0
-        delay = max(5.0, min(delay, QUIET_SECONDS + 5.0))
+        if quiet:
+            delay = min(quiet) + QUIET_SECONDS - time.monotonic() + 1.0
+            delay = max(5.0, min(delay, QUIET_SECONDS + 5.0))
+        else:
+            delay = DEFERRED_POLL_SECONDS
         self._rechecks[source_path] = asyncio.create_task(self._recheck_later(source_path, delay))
 
     async def _recheck_later(self, key: str, delay: float) -> None:
         await asyncio.sleep(delay)
+        prefix = key.rstrip("/") + "/"
+        if not any(path.startswith(prefix) for path in _stability):
+            # 只剩挂起条目：先纯 API 核对（零磁盘 IO）。种子仍未完成就只
+            # 重挂下一轮——暂停的种子可以无限期挂着，NAS 磁盘照常休眠
+            try:
+                flipped = await _deferred_flipped(prefix)
+            except Exception:  # noqa: BLE001 -- 核对失败就去巡检，交给巡检的降级链
+                logger.exception("挂起条目的下载器状态核对失败，转为巡检：%s", key)
+                flipped = True
+            if not flipped:
+                self._rechecks.pop(key, None)
+                self._arm_recheck(key)
+                return
         self._queue.put_nowait(key)
 
 

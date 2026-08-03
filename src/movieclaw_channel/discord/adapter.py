@@ -64,6 +64,12 @@ class DiscordAdapter:
         while not stop.is_set():
             try:
                 await self._connect_once(ctx, stop)
+                # op 7/9 等服务端指示的正常返回也要退避:Identify 有严格限频
+                # (官方要求 5 秒 1 次),无延迟紧循环重连会被 Gateway 拉黑
+                if not stop.is_set():
+                    delay = 1.0 + random.random() * 4.0
+                    with contextlib.suppress(TimeoutError):
+                        await asyncio.wait_for(stop.wait(), timeout=delay)
             except ChannelAuthError:
                 raise
             except Exception as exc:  # noqa: BLE001 -- 网络抖动统一退避重连
@@ -75,12 +81,8 @@ class DiscordAdapter:
     async def _connect_once(self, ctx: ChannelContext, stop: asyncio.Event) -> None:
         """一次完整的 Gateway 会话:连接 → Identify → 收事件直到断开或 stop。"""
         proxy = resolve_proxy_url("discord")
-        try:
-            ws_ctx = connect(_GATEWAY_URL, proxy=proxy, open_timeout=15, close_timeout=5)
-        except TypeError:
-            # websockets < 14 无 proxy 参数;直连兜底(用户配了代理时会连不上,
-            # 日志已能定位到这里)
-            ws_ctx = connect(_GATEWAY_URL, open_timeout=15, close_timeout=5)
+        # proxy 参数要求 websockets>=14,已在 pyproject 显式声明
+        ws_ctx = connect(_GATEWAY_URL, proxy=proxy, open_timeout=15, close_timeout=5)
 
         async with ws_ctx as ws:
             heartbeat_task: asyncio.Task[None] | None = None

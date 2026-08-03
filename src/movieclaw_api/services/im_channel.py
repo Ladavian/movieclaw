@@ -12,11 +12,12 @@ Agent 装配与微信同款红线:受限工具集(仅 mclaw 产品操作),不开
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import secrets
 import time
 import uuid
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Coroutine
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal
@@ -54,6 +55,10 @@ _IM_MAX_STEPS = 40
 _ACK_TEXT = "思考中💭"
 #: 配对码有效期
 _PAIR_TTL_S = 10 * 60
+#: 配对码最大尝试次数:6 位数字码 + 配对期对所有人放行,不设上限就能被暴力猜码
+_PAIR_MAX_ATTEMPTS = 5
+#: 终态 challenge 在内存里的留存期(前端轮询还要能读到终态,不能立即删)
+_CHALLENGE_LINGER_S = 10 * 60
 
 
 # ---------------------------------------------------------------------------
@@ -121,6 +126,8 @@ class PairChallenge:
     bot_name: str
     status: Literal["pending", "confirmed", "expired", "failed"] = "pending"
     message: str = ""
+    #: 已发生的错误配对码次数,达到 _PAIR_MAX_ATTEMPTS 即作废本次绑定
+    attempts: int = 0
     expires_at: float = field(default_factory=lambda: time.monotonic() + _PAIR_TTL_S)
 
 
@@ -133,8 +140,13 @@ class ImChannelService:
         self._challenges: dict[str, PairChallenge] = {}
         #: 配对期临时凭据:challenge_id → token(确认后才落库)
         self._pending_tokens: dict[str, str] = {}
+        #: 配对期临时客户端:challenge_id → client(超时清理时按身份比对,
+        #: 避免误停已被确认流程/新一轮绑定接管的账号)
+        self._pairing_clients: dict[str, Any] = {}
         #: 主动推送地址簿:"channel:account_id" → ReplyContext(绑定用户)
         self._push_targets: dict[str, ReplyContext] = {}
+        #: 后台任务(配对超时守护/绑定热切换):持有引用防 GC,异常统一落日志
+        self._bg_tasks: set[asyncio.Task[None]] = set()
 
     # ------------------------------------------------------------------
     # 生命周期
@@ -145,8 +157,17 @@ class ImChannelService:
             rows: list[tuple[ChannelAccount, str]] = []
             for channel_id in IM_CHANNEL_IDS:
                 for row in await repo.list_by_channel(channel_id):
-                    if row.status == ChannelAccountStatus.ACTIVE:
+                    if row.status != ChannelAccountStatus.ACTIVE:
+                        continue
+                    try:
                         rows.append((row, ChannelAccountRepository.decrypted_token(row)))
+                    except Exception:
+                        # 单条坏记录(如密钥更换后的旧凭据)不能拖垮整个应用启动
+                        logger.exception(
+                            "IM 账号凭据解密失败,已跳过 channel=%s account=%s",
+                            row.channel_id,
+                            row.account_id,
+                        )
         for row, token in rows:
             try:
                 await self._start_account(row, token)
@@ -158,11 +179,30 @@ class ImChannelService:
             logger.info("IM 通道已启动 %d 个账号", len(rows))
 
     async def stop(self) -> None:
+        for task in list(self._bg_tasks):
+            task.cancel()
+        for task in list(self._bg_tasks):
+            with contextlib.suppress(asyncio.CancelledError, Exception):
+                await task
+        self._bg_tasks.clear()
         await self.manager.close()
         for client in self._clients.values():
             await client.aclose()
         self._clients.clear()
+        self._pairing_clients.clear()
         self._push_targets.clear()
+
+    def _spawn(self, coro: Coroutine[Any, Any, None], what: str) -> None:
+        """起后台任务并持有引用:防 GC 提前回收,异常落日志而不是无声丢失。"""
+        task = asyncio.get_running_loop().create_task(coro)
+        self._bg_tasks.add(task)
+
+        def _done(t: asyncio.Task[None]) -> None:
+            self._bg_tasks.discard(t)
+            if not t.cancelled() and t.exception() is not None:
+                logger.error("%s 后台任务失败", what, exc_info=t.exception())
+
+        task.add_done_callback(_done)
 
     # ------------------------------------------------------------------
     # 账号装配
@@ -261,6 +301,7 @@ class ImChannelService:
             await self.manager.stop_account(channel_id, bot_id)
             await old.aclose()
         self._clients[key] = client
+        self._pairing_clients[challenge.challenge_id] = client
 
         async def pair_agent(
             msg: InboundMessage, emit: Callable[[str], Awaitable[None]]
@@ -273,6 +314,14 @@ class ImChannelService:
                 ch.message = "配对码已过期,请重新发起绑定"
                 return
             if msg.text.strip() != ch.pair_code:
+                ch.attempts += 1
+                if ch.attempts >= _PAIR_MAX_ATTEMPTS:
+                    ch.status = "failed"
+                    ch.message = "配对码错误次数过多,绑定已作废,请重新发起"
+                    await emit("配对码错误次数过多,本次绑定已作废。请回面板重新发起绑定。")
+                    # 当前正在该账号的会话 worker 里,停账号须走后台任务避免自锁
+                    self._spawn(self._teardown_pairing(ch), "配对作废清理")
+                    return
                 await emit("配对码不正确。请发送面板上显示的 6 位数字完成绑定。")
                 return
             await self._confirm_binding(ch, msg)
@@ -287,7 +336,65 @@ class ImChannelService:
             save_cursor=self._make_cursor_saver(bot_id),
             on_auth_error=self._make_auth_error_handler(channel_id),
         )
+        self._spawn(self._challenge_watchdog(challenge), "配对超时守护")
         return challenge
+
+    async def _challenge_watchdog(self, challenge: PairChallenge) -> None:
+        """配对超时守护:到期停临时账号(必要时恢复原正式账号),留存期后清内存。
+
+        无论过期由谁先发现(本任务/轮询/入站消息),清理都收口在这里执行一次;
+        已确认或被新一轮绑定接管的场景由 ``_teardown_pairing`` 的身份比对天然跳过。
+        """
+        await asyncio.sleep(max(0.0, challenge.expires_at - time.monotonic()))
+        if challenge.status == "pending":
+            challenge.status = "expired"
+            challenge.message = "配对码已过期,请重新发起绑定"
+        await self._teardown_pairing(challenge)
+        # 终态留存一段时间供前端轮询读取,然后清内存(否则 challenge 只增不减)
+        await asyncio.sleep(_CHALLENGE_LINGER_S)
+        self._challenges.pop(challenge.challenge_id, None)
+
+    async def _teardown_pairing(self, challenge: PairChallenge) -> None:
+        """停掉配对期临时账号;若该 bot 之前有正式绑定,恢复其运行。
+
+        幂等:确认流程或新一轮绑定已接管该 bot(client 被替换)时不做任何事。
+        不恢复的话,对已激活 bot 重新发起绑定又中途放弃,原来的对话链路会
+        一直停留在「只认配对码」的临时模式,直到进程重启。
+        """
+        self._pending_tokens.pop(challenge.challenge_id, None)
+        pairing_client = self._pairing_clients.pop(challenge.challenge_id, None)
+        key = self._key(challenge.channel_id, challenge.bot_id)
+        if pairing_client is None or self._clients.get(key) is not pairing_client:
+            return
+        await self.manager.stop_account(challenge.channel_id, challenge.bot_id)
+        self._clients.pop(key, None)
+        await pairing_client.aclose()
+
+        async with get_database().session() as session:
+            row = await ChannelAccountRepository(session).get(challenge.bot_id)
+            token = ""
+            if row is not None and row.channel_id == challenge.channel_id:
+                if row.status == ChannelAccountStatus.ACTIVE:
+                    try:
+                        token = ChannelAccountRepository.decrypted_token(row)
+                    except Exception:
+                        logger.exception("恢复原绑定失败:凭据解密错误 account=%s", row.account_id)
+            else:
+                row = None
+        if row is not None and token:
+            try:
+                await self._start_account(row, token)
+                logger.info(
+                    "配对未完成,已恢复原正式账号 channel=%s bot=%s",
+                    challenge.channel_id,
+                    challenge.bot_id,
+                )
+            except Exception:
+                logger.exception(
+                    "配对未完成后恢复原账号失败 channel=%s account=%s",
+                    challenge.channel_id,
+                    challenge.bot_id,
+                )
 
     async def _confirm_binding(self, challenge: PairChallenge, msg: InboundMessage) -> None:
         """配对码命中:凭据落库、发码人即白名单,重启为正式账号。"""
@@ -312,21 +419,28 @@ class ImChannelService:
             challenge.bot_id,
             msg.user_id,
         )
+        # 配对客户端交由 _start_account 热替换,超时守护不再需要处理它
+        self._pairing_clients.pop(challenge.challenge_id, None)
         # 从配对模式切到正式模式(热替换;当前正在配对回调里,起后台任务避免自锁)
-        asyncio.get_running_loop().create_task(self._start_account(row, token))
+        self._spawn(self._start_account(row, token), "绑定确认后的通道热切换")
 
     def get_challenge(self, challenge_id: str) -> PairChallenge | None:
         ch = self._challenges.get(challenge_id)
         if ch is not None and ch.status == "pending" and time.monotonic() > ch.expires_at:
+            # 只翻状态供前端展示;临时账号的停止与恢复统一由超时守护任务执行
             ch.status = "expired"
             ch.message = "配对码已过期,请重新发起绑定"
-            self._pending_tokens.pop(challenge_id, None)
         return ch
 
     # ------------------------------------------------------------------
     # 账号管理
     # ------------------------------------------------------------------
     async def unbind(self, channel_id: str, account_id: str) -> bool:
+        async with get_database().session() as session:
+            row = await ChannelAccountRepository(session).get(account_id)
+        # 只删本通道的账号:防止经 im 路由误删其他通道(如微信)的绑定
+        if row is None or row.channel_id != channel_id:
+            return False
         await self.manager.stop_account(channel_id, account_id)
         key = self._key(channel_id, account_id)
         self._push_targets.pop(key, None)
@@ -342,7 +456,8 @@ class ImChannelService:
     async def push_text(self, text: str) -> int:
         """把一条文本推给所有已绑定且在运行的账号;返回送达队列的账号数。"""
         count = 0
-        for key, reply in self._push_targets.items():
+        # 快照迭代:推送中途账号凭据失效/解绑会并发修改地址簿,直接迭代会炸
+        for key, reply in list(self._push_targets.items()):
             channel_id, account_id = key.split(":", 1)
             dispatcher = self.manager.get_dispatcher(channel_id, account_id)
             if dispatcher is None:
