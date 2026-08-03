@@ -23,6 +23,7 @@ from movieclaw_jellyfin.catalog import (
     library_view_dto,
     list_libraries,
     load_bundles,
+    load_library_stats,
     movie_dto,
     season_dto,
     series_dto,
@@ -61,7 +62,8 @@ async def user_views(user_id: str | None = None) -> JSONResponse:
     ctx = await dto_context()
     async with get_database().session() as session:
         libraries = await list_libraries(session)
-    dtos = [library_view_dto(ctx, lib) for lib in libraries]
+        stats = await load_library_stats(session)
+    dtos = [library_view_dto(ctx, lib, stats.get(lib.id)) for lib in libraries]
     return JSONResponse(query_result(dtos, len(dtos)))
 
 
@@ -262,7 +264,10 @@ async def _query_items(request: Request) -> JSONResponse:
             if entries is None:
                 # 根级：返回视图列表
                 libraries = await list_libraries(session)
-                dtos = [library_view_dto(ctx, lib) for lib in libraries]
+                stats = await load_library_stats(session)
+                dtos = [
+                    library_view_dto(ctx, lib, stats.get(lib.id)) for lib in libraries
+                ]
                 return JSONResponse(query_result(dtos, len(dtos)))
 
     if exclude_types:
@@ -530,6 +535,53 @@ async def items_root(user_id: str | None = None) -> JSONResponse:
     )
 
 
+@router.get("/Items/Counts")
+async def items_counts(request: Request) -> JSONResponse:
+    """全服统计（LibraryController.cs:453，ItemCounts 的 12 个非可空计数）。
+
+    播放器的服务器/媒体库卡片用它显示"多少部电影、多少部剧"。"""
+    async with get_database().session() as session:
+        movie_ids = await item_ids_with_files(session, kind="movie")
+        tv_ids = await item_ids_with_files(session, kind="tv")
+        episode_count = 0
+        if tv_ids:
+            from sqlalchemy import select as sa_select
+
+            from movieclaw_db.models import LibraryFile
+
+            units = (
+                await session.execute(
+                    sa_select(
+                        LibraryFile.media_item_id,
+                        LibraryFile.season_number,
+                        LibraryFile.episode_number,
+                    )
+                    .where(
+                        LibraryFile.media_item_id.in_(tv_ids),
+                        LibraryFile.missing_since.is_(None),
+                    )
+                    .distinct()
+                )
+            ).all()
+            episode_count = len(units)
+    return JSONResponse(
+        {
+            "MovieCount": len(movie_ids),
+            "SeriesCount": len(tv_ids),
+            "EpisodeCount": episode_count,
+            "ArtistCount": 0,
+            "ProgramCount": 0,
+            "TrailerCount": 0,
+            "SongCount": 0,
+            "AlbumCount": 0,
+            "MusicVideoCount": 0,
+            "BoxSetCount": 0,
+            "BookCount": 0,
+            "ItemCount": len(movie_ids) + len(tv_ids) + episode_count,
+        }
+    )
+
+
 @router.get("/Items/Filters")
 @router.get("/Items/Filters2")
 async def items_filters(request: Request) -> JSONResponse:
@@ -560,7 +612,8 @@ async def get_item(request: Request, item_id: str, user_id: str | None = None) -
             library = await session.get(Library, ref.entity_id)
             if library is None:
                 raise not_found()
-            return JSONResponse(library_view_dto(ctx, library))
+            stats = await load_library_stats(session)
+            return JSONResponse(library_view_dto(ctx, library, stats.get(library.id)))
         bundles = await load_bundles(session, [ref.entity_id])
 
     bundle = bundles.get(ref.entity_id)

@@ -194,6 +194,76 @@ async def list_libraries(session: AsyncSession) -> list[Library]:
     return list((await session.execute(select(Library))).scalars())
 
 
+@dataclass
+class LibraryStats:
+    """库卡片素材：条目数与封面（播放器的库列表用）。"""
+
+    item_count: int = 0  # 顶层条目数（电影部数 / 剧集部数）
+    episode_count: int = 0
+    cover_asset: str | None = None  # 封面资产相对路径（最新入库条目的海报）
+
+
+async def load_library_stats(session: AsyncSession) -> dict[int, LibraryStats]:
+    """一次性算出全部库的条目数与封面。
+
+    封面策略：该库**最新入库**（文件 created_at 最大）且有本地海报资产的
+    条目的海报——库内容变化封面随之更新，与真实媒体服务器"自动生成库
+    封面"的体验对齐（我们不做拼贴图，选单张海报，简洁够用）。
+    """
+    stats: dict[int, LibraryStats] = {}
+    rows = (
+        await session.execute(
+            select(
+                LibraryFile.library_id,
+                LibraryFile.media_item_id,
+                LibraryFile.season_number,
+                LibraryFile.episode_number,
+                LibraryFile.created_at,
+            ).where(
+                LibraryFile.media_item_id.is_not(None),
+                LibraryFile.missing_since.is_(None),
+            )
+        )
+    ).all()
+    if not rows:
+        return stats
+
+    item_ids = {r.media_item_id for r in rows}
+    posters: dict[int, str] = {
+        m.media_item_id: m.poster_file
+        for m in (
+            await session.execute(
+                select(MediaMetadata).where(
+                    MediaMetadata.media_item_id.in_(item_ids),
+                    MediaMetadata.poster_file.is_not(None),
+                )
+            )
+        ).scalars()
+    }
+
+    per_lib_items: dict[int, set[int]] = {}
+    per_lib_units: dict[int, set[tuple[int, int, int]]] = {}
+    cover_candidates: dict[int, tuple] = {}
+    for r in rows:
+        per_lib_items.setdefault(r.library_id, set()).add(r.media_item_id)
+        per_lib_units.setdefault(r.library_id, set()).add(
+            (r.media_item_id, r.season_number, r.episode_number)
+        )
+        if r.media_item_id in posters:
+            best = cover_candidates.get(r.library_id)
+            if best is None or r.created_at > best[0]:
+                cover_candidates[r.library_id] = (r.created_at, r.media_item_id)
+
+    for lib_id, items in per_lib_items.items():
+        cover = cover_candidates.get(lib_id)
+        stats[lib_id] = LibraryStats(
+            item_count=len(items),
+            episode_count=len(per_lib_units[lib_id]),
+            cover_asset=posters.get(cover[1]) if cover else None,
+        )
+    return stats
+
+
 # ---------------------------------------------------------------------------
 # 图片 tag
 # ---------------------------------------------------------------------------
@@ -526,13 +596,26 @@ def episode_dto(
     return dto
 
 
-def library_view_dto(ctx: DtoContext, library: Library) -> dict[str, Any]:
+def library_view_dto(
+    ctx: DtoContext, library: Library, stats: LibraryStats | None = None
+) -> dict[str, Any]:
     dto = _common(ctx, library_guid(library.id), library.name, "CollectionFolder", "Unknown")
     dto["IsFolder"] = True
     dto["CollectionType"] = "movies" if library.kind == "movie" else "tvshows"
-    dto["ImageTags"] = {}
+    tags: dict[str, str] = {}
+    if stats and stats.cover_asset:
+        cover_tag = _asset_tag(ctx.assets_root, stats.cover_asset)
+        if cover_tag:
+            tags["Primary"] = cover_tag
+    dto["ImageTags"] = tags
     dto["BackdropImageTags"] = []
     dto["ParentId"] = root_guid()
+    if stats is not None:
+        # UserViews 是全字段语义：CollectionFolder 带 ChildCount（库卡片计数）
+        dto["ChildCount"] = stats.item_count
+        dto["RecursiveItemCount"] = (
+            stats.episode_count if library.kind == "tv" else stats.item_count
+        )
     # 库视图不做已看聚合（CollectionFolder.SupportsPlayedStatus=false）
     guid = library_guid(library.id)
     dto["UserData"] = {

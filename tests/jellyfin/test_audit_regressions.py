@@ -192,3 +192,42 @@ def test_default_audio_stream_prefers_default_flag(client: TestClient, seeded: d
         s for s in local["MediaStreams"] if s["Type"] == "Audio" and s["IsDefault"]
     )
     assert local["DefaultAudioStreamIndex"] == default_audio["Index"]
+
+
+def test_library_views_have_counts_and_cover(client: TestClient, seeded: dict) -> None:
+    """VidHub 实测缺陷：库卡片要有条目计数与封面（ChildCount + ImageTags.Primary）。"""
+    token = jf_login(client)
+    views = client.get("/UserViews", params={"ApiKey": token}).json()["Items"]
+    by_name = {v["Name"]: v for v in views}
+
+    movie_lib = by_name["电影"]
+    assert movie_lib["ChildCount"] == 1  # 一部电影
+    # 电影库封面 = 最新入库且有海报的条目（盗梦空间）的海报
+    assert movie_lib["ImageTags"].get("Primary")
+
+    tv_lib = by_name["剧集"]
+    assert tv_lib["ChildCount"] == 1  # 一部剧
+    assert tv_lib["RecursiveItemCount"] == 3  # 三集
+
+    # 封面图能真实拉取（图片接口对 LIBRARY GUID 解析同一封面）
+    resp = client.get(
+        f"/Items/{movie_lib['Id']}/Images/Primary",
+        params={"ApiKey": token, "tag": movie_lib["ImageTags"]["Primary"]},
+    )
+    assert resp.status_code == 200
+    assert resp.headers["content-type"].startswith("image/")
+
+
+def test_items_counts_endpoint(client: TestClient, seeded: dict) -> None:
+    """VidHub 实测缺陷：服务器卡片统计来自 GET /Items/Counts。"""
+    token = jf_login(client)
+    body = client.get("/Items/Counts", params={"ApiKey": token}).json()
+    assert body["MovieCount"] == 1
+    assert body["SeriesCount"] == 1
+    assert body["EpisodeCount"] == 3
+    # 12 个计数键全部出现（非可空 int 恒输出）
+    for key in (
+        "ArtistCount", "ProgramCount", "TrailerCount", "SongCount", "AlbumCount",
+        "MusicVideoCount", "BoxSetCount", "BookCount", "ItemCount",
+    ):
+        assert key in body

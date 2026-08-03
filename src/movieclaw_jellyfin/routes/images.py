@@ -35,7 +35,14 @@ async def _resolve_asset(
     itype = image_type.lower()
 
     if ref.kind == EntityKind.LIBRARY:
-        return None
+        if itype != "primary":
+            return None
+        # 库封面：与 library_view_dto 同一选择策略（最新入库条目的海报）
+        from movieclaw_jellyfin.catalog import load_library_stats
+
+        stats = await load_library_stats(session)
+        lib_stats = stats.get(ref.entity_id)
+        return lib_stats.cover_asset if lib_stats else None
 
     if ref.kind == EntityKind.ITEM:
         meta = (
