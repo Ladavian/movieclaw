@@ -5,8 +5,8 @@
 「AsyncOpenAI/Python x.y.z」。加 ``user_agent`` 让用户可覆盖：
 留空（NULL）保持 SDK 默认行为，与迁移前完全一致。
 
-Revision ID: a5b8d1f6c374
-Revises: f4a7c0e5b263
+Revision ID: b6c9e2a7d485
+Revises: a5b8d1f6c374
 Create Date: 2026-08-03 10:00:00.000000
 
 """
@@ -19,8 +19,8 @@ import sqlalchemy as sa
 from alembic import op
 
 # revision identifiers, used by Alembic.
-revision: str = "a5b8d1f6c374"
-down_revision: str | None = "f4a7c0e5b263"
+revision: str = "b6c9e2a7d485"
+down_revision: str | None = "a5b8d1f6c374"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
