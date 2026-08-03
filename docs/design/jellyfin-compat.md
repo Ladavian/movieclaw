@@ -465,7 +465,8 @@ Missing 条目，`DisplayMissingEpisodes=false` 与之呼应，Jellyfin 源码�
 - 库视图不做聚合（见 5.1）。
 
 **新表 `playback_state`**：`(media_item_id, season_number, episode_number)` 唯一
-（电影 (0,0) 哨兵，与 wanted/library_file 同约定），列：`position_ticks`、
+（电影 (0,0) 哨兵，与 wanted/library_file 同约定），列：**`position_ms`
+（毫秒——领域层不用 Jellyfin 的 ticks 方言，换算在协议边界做，见 8.5）**、
 `played`、`play_count`、`last_played_at`、`is_favorite`（收藏 P1 顺手做）。
 单用户不带 user 维度（真要多用户时加列即可向前兼容）。
 
@@ -479,7 +480,7 @@ Missing 条目，`DisplayMissingEpisodes=false` 与之呼应，Jellyfin 源码�
   （`"No season exists with Id ..."`/`"Series not found"`）。
 - `GET /UserItems/Resume` + legacy：服务端强制语义（控制器根本没有
   sortBy/recursive/filters 参数，客户端不能覆盖）——
-  **`IsResumable = position_ticks > 0`**（源码无 `NOT played` 条件；我们在
+  **`IsResumable = 播放位置 > 0`**（源码无 `NOT played` 条件；我们在
   标记已看时清零 position，语义即对齐），按 `last_played_at` 降序，
   Recursive，IsVirtualItem=false。支持 `mediaTypes`/`limit`/`startIndex`。
 - `GET /Shows/NextUp`：候选 = 有任意一集 `LastPlayedDate` 非空的剧，按各剧
@@ -777,8 +778,8 @@ Jellyfin 的一切 ID 都是 32 位 hex GUID；movieclaw 是整型主键 + 数�
 
 | 表 | 用途 | 结构 |
 |---|---|---|
-| `jellyfin_device` | 播放器设备 token | token(唯一)、client、device_name、**device_id(唯一，重登录覆盖换发)**、version、last_seen_at |
-| `playback_state` | 观看状态 | (media_item_id, season, episode) 唯一；position_ticks、played、play_count、last_played_at、is_favorite |
+| `jellyfin_device` | 播放器设备 token（协议层专属） | token(唯一)、client、device_name、**device_id(唯一，重登录覆盖换发)**、version、last_seen_at |
+| `playback_state` | 观看状态（领域层，协议无关） | (media_item_id, season, episode) 唯一；**position_ms**、played、play_count、last_played_at、is_favorite |
 
 纯增表迁移，可自由向前兼容；不动任何既有表。
 
@@ -814,6 +815,33 @@ Jellyfin 的一切 ID 都是 32 位 hex GUID；movieclaw 是整型主键 + 数�
   自动发现不可用不影响手动填地址连接。
 - 纯 Python 实现，无新增运行时依赖 → 不触发 `docker/runtime-version` bump；
   compose 模板/部署文档更新随本特性一并发布。
+
+### 8.5 领域层与协议层分离（为未来网页端播放预留，2026-08-03 用户提出）
+
+播放相关的底层能力**必须与 Jellyfin 协议解耦**，将来控制台自带网页播放器时
+直接复用，Jellyfin 层只是它的一层"翻译皮"：
+
+**领域层**（落 `movieclaw_media` 或独立 `movieclaw_playback`，协议无关）：
+
+1. **播放状态**：`playback_state` 表 + 读写服务。进度单位用**毫秒**
+   （`position_ms`），不用 ticks——ticks 是 Jellyfin 方言；
+2. **进度判定规则**：`record_playback_progress()` / `mark_played()` /
+   `mark_unplayed()` 实现第 7 节的阈值三分支（<5% 未开始 / >90% 已看 /
+   短片直接算看完 / 开始播放时 play_count+1）。这套本质是通行的 scrobble
+   语义，网页端播放器回报进度走**同一个函数**；
+3. **取流服务**：Range/206 文件服务、strm 解析与 302（含 File 协议拒绝的
+   安全条款）、MIME 表——纯函数/服务形态。网页 `<video>` 同样靠 Range
+   拖进度、同样吃 302；
+4. **字幕服务**：外挂字幕发现、srt→vtt 转换（网页播放器只认 vtt，正好
+   同一套）。
+
+**协议层**（`movieclaw_jellyfin`，只做翻译，未来网页端不碰）：GUID 编解码、
+PascalCase DTO、Authorization 头解析、DisplayTitle 拼装、ticks↔ms 换算、
+`jellyfin_device` 设备 token。
+
+未来网页端播放走业务接口（`/api/playback/*`，`success/data` 规范 + 整型
+id），调同一套领域服务——**不**让自家前端去消费 Jellyfin 兼容接口，两边
+各自演进互不牵连（如 Jellyfin 层将来跟进 10.11 行为变更，不波及播放页）。
 
 ## 9. 风险与对策
 
