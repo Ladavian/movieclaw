@@ -120,9 +120,28 @@ query）；`GET /Search/Hints`（内部转调 /Items 再映射扁平结构）；
  "Name": "MovieClaw", "EndpointAddress": null}
 ```
 
-`Address` 要按请求来源网段选本机可达地址（对应 Jellyfin 的 `GetSmartApiUrl`）。
 实现为 asyncio DatagramProtocol 后台任务，随 lifespan 启停；端口被占/无权限时
 写中文警告日志并跳过（发现失败不影响手动填地址）。
+
+**`Address` 必须是客户端真实可达的地址**（对应 Jellyfin 的 `GetSmartApiUrl`，
+但我们跑在容器里，情况比它复杂），按优先级三层获取：
+
+1. **显式配置优先**：新增设置 `published_server_url`（控制台网络设置页，
+   等价 Jellyfin 的 "Published Server URL"）。配置了就原样返回。这是
+   **Docker 桥接部署的唯一可靠答案**——容器内看到的 IP（172.x）和端口都
+   可能与宿主映射不一致，任何容器内自动探测都无法得知宿主的真实映射。
+2. **自动探测兜底**（未配置时）：对发现报文的来源地址做一次 UDP
+   `connect()`（不发包），读 socket 本地地址——内核路由表选出的、面向该
+   客户端的出口 IP。host 网络模式或裸机部署下，这就是正确的局域网 IP；
+   端口用应用实际监听端口。
+3. **探测结果自检**：探测出的 IP 落在 Docker 默认网段（172.17-31.x）且未
+   配置 published_server_url 时，仍然应答（不中断发现流程），但写中文警告
+   日志引导用户去控制台配置真实地址。
+
+Docker 桥接模式的现实要在部署文档写明：局域网广播报文通常不会穿过
+docker-proxy 到达容器，**桥接下自动发现大概率整体不可用**（不只是地址不
+准）。要用自动发现：host 网络模式（推荐，与 Jellyfin 官方对 DLNA/发现的
+建议一致）或 macvlan；否则播放器里手动填地址即可，发现只是锦上添花。
 
 ### 3.2 `GET /System/Info/Public`（匿名）
 
@@ -133,6 +152,10 @@ query）；`GET /Search/Hints`（内部转调 /Items 再映射扁平结构）；
  "StartupWizardCompleted": true, "OperatingSystem": ""}
 ```
 
+- `LocalAddress`：配置了 `published_server_url` 就用它；否则**回显本次请求
+  的 scheme + Host 头**——客户端既然能发起这个 HTTP 请求，这个地址一定
+  可达，比任何容器内探测都可靠（UDP 发现没有 Host 头可回显，所以 3.1 的
+  三层策略只属于发现场景）；
 - `Version` **报真实存在的 Jellyfin 版本号**（10.10.x），命中客户端兼容分支；
 - `StartupWizardCompleted` 必须 `true`，否则客户端进首次配置流程；
 - `ProductName` 保持 `"Jellyfin Server"`（客户端以此识别服务器类型）；
@@ -547,10 +570,19 @@ Jellyfin 的一切 ID 都是 32 位 hex GUID；movieclaw 是整型主键 + 数�
   不是 movieclaw 业务接口，两套规范互不渗透；错误响应按 Jellyfin 语义
   返回纯文本状态码，不走统一异常处理器。
 
-### 8.4 运行时与发布
+### 8.4 运行时、部署与开关
 
-纯 Python 实现，无新增运行时依赖 → 不触发 `docker/runtime-version` bump；
-UDP 7359 需要容器多暴露一个端口（compose/文档更新，属部署文档变更）。
+- **兼容层默认开启**（用户决策 2026-08-03：接口本身成本不高，开箱即用价值
+  大于最小暴露面顾虑）。服务器 ID 首启自动生成持久化，无需任何配置即可被
+  播放器连接；控制台提供关闭开关与 `published_server_url` 配置项。
+  安全面不变：所有非匿名接口都要求登录换 token，与控制台同源账号。
+- **HTTP 端口零新增**：兼容接口与主应用同端口，用户现有的 Docker 端口映射
+  原样覆盖，升级即生效。播放器里填的地址就是控制台地址。
+- **UDP 7359（自动发现）是唯一的新端口**：compose 示例补 `7359:7359/udp`
+  映射；同时在部署文档写明桥接模式下广播可能到不了容器（见 3.1），
+  自动发现不可用不影响手动填地址连接。
+- 纯 Python 实现，无新增运行时依赖 → 不触发 `docker/runtime-version` bump；
+  compose 模板/部署文档更新随本特性一并发布。
 
 ## 9. 风险与对策
 
@@ -587,11 +619,12 @@ UDP 7359 需要容器多暴露一个端口（compose/文档更新，属部署文
 
 ## 11. 开放问题（实施前需拍板）
 
-1. **兼容层开关**：默认开启还是控制台显式开启？倾向默认关闭 + 控制台一键
-   开启（开启时生成服务器 ID、提示防火墙放行 7359/UDP），符合最小暴露面。
-2. **外挂字幕台账**：library_file 目前只有内封 `subtitle_streams`；同目录
+已决：兼容层**默认开启**（2026-08-03 用户拍板，落地见 8.4）；发现地址的
+获取策略同日定稿（见 3.1）。
+
+1. **外挂字幕台账**：library_file 目前只有内封 `subtitle_streams`；同目录
    `.srt/.ass` 的发现、命名解析（语言后缀）、台账落位是独立小设计，P1 前
    补一节到 library.md 或单开短文档。
-3. **收藏（IsFavorite）**：播放器可发收藏请求（`POST /UserFavoriteItems/{id}`）,
+2. **收藏（IsFavorite）**：播放器可发收藏请求（`POST /UserFavoriteItems/{id}`）,
    本期未列。若做，playback_state 加一列即可，接口顺手；不做则该请求 404，
    Infuse 会隐藏收藏按钮或忽略失败。倾向 P1 顺手做。
