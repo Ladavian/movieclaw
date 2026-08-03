@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import time
 
 from movieclaw_channel.discord.adapter import DiscordAdapter
@@ -95,6 +96,43 @@ class TestDiscordNormalize:
             {"id": "5", "channel_id": "8", "content": "x", "author": {"id": "9", "bot": True}}
         )
         assert msg is None
+
+
+class TestDiscordHandshakeRejection:
+    async def test_invalid_status_goes_to_backoff_not_auth_error(self) -> None:
+        """Gateway 握手被拒(如 Cloudflare 429/代理 5xx)必须走退避重连。
+
+        握手阶段不携带 token(鉴权发生在 Identify,失败以关闭码 4004 表达),
+        把 InvalidStatus 判成 ChannelAuthError 会让账号被误标 stale 永久停摆。
+        """
+        from websockets.datastructures import Headers
+        from websockets.exceptions import InvalidStatus
+        from websockets.http11 import Response
+
+        from movieclaw_channel.adapter import ChannelContext
+
+        adapter = _dc_adapter()
+        stop = asyncio.Event()
+        calls = 0
+
+        async def failing_connect(ctx: ChannelContext, stop_evt: asyncio.Event) -> None:
+            nonlocal calls
+            calls += 1
+            stop.set()  # 首次失败后即请求停止,避免测试真的等待退避窗口
+            raise InvalidStatus(Response(429, "Too Many Requests", Headers()))
+
+        adapter._connect_once = failing_connect  # type: ignore[method-assign]
+
+        async def on_inbound(msg) -> None: ...
+
+        async def save_cursor(cursor: str) -> None: ...
+
+        ctx = ChannelContext(
+            account_id="bot1", on_inbound=on_inbound, save_cursor=save_cursor, stop=stop
+        )
+        # 不应抛 ChannelAuthError:run() 的通用异常路径记日志并退避重连
+        await asyncio.wait_for(adapter.run(ctx), timeout=5)
+        assert calls == 1
 
 
 class TestPairChallengeExpiry:

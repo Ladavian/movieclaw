@@ -3,7 +3,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from movieclaw_api.exceptions import BadRequestException
+from movieclaw_api.exceptions import BadRequestException, NotFoundException
 from movieclaw_api.schemas.response import ApiResponse, ok
 from movieclaw_api.schemas.subscription import (
     ActivityView,
@@ -227,10 +227,12 @@ async def list_subscription_downloads(
     只在详情页打开且存在在途工单时被轮询（约 5 秒一次），单订阅种子数很少，
     对下载器的压力可忽略。"""
     from movieclaw_api.services.download_progress import subscription_download_snapshot
+    from movieclaw_db.repositories import SubscriptionRepository
 
-    # 订阅不存在时给 404 而不是空列表（detail 会抛 NotFoundException）
-    service = _service(session)
-    await service.detail(subscription_id)
+    # 订阅不存在时给 404 而不是空列表——只做存在性检查即可，
+    # 没必要为此把整份工单明细（service.detail）拉出来
+    if await SubscriptionRepository(session).get(subscription_id) is None:
+        raise NotFoundException(f"订阅不存在：#{subscription_id}")
     rows = await subscription_download_snapshot(session, subscription_id)
     return ok([SubscriptionDownloadView(**row) for row in rows])
 
@@ -268,7 +270,9 @@ async def update_subscription(
         selected_seasons=payload.selected_seasons,
         follow_future=payload.follow_future,
         rule_set_id=payload.rule_set_id,
-        library_id=payload.library_id,
+        # library_id 要区分「未传=不变」与「显式 null=清除指定、回默认库路由」，
+        # 用 model_fields_set 判断调用方是否真的带了这个字段
+        library_id=payload.library_id if "library_id" in payload.model_fields_set else ...,
     )
     sub, item, wanted = await service.detail(subscription_id)
     return ok(SubscriptionDetailView.from_detail(sub, item, wanted), message="订阅已调整")

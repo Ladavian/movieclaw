@@ -102,9 +102,12 @@ def find_local_artwork(entry_dir: Path, kind: str) -> Path | None:
     suffix = f"-{kind}"
     try:
         for candidate in sorted(entry_dir.iterdir()):
-            if candidate.is_file() and candidate.suffix.lower() in _ART_EXTS:
-                if candidate.stem.lower().endswith(suffix):
-                    return candidate
+            if (
+                candidate.is_file()
+                and candidate.suffix.lower() in _ART_EXTS
+                and candidate.stem.lower().endswith(suffix)
+            ):
+                return candidate
     except OSError:
         return None
     return None

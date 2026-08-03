@@ -129,7 +129,8 @@ export function SubscriptionAdjustDialog({
           ? { selected_seasons: [...selectedSeasons].sort((a, b) => a - b) }
           : {}),
         ...(changed.follow ? { follow_future: followFuture } : {}),
-        ...(changed.library && libraryId !== null ? { library_id: libraryId } : {}),
+        // 显式带上 null 即「清除指定库、改回默认库路由」（后端区分未传与 null）
+        ...(changed.library ? { library_id: libraryId } : {}),
       });
       toast.success("订阅已调整");
       onSaved();
@@ -206,11 +207,16 @@ export function SubscriptionAdjustDialog({
           {libraries.length > 0 && (
             <section>
               <h3 className="mb-2 text-ui font-semibold text-white/85">入库到</h3>
+              {/* 旧订阅 library_id 可能为 null（按默认库路由）：给它一个显式占位项，
+                  否则浏览器会视觉上选中第一个库、而状态仍是 null（所见非所存） */}
               <select
-                value={libraryId ?? undefined}
-                onChange={(e) => setLibraryId(Number(e.target.value))}
+                value={libraryId === null ? "" : String(libraryId)}
+                onChange={(e) =>
+                  setLibraryId(e.target.value === "" ? null : Number(e.target.value))
+                }
                 className="w-full rounded-xl border border-white/[0.08] bg-white/[0.04] px-3.5 py-2.5 text-ui text-white/90 outline-none focus:border-white/25 [&>option]:bg-[#181c28]"
               >
+                <option value="">（按默认库路由）</option>
                 {libraries.map((l) => (
                   <option key={l.id} value={l.id}>
                     {l.name}

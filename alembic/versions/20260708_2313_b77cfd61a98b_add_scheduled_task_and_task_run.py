@@ -9,10 +9,9 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 
-from alembic import op
 import sqlalchemy as sa
 import sqlmodel
-
+from alembic import op
 
 # revision identifiers, used by Alembic.
 revision: str = 'b77cfd61a98b'
@@ -42,7 +41,9 @@ def upgrade() -> None:
     op.create_table('task_run',
     sa.Column('id', sa.Integer(), nullable=False),
     sa.Column('task_key', sqlmodel.sql.sqltypes.AutoString(), nullable=False),
-    sa.Column('status', sa.Enum('RUNNING', 'SUCCESS', 'FAILED', name='taskrunstatus'), nullable=False),
+    sa.Column(
+        'status', sa.Enum('RUNNING', 'SUCCESS', 'FAILED', name='taskrunstatus'), nullable=False
+    ),
     sa.Column('started_at', sa.DateTime(), nullable=False),
     sa.Column('finished_at', sa.DateTime(), nullable=True),
     sa.Column('duration_ms', sa.Integer(), nullable=True),

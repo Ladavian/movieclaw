@@ -21,7 +21,7 @@ import random
 from typing import Any
 
 from websockets.asyncio.client import connect
-from websockets.exceptions import ConnectionClosed, InvalidStatus
+from websockets.exceptions import ConnectionClosed
 
 from movieclaw_channel.adapter import ChannelContext
 from movieclaw_channel.discord.client import DiscordClient
@@ -136,13 +136,16 @@ class DiscordAdapter:
                         return
                     # HEARTBEAT_ACK 及其他事件忽略
             except ConnectionClosed as exc:
+                # 凭据失效只会以关闭码 4004/4014 表达:Gateway 握手阶段不带
+                # token(鉴权发生在 Identify),握手被拒(InvalidStatus,如
+                # Cloudflare 429 限流、代理 5xx)是暂时性网络问题,绝不能当作
+                # 凭据失效——否则账号会被标记 stale 并永久停止收发。这类异常
+                # 直接抛给 run() 的通用退避重连路径处理。
                 if exc.rcvd is not None and exc.rcvd.code in _AUTH_CLOSE_CODES:
                     raise ChannelAuthError(
                         f"Discord bot token 无效或权限不足(关闭码 {exc.rcvd.code}),请重新绑定"
                     ) from exc
                 raise
-            except InvalidStatus as exc:
-                raise ChannelAuthError(f"Discord Gateway 握手被拒:{exc}") from exc
             finally:
                 if heartbeat_task is not None:
                     heartbeat_task.cancel()

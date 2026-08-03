@@ -9,10 +9,9 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 
-from alembic import op
 import sqlalchemy as sa
 import sqlmodel
-
+from alembic import op
 
 # revision identifiers, used by Alembic.
 revision: str = 'a9b3e6d2c754'
@@ -62,7 +61,9 @@ def upgrade() -> None:
     sa.UniqueConstraint('media_item_id', 'season_number', name='uq_media_season_item_season')
     )
     with op.batch_alter_table('media_season', schema=None) as batch_op:
-        batch_op.create_index(batch_op.f('ix_media_season_media_item_id'), ['media_item_id'], unique=False)
+        batch_op.create_index(
+            batch_op.f('ix_media_season_media_item_id'), ['media_item_id'], unique=False
+        )
 
 
 def downgrade() -> None:

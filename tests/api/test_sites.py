@@ -6,6 +6,7 @@
 """
 from __future__ import annotations
 
+import httpx
 import pytest
 import pytest_asyncio
 from fastapi.testclient import TestClient
@@ -367,8 +368,6 @@ async def test_sync_stats_view_handles_count_without_cursor(db) -> None:
 
 
 def test_friendly_error_categorizes_common_failures() -> None:
-    import httpx
-
     from movieclaw_api.services.verification import friendly_error
     from movieclaw_tracker.exceptions import (
         TrackerAuthError,
@@ -383,10 +382,8 @@ def test_friendly_error_categorizes_common_failures() -> None:
     assert "未知错误" in friendly_error(ValueError("x"))
 
 
-def _http_status_error(code: int) -> "httpx.HTTPStatusError":
+def _http_status_error(code: int) -> httpx.HTTPStatusError:
     """构造带指定状态码的 httpx.HTTPStatusError 测试样本。"""
-    import httpx
-
     request = httpx.Request("GET", "https://example.com")
     return httpx.HTTPStatusError(
         "boom", request=request, response=httpx.Response(code, request=request)
@@ -411,8 +408,6 @@ def test_friendly_error_distinguishes_status_codes() -> None:
 
 def test_transient_error_classification() -> None:
     """瞬时/非瞬时分流：决定同步失败时「退避重试」还是「作废会话重认证」。"""
-    import httpx
-
     from movieclaw_api.services.verification import is_transient_error
     from movieclaw_tracker.exceptions import (
         TrackerAuthError,

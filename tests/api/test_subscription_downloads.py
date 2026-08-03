@@ -109,8 +109,10 @@ async def test_snapshot_returns_live_progress(db, monkeypatch) -> None:
     async def fake_usable(session):
         return [("占位", "占位配置")]
 
-    async def fake_query(info_hash, downloaders):
+    async def fake_query(info_hash, downloaders, *, include_files=True):
         assert info_hash == "a" * 40
+        # 快照走轻量查询：不拉文件清单
+        assert include_files is False
         return _FakeDownloaderRow(), status
 
     monkeypatch.setattr(download_progress, "_usable_downloaders", fake_usable)
@@ -137,7 +139,7 @@ async def test_snapshot_marks_missing_torrent(db, monkeypatch) -> None:
     async def fake_usable(session):
         return [("占位", "占位配置")]
 
-    async def fake_query(info_hash, downloaders):
+    async def fake_query(info_hash, downloaders, *, include_files=True):
         return None
 
     monkeypatch.setattr(download_progress, "_usable_downloaders", fake_usable)

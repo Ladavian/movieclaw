@@ -140,16 +140,20 @@ async def _usable_downloaders(
 
 
 async def _query_torrent(
-    info_hash: str, downloaders: list[tuple[DownloaderClient, DownloaderConfig]]
+    info_hash: str,
+    downloaders: list[tuple[DownloaderClient, DownloaderConfig]],
+    *,
+    include_files: bool = True,
 ) -> tuple[DownloaderClient, TorrentStatus] | None:
     """在全部可用下载器中查找种子（先到先得；单台故障不影响其余）。
 
     连同命中的下载器记录一起返回——落点核验需要它的路径映射做反向翻译。
+    进度快照类的高频轮询传 ``include_files=False``，省掉文件清单的获取开销。
     """
     for row, config in downloaders:
         adapter = create_downloader(config)
         try:
-            status = await adapter.get_torrent(info_hash)
+            status = await adapter.get_torrent(info_hash, include_files=include_files)
         except Exception as exc:  # noqa: BLE001 -- 单台不可达降级继续
             logger.warning("查询下载器「%s」失败：%s", row.name, exc)
             continue
@@ -363,7 +367,13 @@ async def subscription_download_snapshot(
             {"season_number": w.season_number, "episode_number": w.episode_number}
             for w in sorted(rows, key=lambda w: (w.season_number, w.episode_number))
         ]
-        found = await _query_torrent(info_hash, downloaders) if downloaders else None
+        # 快照只用 info 字段（进度/速度/ETA），不取文件清单——5 秒一轮的
+        # 轮询没必要每次都把整包文件列表拉回来
+        found = (
+            await _query_torrent(info_hash, downloaders, include_files=False)
+            if downloaders
+            else None
+        )
         if found is None:
             snapshots.append(
                 {

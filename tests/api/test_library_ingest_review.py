@@ -50,6 +50,7 @@ async def db(tmp_path, monkeypatch):
     init_db(get_settings().database_url, echo=False)
     await run_migrations()
     monkeypatch.setattr(ingest_mod, "_stability", {})
+    monkeypatch.setattr(ingest_mod, "_failed_retry", {})
     monkeypatch.setattr(ingest_mod, "QUIET_SECONDS", 0)
     monkeypatch.setattr(ingest_mod, "_briefs_cache", (float("-inf"), None))
     yield get_database()
@@ -191,6 +192,80 @@ async def test_skip_existing_baseline(db, tmp_path, monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_stale_rule_object_cannot_double_baseline(db, tmp_path, monkeypatch):
+    """回归：基线只能打一次。事件巡检与兜底巡检各自在锁外加载规则对象，
+    一路先完成基线后，另一路拿着过期对象（baseline_done 仍为 False）再
+    进来时不得重打基线——否则两轮之间刚下载完成的新条目会被错误盖章为
+    已忽略。修复靠条件更新抢占旗标（rowcount=0 即放弃盖章）。"""
+    root, watch = tmp_path / "movies", tmp_path / "watch"
+    watch.mkdir()
+    library_id = await _make_library(db, root=root)
+    rule_id = await _make_rule(db, library_id=library_id, source=watch, process_existing=False)
+    item = await _make_item(db)
+    monkeypatch.setattr(ingest_mod, "probe_media", lambda p: _FAKE_SPEC)
+    _stub_identify(monkeypatch, item)
+
+    old = watch / "老片 (2001)"
+    old.mkdir()
+    (old / "movie.mkv").write_bytes(b"old")
+    await _sweep(db, rule_id)  # 真基线：老片盖章忽略
+
+    # 两轮之间新完成的条目 + 过期规则对象（模拟另一条巡检路径在锁外加载）
+    fresh = watch / "新片 (2024)"
+    fresh.mkdir()
+    (fresh / "movie.mkv").write_bytes(b"new")
+    stale = ImportWatch(
+        id=rule_id,
+        source_path=str(watch),
+        strategy="hardlink",
+        library_id=library_id,
+        process_existing=False,
+        baseline_done=False,
+    )
+    async with db.session() as session:
+        library = await session.get(Library, library_id)
+    await ingest_mod._sweep_dir(stale, library)
+
+    # 新片没有被错误盖章为已忽略；后续巡检正常处理它
+    records = await _records(db)
+    ignored = {r.entry_path for r in records if r.status == IngestStatus.IGNORED}
+    assert str(fresh) not in ignored
+    assert str(old) in ignored
+    await _sweep(db, rule_id, times=2)
+    async with db.session() as session:
+        files = list((await session.execute(select(LibraryFile))).scalars().all())
+    assert len(files) == 1 and "某电影" in files[0].file_path
+
+
+@pytest.mark.asyncio
+async def test_ignored_entries_short_circuit_before_snapshot(db, tmp_path, monkeypatch):
+    """已忽略条目在快照（全树 stat）之前被台账短路：「跳过存量」目录里
+    可能躺着成百上千个忽略条目，每轮巡检不得再遍历它们的磁盘树
+    （模块头声明的 NAS 磁盘休眠目标）。"""
+    root, watch = tmp_path / "movies", tmp_path / "watch"
+    watch.mkdir()
+    library_id = await _make_library(db, root=root)
+    rule_id = await _make_rule(db, library_id=library_id, source=watch, process_existing=False)
+
+    for name in ("老片A (2001)", "老片B (2002)"):
+        entry = watch / name
+        entry.mkdir()
+        (entry / "movie.mkv").write_bytes(b"old")
+    await _sweep(db, rule_id)  # 基线：全部盖章忽略
+
+    calls = {"n": 0}
+    real_snapshot = ingest_mod._snapshot
+
+    def counting_snapshot(entry):
+        calls["n"] += 1
+        return real_snapshot(entry)
+
+    monkeypatch.setattr(ingest_mod, "_snapshot", counting_snapshot)
+    await _sweep(db, rule_id)
+    assert calls["n"] == 0  # 忽略条目一次树遍历都没做
+
+
+@pytest.mark.asyncio
 async def test_ignore_and_restore_actions(db, tmp_path, monkeypatch):
     """人工忽略后永不处理；恢复后重新进入流程。"""
     root, watch = tmp_path / "movies", tmp_path / "watch"
@@ -268,6 +343,57 @@ async def test_claim_entry_imports_immediately(db, tmp_path, monkeypatch):
             await ingest_mod.ignore_entry(session, records[0].id)
         with pytest.raises(BadRequestException):
             await ingest_mod.claim_entry(session, records[0].id, 300)
+
+
+@pytest.mark.asyncio
+async def test_claimed_identity_survives_failed_retry(db, tmp_path, monkeypatch):
+    """回归：认领身份必须持久化。此前 forced_item 只是一次性入参，认领
+    当轮环境故障失败后，自动重试会重新走识别链、识别不出便落回待处理，
+    用户的拍板被悄悄作废。修复后身份钉进台账（claimed_tmdb_id），重试
+    凭钉子还原身份直接入库——不重新识别、无需再次认领。"""
+    root, watch = tmp_path / "movies", tmp_path / "watch"
+    watch.mkdir()
+    library_id = await _make_library(db, root=root)
+    rule_id = await _make_rule(db, library_id=library_id, source=watch)
+    await _make_item(db, title="认领电影", year=2021)
+    _stub_media_library(monkeypatch)
+    monkeypatch.setattr(ingest_mod, "probe_media", lambda p: _FAKE_SPEC)
+
+    calls = {"identify": 0}
+
+    async def identify_none(session, kind, watch_root, main, spec):
+        calls["identify"] += 1
+        return None
+
+    monkeypatch.setattr(ingest_mod, "_identify", identify_none)
+
+    entry = watch / "obscure-release-x264"
+    entry.mkdir()
+    (entry / "video.mkv").write_bytes(b"x")
+    await _sweep(db, rule_id, times=2)
+    records = await _records(db)
+    assert records[0].status == IngestStatus.PENDING
+
+    # 认领当轮探测失败（环境故障）→ failed，但认领身份已钉进台账
+    monkeypatch.setattr(ingest_mod, "ffprobe_available", lambda: True)
+    monkeypatch.setattr(ingest_mod, "probe_media", lambda p: None)
+    async with db.session() as session:
+        row = await ingest_mod.claim_entry(session, records[0].id, 300)
+        assert row.status == IngestStatus.FAILED
+        assert row.claimed_tmdb_id == 300
+        assert row.claimed_kind == "movie"
+
+    # 环境修复 + 退避到点：自动重试凭钉住的身份直接入库，识别链零调用
+    monkeypatch.setattr(ingest_mod, "probe_media", lambda p: _FAKE_SPEC)
+    monkeypatch.setattr(ingest_mod, "FAILED_RETRY_SECONDS", 0)
+    identify_before = calls["identify"]
+    await _sweep(db, rule_id, times=2)
+    records = await _records(db)
+    assert records[0].status == IngestStatus.IMPORTED
+    assert calls["identify"] == identify_before  # 重试没有回退到重新识别
+    async with db.session() as session:
+        files = list((await session.execute(select(LibraryFile))).scalars().all())
+    assert len(files) == 1 and "认领电影 (2021)" in files[0].file_path
 
 
 @pytest.mark.asyncio

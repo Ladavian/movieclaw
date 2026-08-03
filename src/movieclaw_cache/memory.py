@@ -29,8 +29,13 @@ class AsyncTTLCache:
         self._locks: dict[str, asyncio.Lock] = {}
 
     async def get_or_set(
-        self, key: str, ttl: float, factory: Callable[[], Awaitable[Any]]
+        self,
+        key: str,
+        ttl: float | Callable[[Any], float],
+        factory: Callable[[], Awaitable[Any]],
     ) -> Any:
+        """ttl 可以是固定秒数，也可以是「结果 → 秒数」的回调：让调用方按回源
+        结果决定缓存时长（如豆瓣完整榜单分页失败时的半截结果只短缓存）。"""
         hit = self._lookup(key)
         if hit is not _MISS:
             return hit
@@ -41,7 +46,8 @@ class AsyncTTLCache:
             if hit is not _MISS:
                 return hit
             value = await factory()
-            self._values[key] = (time.monotonic() + ttl, value)
+            resolved_ttl = ttl(value) if callable(ttl) else ttl
+            self._values[key] = (time.monotonic() + resolved_ttl, value)
             return value
 
     def _lookup(self, key: str) -> Any:

@@ -318,14 +318,17 @@ class ImChannelService:
                 if ch.attempts >= _PAIR_MAX_ATTEMPTS:
                     ch.status = "failed"
                     ch.message = "配对码错误次数过多,绑定已作废,请重新发起"
-                    await emit("配对码错误次数过多,本次绑定已作废。请回面板重新发起绑定。")
+                    # 终态回执直接同步发送(不走出站队列):随后的清理任务会
+                    # 停账号并关闭发送泵,而 close 不排空队列,入队的回执会丢
+                    await self._send_receipt(
+                        adapter, msg, "配对码错误次数过多,本次绑定已作废。请回面板重新发起绑定。"
+                    )
                     # 当前正在该账号的会话 worker 里,停账号须走后台任务避免自锁
                     self._spawn(self._teardown_pairing(ch), "配对作废清理")
                     return
                 await emit("配对码不正确。请发送面板上显示的 6 位数字完成绑定。")
                 return
-            await self._confirm_binding(ch, msg)
-            await emit("绑定成功!我是 movieclaw 助手,现在可以直接发消息让我干活了。")
+            await self._confirm_binding(ch, msg, adapter)
 
         dispatcher = make_dispatcher(adapter, is_allowed=lambda _uid: True, run_agent=pair_agent)
         await self.manager.start_account(
@@ -396,7 +399,22 @@ class ImChannelService:
                     challenge.bot_id,
                 )
 
-    async def _confirm_binding(self, challenge: PairChallenge, msg: InboundMessage) -> None:
+    @staticmethod
+    async def _send_receipt(adapter: ChannelAdapter, msg: InboundMessage, text: str) -> None:
+        """配对终态回执:绕过出站队列直接发送。
+
+        终态之后紧跟账号热切换/清理,``dispatcher.close()`` 会取消发送泵且
+        不排空队列,走队列的回执大概率丢失,所以必须在触发切换前同步发出;
+        发送失败只记日志,绝不能影响绑定状态流转。
+        """
+        try:
+            await adapter.send_text(msg.reply, text)
+        except Exception:  # noqa: BLE001
+            logger.exception("配对回执发送失败(不影响绑定结果)user=%s", msg.user_id)
+
+    async def _confirm_binding(
+        self, challenge: PairChallenge, msg: InboundMessage, adapter: ChannelAdapter
+    ) -> None:
         """配对码命中:凭据落库、发码人即白名单,重启为正式账号。"""
         token = self._pending_tokens.pop(challenge.challenge_id, "")
         if not token:
@@ -418,6 +436,11 @@ class ImChannelService:
             challenge.channel_id,
             challenge.bot_id,
             msg.user_id,
+        )
+        # 成功回执必须在触发热切换之前直接发出:热切换会停掉当前临时账号
+        # 并关闭其发送泵,出站队列里未发送的消息会被丢弃
+        await self._send_receipt(
+            adapter, msg, "绑定成功!我是 movieclaw 助手,现在可以直接发消息让我干活了。"
         )
         # 配对客户端交由 _start_account 热替换,超时守护不再需要处理它
         self._pairing_clients.pop(challenge.challenge_id, None)

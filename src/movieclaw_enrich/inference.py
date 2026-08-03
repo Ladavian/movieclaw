@@ -227,7 +227,10 @@ def extract_with_model(title: str, subtitle: str = "") -> dict[str, object]:
 
     texts = (title, subtitle or "")
     spans = [
-        s for s in _decode_spans(meta["labels"], span_probs, pred_ids, enc.offsets, enc.sequence_ids)
+        s
+        for s in _decode_spans(
+            meta["labels"], span_probs, pred_ids, enc.offsets, enc.sequence_ids
+        )
         if s[4] >= _MIN_SPAN_PROB and s[0] <= 1
     ]
     spans = _normalize_spans(spans, texts)

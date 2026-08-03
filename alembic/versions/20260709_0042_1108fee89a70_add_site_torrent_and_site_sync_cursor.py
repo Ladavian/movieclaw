@@ -9,10 +9,9 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 
-from alembic import op
 import sqlalchemy as sa
 import sqlmodel
-
+from alembic import op
 
 # revision identifiers, used by Alembic.
 revision: str = '1108fee89a70'
@@ -65,7 +64,9 @@ def upgrade() -> None:
     sa.Column('douban_id', sqlmodel.sql.sqltypes.AutoString(), nullable=True),
     sa.Column('detail_url', sqlmodel.sql.sqltypes.AutoString(), nullable=True),
     sa.Column('download_url', sqlmodel.sql.sqltypes.AutoString(), nullable=True),
-    sa.Column('source', sa.Enum('LIST', 'RSS', 'SEARCH', 'DETAIL', name='torrentsource'), nullable=False),
+    sa.Column(
+        'source', sa.Enum('LIST', 'RSS', 'SEARCH', 'DETAIL', name='torrentsource'), nullable=False
+    ),
     sa.Column('last_seen_at', sa.DateTime(), nullable=False),
     sa.Column('volatile_refreshed_at', sa.DateTime(), nullable=True),
     sa.Column('detail_enriched_at', sa.DateTime(), nullable=True),
@@ -76,7 +77,9 @@ def upgrade() -> None:
         batch_op.create_index(batch_op.f('ix_site_torrent_category'), ['category'], unique=False)
         batch_op.create_index(batch_op.f('ix_site_torrent_imdb_id'), ['imdb_id'], unique=False)
         batch_op.create_index(batch_op.f('ix_site_torrent_is_free'), ['is_free'], unique=False)
-        batch_op.create_index(batch_op.f('ix_site_torrent_publish_time'), ['publish_time'], unique=False)
+        batch_op.create_index(
+            batch_op.f('ix_site_torrent_publish_time'), ['publish_time'], unique=False
+        )
         batch_op.create_index(batch_op.f('ix_site_torrent_site_id'), ['site_id'], unique=False)
         batch_op.create_index(batch_op.f('ix_site_torrent_title'), ['title'], unique=False)
 

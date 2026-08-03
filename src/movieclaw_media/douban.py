@@ -42,6 +42,10 @@ _LATIN_ROLE_TAIL = re.compile(r"\s+[A-Za-z][A-Za-z0-9 .'’-]*$")
 
 DEFAULT_API_BASE_URL = "https://m.douban.com/rexxar/api/v2"
 _PAGE_TTL = 6 * 60 * 60
+# 完整榜单聚合中途分页失败（半截结果）时的短缓存：不能按 _PAGE_TTL 把残缺
+# 榜单钉住 6 小时，但也不宜完全不缓存——冷回源要连打十几个分页请求，失败
+# 往往是网络抖动，几分钟后重试通常就能补全。
+_PAGE_TRUNCATED_TTL = 5 * 60
 _SEARCH_TTL = 10 * 60
 _DETAIL_TTL = 6 * 60 * 60
 _MIN_ROW_ITEMS = 4
@@ -365,24 +369,29 @@ class DoubanDiscoverService:
         """返回一份「看全部」落地页的完整榜单；未开放的榜单 ID 一律 404。"""
         if collection_id not in _FULL_COLLECTIONS:
             raise DoubanNotFoundError("该榜单不存在或未开放完整浏览")
-        return await self._cache.get_or_set(
+        # 缓存值是 (榜单, 是否被截断)：半截结果只短缓存，几分钟后重试补全，
+        # 避免用户对着残缺榜单干等 6 小时
+        row, _truncated = await self._cache.get_or_set(
             f"douban-full:{collection_id}",
-            _PAGE_TTL,
+            lambda value: _PAGE_TRUNCATED_TTL if value[1] else _PAGE_TTL,
             lambda: self._build_full_collection(collection_id),
         )
+        return row
 
-    async def _build_full_collection(self, collection_id: str) -> MediaRow:
+    async def _build_full_collection(self, collection_id: str) -> tuple[MediaRow, bool]:
         """分页聚合完整榜单，直到取满 count 上限或上游返回空页。
 
         每次都请求「剩余全量」，由上游按自身单页上限截断（Top 250 一次给全，
         其余榜单约 50 条/页），再按实际返回量推进游标。受全局 1 次/秒限速，
         冷缓存时 500 条约需十秒；分页各段与聚合结果都有缓存，之后即时返回。
-        首页失败直接报错；后续页失败只截断，已取得的部分照常可浏览。
+        首页失败直接报错；后续页失败只截断，已取得的部分照常可浏览，返回值
+        第二项标记是否发生截断（调用方据此改用短 TTL 缓存）。
         """
         spec, kind = _FULL_COLLECTIONS[collection_id]
         items: list[MediaCard] = []
         seen: set[str] = set()
         start = 0
+        truncated = False
         while start < spec.count:
             try:
                 data = await self._client.collection(
@@ -395,6 +404,7 @@ class DoubanDiscoverService:
                     "豆瓣榜单「%s」第 %d 条起的分页失败，先返回已取得的 %d 条",
                     spec.title, start, len(items),
                 )
+                truncated = True
                 break
             raw_items = data.get("subject_collection_items") or []
             if not raw_items:
@@ -408,12 +418,13 @@ class DoubanDiscoverService:
             start += len(raw_items)
         if not items:
             raise DoubanError("豆瓣暂未返回该榜单数据，请稍后重试")
-        return MediaRow(
+        row = MediaRow(
             id=f"douban-{spec.collection_id}",
             title=spec.title,
             ranked=spec.ranked,
             items=items,
         )
+        return row, truncated
 
     async def search(self, keyword: str) -> list[MediaSearchItem]:
         """返回统一的轻量豆瓣搜索候选；相同关键词缓存十分钟。"""

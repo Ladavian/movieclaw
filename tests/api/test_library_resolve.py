@@ -47,11 +47,13 @@ def _tv(tmdb_id: int, name: str, original: str, year: int | None) -> dict:
     }
 
 
-def _movie_detail(tmdb_id: int, *, runtime: int | None = None, alts: list[str] = []) -> dict:
+def _movie_detail(
+    tmdb_id: int, *, runtime: int | None = None, alts: list[str] | None = None
+) -> dict:
     return {
         "id": tmdb_id,
         "runtime": runtime,
-        "alternative_titles": {"titles": [{"title": t} for t in alts]},
+        "alternative_titles": {"titles": [{"title": t} for t in (alts or [])]},
     }
 
 
@@ -60,7 +62,7 @@ def _tv_detail(
     *,
     seasons: int | None = None,
     episode_counts: dict[int, int] | None = None,
-    alts: list[str] = [],
+    alts: list[str] | None = None,
     animation: bool = False,
 ) -> dict:
     return {
@@ -69,7 +71,7 @@ def _tv_detail(
         "seasons": [
             {"season_number": n, "episode_count": c} for n, c in (episode_counts or {}).items()
         ],
-        "alternative_titles": {"results": [{"title": t} for t in alts]},
+        "alternative_titles": {"results": [{"title": t} for t in (alts or [])]},
         "genres": [{"id": 16, "name": "动画"}] if animation else [],
     }
 
@@ -116,7 +118,12 @@ async def test_tv_no_year_spinoffs_fail_gate() -> None:
             "/3/search/tv": {
                 "results": [
                     _tv(60059, "绝命律师", "Better Call Saul", 2015),
-                    _tv(999, "Better Call Saul: Employee Training", "Better Call Saul: Employee Training", 2017),
+                    _tv(
+                        999,
+                        "Better Call Saul: Employee Training",
+                        "Better Call Saul: Employee Training",
+                        2017,
+                    ),
                 ]
             },
             "/3/tv/60059": _tv_detail(60059, seasons=6, episode_counts={6: 13}),

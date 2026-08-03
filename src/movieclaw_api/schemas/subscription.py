@@ -221,7 +221,10 @@ class SubscriptionUpdatePayload(BaseModel):
         default=None, description="是否持续追新（新季自动纳入）；不传=不变"
     )
     rule_set_id: int | None = Field(default=None, description="换绑规则组 id；不传=不变")
-    library_id: int | None = Field(default=None, description="换入库目标库；缺省不变")
+    library_id: int | None = Field(
+        default=None,
+        description="换入库目标库；显式传 null=清除指定、改回按默认库路由；不传=不变",
+    )
 
 
 class SubscriptionPausePayload(BaseModel):

@@ -148,7 +148,6 @@ export function GlassPanel({
   useEffect(() => {
     apply();
     // settingsKey 覆盖了上述参数的内容变化
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [settingsKey, apply]);
 
   return (

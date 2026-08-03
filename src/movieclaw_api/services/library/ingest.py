@@ -53,7 +53,8 @@
   ``_is_ingest_relevant``）；下载写入持续产生事件，事件停止本身就是
   静默的开端；
 - 静默到点自检：事件停了之后没人会再叫醒我们，每轮巡检后若仍有条目在
-  等静默窗口，按最近到期时间挂一次性自检，全部落定即归零；
+  等静默窗口或等失败退避（失败结论落账后不会再有事件，退避重试全靠
+  自检/兜底回来看），按最近到期时间挂一次性自检，全部落定即归零；
 - 下载器状态轮询：被权威信号判为「未完成」的条目记入挂起表——完成的
   一瞬 fs 事件已停、下载器 API 又慢半拍（最后分片校验完 progress 才翻 1，
   概览另有短缓存），事件路径必然错过这次翻转。自检对挂起条目先做纯 API
@@ -64,7 +65,7 @@
   这一次能接住；之后该目录全靠事件驱动；
 - 兜底：每小时重建一次失效监听，并巡检**监听覆盖不到**的目录
   （目录不存在/watchdog 缺失/挂载不产生 fs 事件）；正被实时监听的目录
-  只在仍有挂起/待静默条目时纳入巡检（自检链异常死亡的最后保险，
+  只在仍有挂起/待静默/待失败重试条目时纳入巡检（自检链异常死亡的最后保险，
   否则条目会无限期静默——线上实证过入库延迟 1 小时+且无告警），
   其余情况绝不重复主动扫。
 
@@ -150,6 +151,12 @@ _stability: dict[str, tuple[str, float]] = {}
 # 「弹出即失忆」：完成瞬间 API 常慢半拍，误判一次就再没有事件叫醒它了。
 # 重启丢失无妨：启动时新纳入监听的目录会补扫一次，条目重新入表
 _deferred: dict[str, float] = {}
+# 进程内的失败重试表：结论落 FAILED 的条目路径 -> 落账时的单调时钟。
+# 这是第三个唤醒源：失败结论落账时静默表/挂起表都已弹出该条目，之后
+# 不会再有 fs 事件（下载早已结束），若不在此留痕，到点自检与兜底巡检
+# 都看不见它，「自动退避重试」的承诺永远无法兑现。重启丢失由
+# _process_entry 的退避短路分支补记（见该处注释）
+_failed_retry: dict[str, float] = {}
 # 巡检串行锁：事件驱动与兜底巡检可能同时到达同一目录，串行化防同条目双处理
 _sweep_lock = asyncio.Lock()
 # 下载器种子概览缓存：(取样时刻, 概览列表或 None=不可用)
@@ -271,14 +278,16 @@ async def ingest_tick() -> None:
 
 
 def _has_pending(source_path: str) -> bool:
-    """该源目录下是否还有等待中的条目（等静默窗口 / 等下载器状态翻转）。
+    """该源目录下是否还有等待中的条目（等静默窗口 / 等下载器状态翻转 /
+    等失败退避到点重试）。
 
     兜底巡检对这类目录不再跳过——这是自检链意外死亡时的最后一道保险：
     目录里有货没人管时兜底必须看得见，最坏一小时后条目仍会被接住。
     """
     prefix = source_path.rstrip("/") + "/"
-    return any(p.startswith(prefix) for p in _stability) or any(
-        p.startswith(prefix) for p in _deferred
+    return any(
+        any(p.startswith(prefix) for p in table)
+        for table in (_stability, _deferred, _failed_retry)
     )
 
 
@@ -313,7 +322,7 @@ async def _sweep_dir(rule: ImportWatch, library: Library | None) -> None:
         # 防字典无界增长；它的失败告警（若有）也一并熄灭——源没了，问题
         # 就不存在了
         prefix = str(root).rstrip("/") + "/"
-        for table in (_stability, _deferred):
+        for table in (_stability, _deferred, _failed_retry):
             for key in [k for k in table if k.startswith(prefix) and k not in seen]:
                 table.pop(key, None)
         from movieclaw_api.services.system_notice import resolve_notices
@@ -344,6 +353,20 @@ async def _baseline_existing(
     db = get_database()
     stamped = 0
     async with db.session() as session:
+        # 基线旗标先做**条件置位**（仅当库里仍为 False 时更新）：事件巡检与
+        # 兜底巡检各自在锁外加载的 rule 对象可能已过期，若另一路刚打完基线，
+        # 这里过期对象的 baseline_done 仍是 False——不加条件会把基线重打一遍，
+        # 把两轮之间刚下载完成的新条目错误盖章为已忽略。rowcount 为 0 说明
+        # 基线已被别人打过，直接返回（本轮不盖章）
+        result = await session.execute(
+            update(ImportWatch)
+            .where(ImportWatch.id == rule.id)  # type: ignore[arg-type]
+            .where(ImportWatch.baseline_done == False)  # type: ignore[arg-type]  # noqa: E712
+            .values(baseline_done=True)
+        )
+        if result.rowcount == 0:
+            rule.baseline_done = True
+            return
         for entry in entries:
             snap = await asyncio.to_thread(_snapshot, entry)
             verdict = _torrent_verdict(_match_briefs(entry.name, briefs))
@@ -366,9 +389,6 @@ async def _baseline_existing(
                 )
             )
             stamped += 1
-        await session.execute(
-            update(ImportWatch).where(ImportWatch.id == rule.id).values(baseline_done=True)  # type: ignore[arg-type]
-        )
         await session.commit()
     rule.baseline_done = True
     logger.info(
@@ -523,26 +543,37 @@ async def _process_entry(
         return
     _deferred.pop(path_str, None)
 
-    snap = await asyncio.to_thread(_snapshot, entry)
-    # 标记文件与权威信号矛盾（说完成却还有 .!qB 等）说明匹配可疑，从严按
-    # 下载中处理；标记消失（下载器改名/删除它）必产生文件事件，无需挂起
-    if snap.has_marker:
-        _stability.pop(path_str, None)
-        return
-
     db = get_database()
     async with db.session() as session:
         record = (
             await session.execute(select(IngestEntry).where(IngestEntry.entry_path == path_str))
         ).scalar_one_or_none()
-        if record is not None:
-            if record.status == IngestStatus.IGNORED:
-                return  # 用户拍板（或存量基线）永久忽略：指纹变化也不复活，恢复走接口
-            if record.fingerprint == snap.fingerprint:
-                if record.status != IngestStatus.FAILED:
-                    return  # 已处理且没变化（pending 等的是人工拍板，不是时间）
-                if (utcnow() - record.attempted_at).total_seconds() < FAILED_RETRY_SECONDS:
-                    return  # 环境故障退避中
+        # 台账短路必须在快照**之前**：忽略条目（「跳过存量」目录里可能有
+        # 成百上千行）每轮都做全树 stat 会让 NAS 磁盘永远无法休眠——一次
+        # 索引查询远比树遍历便宜（模块头声明的磁盘休眠目标）
+        if record is not None and record.status == IngestStatus.IGNORED:
+            _failed_retry.pop(path_str, None)  # 失败后被人工忽略：不再退避重试
+            return  # 用户拍板（或存量基线）永久忽略：指纹变化也不复活，恢复走接口
+
+        snap = await asyncio.to_thread(_snapshot, entry)
+        # 标记文件与权威信号矛盾（说完成却还有 .!qB 等）说明匹配可疑，从严按
+        # 下载中处理。必须在静默观察表留痕：CIFS/NFS 等不产生 fs 事件的挂载
+        # 上，标记消失不会有事件叫醒我们，一忘了之条目就永远卡死；留痕后
+        # _has_pending 看得见它，到点自检与每小时兜底会持续回来看（标记文件
+        # 计入指纹，它消失后指纹必变，自然重新起算静默窗口）
+        if snap.has_marker:
+            _stability[path_str] = (snap.fingerprint, time.monotonic())
+            return
+
+        if record is not None and record.fingerprint == snap.fingerprint:
+            if record.status != IngestStatus.FAILED:
+                return  # 已处理且没变化（pending 等的是人工拍板，不是时间）
+            elapsed = (utcnow() - record.attempted_at).total_seconds()
+            if elapsed < FAILED_RETRY_SECONDS:
+                # 环境故障退避中。进程重启会丢失失败重试表——在此按已过的
+                # 退避时间补记，保证退避到点仍有第三唤醒源接得住
+                _failed_retry.setdefault(path_str, time.monotonic() - elapsed)
+                return
 
         if verdict == "complete":
             # 下载器确认完成：跳过静默窗口，立即处理
@@ -616,6 +647,18 @@ async def _ingest_entry(
     # NFO/名称解析识别链（第三方下载的兜底）。自定义目录规则同样认领——
     # 身份与落点分离：认领只取身份（免重新识别、命名更准），落点始终由
     # 规则声明决定（docs/design/strm-workflow.md 2.3）
+    if forced_item is None and record is not None and record.claimed_tmdb_id is not None:
+        # 台账里钉过认领身份：认领当轮环境故障（探测/搬运/TMDB 网络）失败
+        # 后，自动重试凭这颗钉子还原用户拍板的身份，绝不回退重新识别——
+        # 用户拍板是最高权威，不能被一次网络抖动作废
+        claimed_kind = MediaKind(record.claimed_kind) if record.claimed_kind else kind
+        try:
+            forced_item = await MediaLibraryService(session, get_tmdb_client()).ensure_media_item(
+                claimed_kind, record.claimed_tmdb_id
+            )
+        except Exception as exc:  # noqa: BLE001 -- TMDB 不可达等环境故障，退避重试
+            await conclude(IngestStatus.FAILED, f"按认领身份重建条目失败（{exc}）；将自动重试")
+            return
     if forced_item is not None:
         item, pinned_library_id = forced_item, None
         claimed = False
@@ -1018,6 +1061,14 @@ async def _save_record(
     await session.commit()
     _stability.pop(entry_path, None)
     _deferred.pop(entry_path, None)
+    # 失败结论必须记入失败重试表（第三个唤醒源）：此刻静默表/挂起表都已
+    # 弹出该条目，下载早已结束不会再有 fs 事件，若不留痕，_arm_recheck 挂
+    # 不上自检、兜底巡检的 _has_pending 也看不见它——「自动退避重试」就
+    # 成了一句空话（回归：FAILED 条目落账后被彻底遗忘，永不重试）
+    if status is IngestStatus.FAILED:
+        _failed_retry[entry_path] = time.monotonic()
+    else:
+        _failed_retry.pop(entry_path, None)
     # 全局红灯只留给环境故障（failed），且由 refresh_source_notice 按源目录
     # 聚合（巡检收尾/人工拍板后刷新）——识别不出（pending）不是错误，
     # 清单上的数字承载它，不在这里刷屏
@@ -1147,6 +1198,13 @@ async def claim_entry(session, entry_id: int, tmdb_id: int) -> IngestEntry:
         raise BadRequestException("条目似乎还在下载中（存在未完成标记文件），请等下载完成再认领")
     kind = MediaKind(library.kind if library is not None else rule.kind)
     item = await MediaLibraryService(session, get_tmdb_client()).ensure_media_item(kind, tmdb_id)
+    # 认领身份先持久化再处理：用户拍板是最高权威。本轮处理若因环境故障
+    # 失败（探测/搬运/TMDB 网络 → failed），后续自动退避重试会凭台账里的
+    # 这颗钉子还原身份（见 _ingest_entry），不会回退到重新识别落回
+    # pending、更不需要用户再认领一次
+    record.claimed_tmdb_id = tmdb_id
+    record.claimed_kind = kind.value
+    await session.commit()
     async with _sweep_lock:
         await _ingest_entry(
             session,
@@ -1363,29 +1421,48 @@ class IngestWatcher:
         await _sweep_dir(rule, library)  # 收尾会重挂自检（_sweep_dir 统一负责）
 
     def _arm_recheck(self, source_path: str) -> None:
-        """仍有条目在等静默窗口或等下载器状态翻转时，挂一次性自检。
+        """仍有条目在等静默窗口、等下载器状态翻转或等失败退避时，挂一次性自检。
 
-        静默窗口按最近到期时间挂；只剩挂起条目时按固定节奏轮询——自检
-        醒来先纯 API 核对状态（见 _recheck_later），不打扰磁盘休眠。
+        三个唤醒源：静默窗口按最近到期时间挂；挂起条目按固定节奏轮询——
+        自检醒来先纯 API 核对状态（见 _recheck_later），不打扰磁盘休眠；
+        **失败条目按退避到期时间挂**——失败结论落账时静默表/挂起表都已弹出
+        该条目、fs 事件也不会再来（下载早已结束），没有这第三个源就没人
+        回来重试。取三者中最近的到期时间挂一次即可（自检收尾会重挂）。
         """
         prefix = source_path.rstrip("/") + "/"
+        now = time.monotonic()
         quiet = [since for path, (_fp, since) in _stability.items() if path.startswith(prefix)]
-        if not quiet and not any(path.startswith(prefix) for path in _deferred):
+        failed = [since for path, since in _failed_retry.items() if path.startswith(prefix)]
+        has_deferred = any(path.startswith(prefix) for path in _deferred)
+        if not quiet and not has_deferred and not failed:
             return
         existing = self._rechecks.get(source_path)
         if existing is not None and not existing.done():
             return
+        candidates: list[float] = []
         if quiet:
-            delay = min(quiet) + QUIET_SECONDS - time.monotonic() + 1.0
-            delay = max(5.0, min(delay, QUIET_SECONDS + 5.0))
-        else:
-            delay = DEFERRED_POLL_SECONDS
-        self._rechecks[source_path] = asyncio.create_task(self._recheck_later(source_path, delay))
+            delay = min(quiet) + QUIET_SECONDS - now + 1.0
+            candidates.append(max(5.0, min(delay, QUIET_SECONDS + 5.0)))
+        if has_deferred:
+            candidates.append(DEFERRED_POLL_SECONDS)
+        if failed:
+            candidates.append(max(5.0, min(failed) + FAILED_RETRY_SECONDS - now + 1.0))
+        self._rechecks[source_path] = asyncio.create_task(
+            self._recheck_later(source_path, min(candidates))
+        )
 
     async def _recheck_later(self, key: str, delay: float) -> None:
         await asyncio.sleep(delay)
         prefix = key.rstrip("/") + "/"
-        if not any(path.startswith(prefix) for path in _stability):
+        now = time.monotonic()
+        # 失败条目退避到点：直接巡检重试（不走下面的纯 API 核对——失败与
+        # 下载器状态无关）
+        failed_due = any(
+            now - since >= FAILED_RETRY_SECONDS
+            for path, since in _failed_retry.items()
+            if path.startswith(prefix)
+        )
+        if not failed_due and not any(path.startswith(prefix) for path in _stability):
             # 只剩挂起条目：先纯 API 核对（零磁盘 IO）。种子仍未完成就只
             # 重挂下一轮——暂停的种子可以无限期挂着，NAS 磁盘照常休眠
             try:

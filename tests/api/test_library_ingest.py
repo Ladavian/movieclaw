@@ -56,6 +56,7 @@ async def db(tmp_path, monkeypatch):
     # 下载器 → 权威信号缺席 → 走启发式路径）
     monkeypatch.setattr(ingest_mod, "_stability", {})
     monkeypatch.setattr(ingest_mod, "_deferred", {})
+    monkeypatch.setattr(ingest_mod, "_failed_retry", {})
     monkeypatch.setattr(ingest_mod, "QUIET_SECONDS", 0)
     monkeypatch.setattr(ingest_mod, "_briefs_cache", (float("-inf"), None))
     yield get_database()
@@ -132,6 +133,9 @@ async def test_marker_blocks_and_resets_quiet_window(db, tmp_path, monkeypatch):
     await _sweep_twice(db, library_id, watch)
     await _sweep_twice(db, library_id, watch)
     assert not (root / "某电影 (2020)").exists()
+    # 标记在场必须留痕：CIFS/NFS 等无事件挂载上标记消失不会有事件，
+    # 兜底巡检全靠 _has_pending 看见它才不跳过该目录（回归）
+    assert ingest_mod._has_pending(str(watch))
 
     marker.unlink()
     await _sweep_twice(db, library_id, watch)
@@ -551,6 +555,60 @@ async def test_fallback_sweeps_watched_dir_with_pending_entries(db, tmp_path, mo
 
     await ingest_mod.ingest_tick()
     assert swept == [str(watch1)]
+
+
+@pytest.mark.asyncio
+async def test_failed_entry_retried_by_fallback_without_new_events(db, tmp_path, monkeypatch):
+    """回归：失败条目必须有唤醒源。此前失败结论落账时静默表/挂起表都被
+    弹出、下载结束后也不会再有 fs 事件——三条触发路径同时失灵，台账里
+    承诺的「自动退避重试」永远不会发生。修复后失败条目记入进程内失败
+    重试表：_has_pending 看得见它，被实时监听的目录在没有任何新事件时
+    也会被兜底巡检接住并重试。"""
+    root, watch = tmp_path / "movies", tmp_path / "watch"
+    watch.mkdir()
+    library_id = await _make_library(db, kind=MediaKind.MOVIE, root=root)
+    await _make_rule(db, library_id=library_id, source=watch)
+    item = await _make_item(db, kind=MediaKind.MOVIE, title="某电影", year=2020)
+    _stub_identify(monkeypatch, item)
+    # 环境故障：ffprobe 在但探测失败 → failed
+    monkeypatch.setattr(ingest_mod, "ffprobe_available", lambda: True)
+    monkeypatch.setattr(ingest_mod, "probe_media", lambda p: None)
+
+    entry = watch / "某电影 (2020)"
+    entry.mkdir()
+    (entry / "movie.mkv").write_bytes(b"video")
+    await _sweep_twice(db, library_id, watch)
+    async with db.session() as session:
+        record = (await session.execute(select(IngestEntry))).scalar_one()
+    assert record.status == IngestStatus.FAILED
+    # 失败落账后条目留在失败重试表：兜底巡检据此不再跳过该目录（修复核心）
+    assert ingest_mod._has_pending(str(watch))
+
+    # 环境修复 + 退避到点：目录被实时监听、没有任何新 fs 事件——兜底巡检
+    # 仍要看见失败条目并重试成功
+    monkeypatch.setattr(ingest_mod, "probe_media", lambda p: _FAKE_SPEC)
+    monkeypatch.setattr(ingest_mod, "FAILED_RETRY_SECONDS", 0)
+
+    class _StubWatcher:
+        """目录在实时监听中、但不投递任何事件的假观察者。"""
+
+        def watched_keys(self):
+            return frozenset({str(watch)})
+
+        async def refresh_watches(self):
+            pass
+
+        def _arm_recheck(self, source_path):
+            pass
+
+    monkeypatch.setattr(ingest_mod, "_watcher", _StubWatcher())
+    await ingest_mod.ingest_tick()  # 第一轮：重新记录静默指纹
+    await ingest_mod.ingest_tick()  # 第二轮：静默确认 → 重试导入
+    assert (root / "某电影 (2020)" / "某电影 (2020).mkv").read_bytes() == b"video"
+    async with db.session() as session:
+        record = (await session.execute(select(IngestEntry))).scalar_one()
+    assert record.status == IngestStatus.IMPORTED
+    assert not ingest_mod._has_pending(str(watch))  # 重试成功后重试表清空
 
 
 @pytest.mark.asyncio

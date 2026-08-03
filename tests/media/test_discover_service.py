@@ -13,7 +13,9 @@ from movieclaw_media.tmdb import TmdbError
 _IMAGE_BASE = "https://image.tmdb.org/t/p"
 
 # 类型表响应（movie / tv 共用即可）
-_GENRES = {"genres": [{"id": 878, "name": "科幻"}, {"id": 16, "name": "动画"}, {"id": 28, "name": "动作"}]}
+_GENRES = {
+    "genres": [{"id": 878, "name": "科幻"}, {"id": 16, "name": "动画"}, {"id": 28, "name": "动作"}]
+}
 
 
 def _movie(idx: int, **overrides: Any) -> dict[str, Any]:

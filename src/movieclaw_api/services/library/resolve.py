@@ -203,9 +203,8 @@ def _degraded_evidences(evidence: LocalEvidence) -> list[tuple[LocalEvidence, st
     if match:
         year = int(match.group("year"))
         if evidence.year in (None, year):
-            forms.append(
-                (replace(evidence, title=match.group("stem"), year=year, alt_title=None), "尾部年份拆分")
-            )
+            split_form = replace(evidence, title=match.group("stem"), year=year, alt_title=None)
+            forms.append((split_form, "尾部年份拆分"))
     tokens = spaced.split()
     half = len(tokens) // 2
     if len(tokens) >= 2 and len(tokens) % 2 == 0 and (
@@ -562,9 +561,13 @@ def _strong_corroborations(kind: MediaKind, evidence: LocalEvidence, c: _Candida
     """年份之外的**非平凡**佐证：时长吻合、季数（本地 S≥2 才有区分度——
     任何剧都至少 1 季）、集数覆盖（本地 E≥2 才有区分度）。补搜采信专用。"""
     reasons: list[str] = []
-    if kind is MediaKind.MOVIE and evidence.duration_seconds and c.runtime_seconds:
-        if abs(c.runtime_seconds - evidence.duration_seconds) <= _RUNTIME_WEAK_SECONDS:
-            reasons.append("时长")
+    if (
+        kind is MediaKind.MOVIE
+        and evidence.duration_seconds
+        and c.runtime_seconds
+        and abs(c.runtime_seconds - evidence.duration_seconds) <= _RUNTIME_WEAK_SECONDS
+    ):
+        reasons.append("时长")
     if kind is MediaKind.TV:
         if (
             evidence.season

@@ -14,6 +14,7 @@ import time
 import pytest
 import pytest_asyncio
 from fastapi.testclient import TestClient
+from tests.api.test_agent import _StreamProtocol, configure_provider
 
 from movieclaw_agent import SUMMARY_PREFIX, CompactionResult
 from movieclaw_agent.events import AgentEvent
@@ -25,8 +26,6 @@ from movieclaw_api.services.agent_sessions import (
 )
 from movieclaw_llm import ChatMessage, ChatResponse, TokenUsage, ToolCall
 from movieclaw_llm.protocols import PROTOCOLS
-
-from tests.api.test_agent import _StreamProtocol, configure_provider, parse_sse
 
 # ---------------------------------------------------------------------------
 # 存储层单元测试（纯文件，不依赖 DB / 应用）

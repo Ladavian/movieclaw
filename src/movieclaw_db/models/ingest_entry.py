@@ -71,3 +71,14 @@ class IngestEntry(TimestampMixin, table=True):
     attempted_at: datetime = Field(
         default_factory=utcnow, description="最近一次处理时间（failed 的退避重试依据）"
     )
+    claimed_tmdb_id: int | None = Field(
+        default=None,
+        description=(
+            "人工认领钉住的 TMDB id；NULL=未认领。用户拍板是最高权威：认领当轮"
+            "环境故障失败后，自动重试凭它还原身份，不回退重新识别"
+        ),
+    )
+    claimed_kind: str | None = Field(
+        default=None,
+        description="认领时的媒体类型（movie/tv），与 claimed_tmdb_id 一起还原认领身份",
+    )
