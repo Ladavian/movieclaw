@@ -63,7 +63,10 @@ def seeded(tmp_path: Path, media_root: Path, monkeypatch) -> dict:
 
     assets = tmp_path / "metadata" / "images" / "1"
     assets.mkdir(parents=True)
-    (assets / "poster.jpg").write_bytes(b"\xff\xd8\xff poster")
+    # 真实可解码的 JPEG：封面拼贴（Pillow）要打开它合成
+    from PIL import Image
+
+    Image.new("RGB", (100, 150), "#4a6fa5").save(assets / "poster.jpg", "JPEG")
 
     ids: dict = {}
 

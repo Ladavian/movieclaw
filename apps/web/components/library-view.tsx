@@ -34,6 +34,7 @@ import {
   updateLibrary,
 } from "@/lib/api/libraries";
 import type { Subscription } from "@/lib/api/subscriptions";
+import { publicEnv } from "@/lib/env";
 import { imageUrl } from "@/lib/image-proxy";
 import type { MediaItem, MediaType } from "@/lib/media-types";
 import { useVisiblePolling } from "@/lib/use-visible-polling";
@@ -577,7 +578,7 @@ function LibraryCard({
         className="block overflow-hidden rounded-2xl ring-1 ring-white/10 outline-none transition duration-300 hover:ring-white/35 focus-visible:ring-2 focus-visible:ring-[var(--accent-ring)]"
       >
         <div className="relative aspect-[21/10] bg-[#0a0c12]">
-          <LibraryCover posters={posters} Icon={meta.Icon} />
+          <LibraryCover libraryId={library.id} posters={posters} Icon={meta.Icon} />
           {/* 状态徽标叠在封面左下的倒影暗区：那块本就没有信息、又足够暗
               压得住字；标题行因此永远只有库名，长库名不会被徽标挤没。
               扫描/整理时封面归进度环，徽标让位（否则隔着蒙版透出来像脏渲染） */}
@@ -701,11 +702,38 @@ function ScanProgressRing({ progress }: { progress: { processed: number; total: 
   );
 }
 
-function LibraryCover({ posters, Icon }: { posters: string[]; Icon: typeof FilmIcon }) {
+function LibraryCover({
+  libraryId,
+  posters,
+  Icon,
+}: {
+  libraryId: number;
+  posters: string[];
+  Icon: typeof FilmIcon;
+}) {
+  // 服务端渲染的「氛围光货架」拼贴（与 Jellyfin 兼容层给播放器的是同一张图）：
+  // 一次 <img> 请求替代 9+ 张图的客户端合成，ETag 协商缓存，渲染显著更快。
+  // 拼贴尚未生成/加载失败时回退到原客户端 CSS 货架（素材同源，观感一致）。
+  const [collageFailed, setCollageFailed] = useState(false);
   if (posters.length === 0) {
     return (
       <div className="absolute inset-0 flex items-center justify-center bg-gradient-to-br from-[#1c2230] to-[#10131c]">
         <Icon className="size-12 text-white/[0.13]" />
+      </div>
+    );
+  }
+  if (!collageFailed) {
+    return (
+      <div className="absolute inset-0 overflow-hidden">
+        <img
+          src={`${publicEnv.apiBaseUrl}/libraries/${libraryId}/cover`}
+          alt=""
+          loading="lazy"
+          className="absolute inset-0 size-full object-cover transition duration-300 group-hover/lib:scale-[1.02]"
+          onError={() => setCollageFailed(true)}
+        />
+        {/* 悬停扫光沿用：一道斜向柔光掠过底部倒影区 */}
+        <div className="pointer-events-none absolute -left-[45%] bottom-0 h-[25%] w-[45%] -skew-x-12 bg-gradient-to-r from-transparent via-white/[0.14] to-transparent transition-transform duration-700 ease-out group-hover/lib:translate-x-[350%]" />
       </div>
     );
   }

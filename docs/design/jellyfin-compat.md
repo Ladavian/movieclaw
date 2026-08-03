@@ -48,9 +48,10 @@
 ⑥ Latest 聚合简化为两态（见 5.5）；⑦ strm 条目的 `Container` 从 URL 猜而非
 Jellyfin 的 `"strm"` 字面量、`ETag` 省略（见 6.4）；⑧ 未知 `parentId` 返回
 404（Jellyfin 是 400，见 5.2）；⑨ `stream` 无 `static=true` 时返回 400
-（Jellyfin 会走 ffmpeg 转码）；⑩ 图片接口原图直出——`maxWidth/quality/
-fillWidth` 等缩放参数接受但忽略（实现期决策：不为缩放引入图像处理依赖
-触发 runtime bump；海报资产本身是 TMDB 中等尺寸，带宽代价可接受）。
+（Jellyfin 会走 ffmpeg 转码）。
+（原偏离⑩"图片原图直出"已于 2026-08-03 撤销：库封面拼贴引入 Pillow 后，
+`maxWidth/maxHeight/width/height/fillWidth/fillHeight` 已按 fit-within
+等比缩小实现，变体缓存于 data/cache/jellyfin-images。）
 
 ## 1. 协议总览与全局约定
 
@@ -507,6 +508,7 @@ Backdrop 数组下标即 index，本设计每条目至多 1 张背景，只需�
 
 | Jellyfin 图 | movieclaw 资产 |
 |---|---|
+| 库视图 `Primary` | **服务端渲染的「氛围光货架」拼贴**（`services/library/cover.py`：该库最近入库 4 部作品海报，复刻控制台 LibraryCover 构图——21:10 画布、首图重模糊氛围光、圆角海报排 + 倒影 + 地面光斑；素材指纹做 key，内容变化自动重渲；控制台 `/api/v1/libraries/{id}/cover` 与本接口吐**同一张图**，前端媒体库页也直接 `<img>` 引用替代客户端 CSS 合成） |
 | Movie/Series `Primary` | `media_metadata.poster_file` |
 | Movie/Series `Backdrop/0` | `media_metadata.backdrop_file` |
 | Season `Primary` | `media_season.poster_file`（无 → 404，客户端自动退剧海报） |
@@ -815,7 +817,8 @@ Jellyfin 的一切 ID 都是 32 位 hex GUID；movieclaw 是整型主键 + 数�
 - **UDP 7359（自动发现）是唯一的新端口**：compose 示例补 `7359:7359/udp`
   映射；同时在部署文档写明桥接模式下广播可能到不了容器（见 3.1），
   自动发现不可用不影响手动填地址连接。
-- 纯 Python 实现，无新增运行时依赖 → 不触发 `docker/runtime-version` bump；
+- 运行时依赖：2026-08-03 因库封面拼贴与图片缩放引入 **Pillow**，
+  `docker/runtime-version` 已按发布规范 bump（2→3），合并后需发布新镜像；
   compose 模板/部署文档更新随本特性一并发布。
 
 ### 8.5 领域层与协议层分离（为未来网页端播放预留，2026-08-03 用户提出）

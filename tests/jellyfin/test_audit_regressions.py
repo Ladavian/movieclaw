@@ -231,3 +231,58 @@ def test_items_counts_endpoint(client: TestClient, seeded: dict) -> None:
         "MusicVideoCount", "BoxSetCount", "BookCount", "ItemCount",
     ):
         assert key in body
+
+
+def test_library_cover_is_server_rendered_collage(client: TestClient, seeded: dict) -> None:
+    """库封面 = 服务端渲染的氛围光货架拼贴，Jellyfin 与控制台双端同一张图。"""
+    token = jf_login(client)
+    views = client.get("/UserViews", params={"ApiKey": token}).json()["Items"]
+    movie_lib = next(v for v in views if v["Name"] == "电影")
+    tag = movie_lib["ImageTags"]["Primary"]
+    assert len(tag) == 32  # 素材指纹
+
+    # Jellyfin 侧：拼贴图可拉取，21:10 画布
+    resp = client.get(f"/Items/{movie_lib['Id']}/Images/Primary", params={"ApiKey": token})
+    assert resp.status_code == 200
+    assert resp.headers["content-type"] == "image/jpeg"
+    from io import BytesIO
+
+    from PIL import Image
+
+    img = Image.open(BytesIO(resp.content))
+    assert img.size == (1260, 600)
+
+    # 控制台侧：同一张图（session cookie 认证），ETag 304 协商
+    console = client.get(f"/api/v1/libraries/{seeded['movie_lib']}/cover")
+    assert console.status_code == 200
+    assert console.content == resp.content
+    revisit = client.get(
+        f"/api/v1/libraries/{seeded['movie_lib']}/cover",
+        headers={"If-None-Match": console.headers["ETag"]},
+    )
+    assert revisit.status_code == 304
+
+    # 无海报素材的库：无 Primary tag、封面 404（前端回退 CSS 货架）
+    tv_lib = next(v for v in views if v["Name"] == "剧集")
+    assert "Primary" not in tv_lib["ImageTags"]
+
+
+def test_image_scaling_params(client: TestClient, seeded: dict) -> None:
+    """maxWidth 等缩放参数生效（fit-within 只缩不放，缓存复用）。"""
+    token = jf_login(client)
+    guid = item_guid(seeded["movie"])
+    resp = client.get(
+        f"/Items/{guid}/Images/Primary", params={"ApiKey": token, "maxWidth": "50"}
+    )
+    assert resp.status_code == 200
+    from io import BytesIO
+
+    from PIL import Image
+
+    img = Image.open(BytesIO(resp.content))
+    assert img.width == 50  # 原图 100x150 → 缩到宽 50
+    # 不放大：请求超过原尺寸时原样
+    big = client.get(
+        f"/Items/{guid}/Images/Primary", params={"ApiKey": token, "maxWidth": "4000"}
+    )
+    assert Image.open(BytesIO(big.content)).width == 100

@@ -51,6 +51,14 @@ router = APIRouter(dependencies=[Depends(require_device)])
 Entry = tuple[str, ItemBundle, int, int]
 
 
+async def _cover_tag(library_id: int) -> str | None:
+    """库封面拼贴的版本 key（惰性渲染，素材不变零成本）。"""
+    from movieclaw_api.services.library.cover import ensure_library_cover
+
+    result = await ensure_library_cover(library_id)
+    return result[1] if result else None
+
+
 # ---------------------------------------------------------------------------
 # 视图
 # ---------------------------------------------------------------------------
@@ -63,7 +71,10 @@ async def user_views(user_id: str | None = None) -> JSONResponse:
     async with get_database().session() as session:
         libraries = await list_libraries(session)
         stats = await load_library_stats(session)
-    dtos = [library_view_dto(ctx, lib, stats.get(lib.id)) for lib in libraries]
+    dtos = [
+        library_view_dto(ctx, lib, stats.get(lib.id), await _cover_tag(lib.id))
+        for lib in libraries
+    ]
     return JSONResponse(query_result(dtos, len(dtos)))
 
 
@@ -266,7 +277,10 @@ async def _query_items(request: Request) -> JSONResponse:
                 libraries = await list_libraries(session)
                 stats = await load_library_stats(session)
                 dtos = [
-                    library_view_dto(ctx, lib, stats.get(lib.id)) for lib in libraries
+                    library_view_dto(
+                        ctx, lib, stats.get(lib.id), await _cover_tag(lib.id)
+                    )
+                    for lib in libraries
                 ]
                 return JSONResponse(query_result(dtos, len(dtos)))
 
@@ -613,7 +627,11 @@ async def get_item(request: Request, item_id: str, user_id: str | None = None) -
             if library is None:
                 raise not_found()
             stats = await load_library_stats(session)
-            return JSONResponse(library_view_dto(ctx, library, stats.get(library.id)))
+            return JSONResponse(
+                library_view_dto(
+                    ctx, library, stats.get(library.id), await _cover_tag(library.id)
+                )
+            )
         bundles = await load_bundles(session, [ref.entity_id])
 
     bundle = bundles.get(ref.entity_id)

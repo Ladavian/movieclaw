@@ -1,15 +1,19 @@
 """图片接口（设计文档 5.6）。
 
 资产映射：Movie/Series Primary→poster_file、Backdrop/0→backdrop_file、
-Season Primary→media_season.poster_file、Episode Primary→media_episode.still_file。
+Season Primary→media_season.poster_file、Episode Primary→media_episode.still_file；
+库 Primary→服务端渲染的氛围光货架拼贴（library.cover 服务，双端共用）。
 `tag` 纯缓存语义：不校验、回显进 ETag（带引号）+ 一年 immutable。
-缩放参数（maxWidth/quality/fillWidth…）接受但忽略——原图直出（海报资产
-本身是 TMDB 中等尺寸），不为此引入图像处理依赖（偏离，见设计文档 9.5）。
+缩放：maxWidth/maxHeight/width/height/fillWidth/fillHeight 任一存在时按
+fit-within 等比缩小（只缩不放），产物落 data/cache/jellyfin-images 复用。
 """
 
 from __future__ import annotations
 
+import asyncio
+import hashlib
 import mimetypes
+from pathlib import Path
 
 from fastapi import APIRouter, Request
 from fastapi.responses import FileResponse, Response
@@ -35,14 +39,7 @@ async def _resolve_asset(
     itype = image_type.lower()
 
     if ref.kind == EntityKind.LIBRARY:
-        if itype != "primary":
-            return None
-        # 库封面：与 library_view_dto 同一选择策略（最新入库条目的海报）
-        from movieclaw_jellyfin.catalog import load_library_stats
-
-        stats = await load_library_stats(session)
-        lib_stats = stats.get(ref.entity_id)
-        return lib_stats.cover_asset if lib_stats else None
+        return None  # 库封面走拼贴专路（get_item_image 特判），不经资产目录
 
     if ref.kind == EntityKind.ITEM:
         meta = (
@@ -91,6 +88,27 @@ async def get_item_image(
     request: Request, item_id: str, image_type: str, image_index: int = 0
 ) -> Response:
     ctx = await dto_context()
+    # 库封面：服务端渲染的氛围光货架拼贴（与控制台媒体库页同一张图）
+    ref = decode_guid(item_id)
+    if ref is not None and ref.kind == EntityKind.LIBRARY:
+        if image_type.lower() != "primary":
+            raise JellyfinError(
+                404, text=f"Item does not have an image of type {image_type}"
+            )
+        from movieclaw_api.services.library.cover import ensure_library_cover
+
+        cover = await ensure_library_cover(ref.entity_id)
+        if cover is None:
+            raise JellyfinError(404, text="Item does not have an image of type Primary")
+        return FileResponse(
+            cover[0],
+            media_type="image/jpeg",
+            headers={
+                "Vary": "Accept",
+                "Cache-Control": "public, max-age=31536000, immutable",
+                "ETag": f'"{cover[1]}"',
+            },
+        )
     async with get_database().session() as session:
         rel_path = await _resolve_asset(session, item_id, image_type)
     if not rel_path:
@@ -129,5 +147,63 @@ async def get_item_image(
             except (TypeError, ValueError, OSError):
                 pass
 
+    target = await _maybe_scaled(target, request)
     media_type = mimetypes.guess_type(str(target))[0] or "image/jpeg"
     return FileResponse(target, media_type=media_type, headers=headers)
+
+
+_SCALE_PARAMS = ("maxWidth", "maxHeight", "width", "height", "fillWidth", "fillHeight")
+
+
+def _scale_bounds(request: Request) -> tuple[int, int] | None:
+    """从缩放参数取目标框（fit-within 语义）；无参数返回 None。"""
+    values: list[tuple[str, int]] = []
+    for name in _SCALE_PARAMS:
+        raw = request.query_params.get(name)
+        if raw is None:
+            continue
+        try:
+            value = int(raw)
+        except ValueError:
+            continue
+        if value > 0:
+            values.append((name, value))
+    if not values:
+        return None
+    widths = [v for n, v in values if "idth" in n]
+    heights = [v for n, v in values if "eight" in n]
+    return (min(widths) if widths else 8192, min(heights) if heights else 8192)
+
+
+def _render_scaled(src: Path, out: Path, bounds: tuple[int, int]) -> None:
+    from PIL import Image
+
+    img = Image.open(src)
+    img.thumbnail(bounds)  # 等比缩小，不放大
+    img.convert("RGB").save(out, "JPEG", quality=90)
+
+
+async def _maybe_scaled(target: Path, request: Request) -> Path:
+    """按需生成缩放变体（缓存复用）；无缩放参数或缩放失败时原图直出。"""
+    bounds = _scale_bounds(request)
+    if bounds is None:
+        return target
+    try:
+        stat = target.stat()
+    except OSError:
+        return target
+    from movieclaw_api.core.config import get_settings
+
+    cache_dir = Path(get_settings().image_cache_dir) / "jellyfin-scaled"
+    key = hashlib.md5(
+        f"{target}:{stat.st_mtime_ns}:{bounds[0]}x{bounds[1]}".encode()
+    ).hexdigest()
+    cached = cache_dir / f"{key}.jpg"
+    if cached.is_file():
+        return cached
+    try:
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        await asyncio.to_thread(_render_scaled, target, cached, bounds)
+    except Exception:
+        return target
+    return cached
