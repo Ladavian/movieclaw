@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 
 from movieclaw_channel.dispatcher import make_dispatcher, split_message
-from movieclaw_channel.types import InboundMessage, ReplyContext
+from movieclaw_channel.types import InboundMessage, OutboundEnvelope, ReplyContext
 
 # ---------------------------------------------------------------------------
 # split_message(纯函数)
@@ -207,5 +207,97 @@ async def test_long_reply_is_chunked():
         await d.submit_inbound(_msg("hi", msg_id="m1"))
         await _drain(d, adapter, expect=2)
         assert all(len(t) <= 50 for _, t in adapter.sent)
+    finally:
+        await d.close()
+
+
+# ---------------------------------------------------------------------------
+# 图文推送(send_photo 可选能力与纯文本回退)
+# ---------------------------------------------------------------------------
+
+
+class FakePhotoAdapter(FakeAdapter):
+    """带 send_photo 能力的假 adapter;fail_photo 置位时模拟发图失败。"""
+
+    def __init__(self, *, fail_photo: bool = False) -> None:
+        super().__init__()
+        self.sent_photos: list[tuple[str, bytes, str]] = []
+        self._fail_photo = fail_photo
+
+    async def send_photo(self, reply: ReplyContext, photo: bytes, caption: str) -> None:
+        if self._fail_photo:
+            raise RuntimeError("模拟发图失败")
+        self.sent_photos.append((reply.user_id, photo, caption))
+
+
+def _push_env(text: str, photo: bytes | None) -> OutboundEnvelope:
+    reply = ReplyContext(channel_id="weixin", account_id="bot1", user_id="u1@im.wechat")
+    return OutboundEnvelope(reply=reply, text=text, origin="push", photo=photo)
+
+
+async def _drain_photos(adapter: FakePhotoAdapter, *, expect: int, timeout: float = 2.0) -> None:
+    deadline = asyncio.get_event_loop().time() + timeout
+    while len(adapter.sent_photos) < expect:
+        if asyncio.get_event_loop().time() > deadline:
+            raise AssertionError(f"等待发图超时:已发 {len(adapter.sent_photos)}/{expect}")
+        await asyncio.sleep(0.01)
+
+
+async def _noop_agent(msg, emit):  # pragma: no cover - 图文测试不走 Agent
+    raise AssertionError("不应进入 Agent")
+
+
+async def test_photo_sent_with_caption():
+    """有发图能力时图文一条发出,不再走文本路径。"""
+    adapter = FakePhotoAdapter()
+    d = make_dispatcher(adapter, is_allowed=lambda _u: True, run_agent=_noop_agent)
+    d.start()
+    try:
+        await d.push_outbound(_push_env("已入库:《某片》", b"\x89PNG"))
+        await _drain_photos(adapter, expect=1)
+        assert adapter.sent_photos == [("u1@im.wechat", b"\x89PNG", "已入库:《某片》")]
+        assert adapter.sent == []
+    finally:
+        await d.close()
+
+
+async def test_photo_falls_back_without_capability():
+    """adapter 无 send_photo 时(微信),照常发纯文本。"""
+    adapter = FakeAdapter()
+    d = make_dispatcher(adapter, is_allowed=lambda _u: True, run_agent=_noop_agent)
+    d.start()
+    try:
+        await d.push_outbound(_push_env("已入库:《某片》", b"\x89PNG"))
+        await _drain(d, adapter, expect=1)
+        assert adapter.sent == [("u1@im.wechat", "已入库:《某片》")]
+    finally:
+        await d.close()
+
+
+async def test_photo_send_failure_falls_back_to_text():
+    """发图抛错时退回纯文本,文字不丢。"""
+    adapter = FakePhotoAdapter(fail_photo=True)
+    d = make_dispatcher(adapter, is_allowed=lambda _u: True, run_agent=_noop_agent)
+    d.start()
+    try:
+        await d.push_outbound(_push_env("已入库:《某片》", b"\x89PNG"))
+        await _drain(d, adapter, expect=1)
+        assert adapter.sent == [("u1@im.wechat", "已入库:《某片》")]
+        assert adapter.sent_photos == []
+    finally:
+        await d.close()
+
+
+async def test_oversized_caption_skips_photo():
+    """文案超 caption 上限(1000 字符)时放弃随图发送,走文本分片。"""
+    adapter = FakePhotoAdapter()
+    adapter.max_text_len = 3900
+    d = make_dispatcher(adapter, is_allowed=lambda _u: True, run_agent=_noop_agent)
+    d.start()
+    try:
+        await d.push_outbound(_push_env("字" * 1001, b"\x89PNG"))
+        await _drain(d, adapter, expect=1)
+        assert adapter.sent_photos == []
+        assert adapter.sent[0][1] == "字" * 1001
     finally:
         await d.close()

@@ -44,6 +44,9 @@ _MAX_CONCURRENT_RUNS = 2
 #: 出站发送失败的重试次数与间隔
 _SEND_RETRIES = 1
 _SEND_RETRY_DELAY_S = 2.0
+#: 图文消息的文案上限:Telegram caption 1024 字符是各平台里最紧的口径,
+#: 超过就放弃随图发送、退回纯文本分片(推送文案实际都很短,达不到)
+_PHOTO_CAPTION_LIMIT = 1000
 
 
 def split_message(text: str, limit: int) -> list[str]:
@@ -269,11 +272,35 @@ class ChannelDispatcher:
         await self._outbound.put(env)
 
     async def _outbound_pump(self) -> None:
-        """发送泵:串行取信封 → 分片 → 调 adapter 发送(带一次重试)。"""
+        """发送泵:串行取信封 → 图文优先 → 分片 → 调 adapter 发送(带一次重试)。"""
         while True:
             env = await self._outbound.get()
+            if env.photo is not None and await self._try_send_photo(env):
+                continue
             for chunk in split_message(env.text, self._adapter.max_text_len):
                 await self._send_with_retry(env.reply, chunk, env.origin)
+
+    async def _try_send_photo(self, env: OutboundEnvelope) -> bool:
+        """图文一体发送,返回是否成功。
+
+        adapter 无 send_photo 能力、文案超 caption 上限、发送抛错——
+        任何一种情况都返回 False,由发送泵退回纯文本路径:图可以丢,
+        文字不能丢。
+        """
+        send_photo = getattr(self._adapter, "send_photo", None)
+        if send_photo is None or len(env.text) > _PHOTO_CAPTION_LIMIT:
+            return False
+        try:
+            await send_photo(env.reply, env.photo, env.text)
+            return True
+        except Exception as exc:  # noqa: BLE001 -- 发图失败退纯文本,不能断推送
+            logger.warning(
+                "图文消息发送失败,退回纯文本 user=%s origin=%s err=%s",
+                env.reply.user_id,
+                env.origin,
+                exc,
+            )
+            return False
 
     async def _send_with_retry(self, reply: ReplyContext, text: str, origin: str) -> None:
         for attempt in range(_SEND_RETRIES + 1):

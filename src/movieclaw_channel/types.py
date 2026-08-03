@@ -56,7 +56,7 @@ class InboundMessage:
 class OutboundEnvelope:
     """出站信封:发送泵唯一认识的载荷。
 
-    Agent 回复、命令回执、未来的主动推送(下载完成通知等)都走这一个口,
+    Agent 回复、命令回执、主动推送(下载/入库通知等)都走这一个口,
     保证同账号出站顺序与限流集中在发送泵一处。
     """
 
@@ -64,3 +64,6 @@ class OutboundEnvelope:
     text: str
     #: 来源标记,仅用于日志排障
     origin: Literal["agent", "system", "push"] = "agent"
+    #: 随消息附带的图片字节(主动推送的海报等);adapter 不支持发图时
+    #: 发送泵自动退回纯文本——图可以丢,文字不能丢
+    photo: bytes | None = None

@@ -1,12 +1,13 @@
 """Discord 的最小 REST 客户端(收消息走 Gateway,见 adapter)。
 
-只封装用到的四个接口:校验 token(users/@me)、建私聊频道、发消息、typing。
-不引入 discord.py 这类重依赖。出口走 egress_transport("discord")。
+只封装用到的接口:校验 token(users/@me)、建私聊频道、发消息(文本/图文)、
+typing。不引入 discord.py 这类重依赖。出口走 egress_transport("discord")。
 """
 
 from __future__ import annotations
 
 import contextlib
+import json
 from typing import Any
 
 import httpx
@@ -42,6 +43,10 @@ class DiscordClient:
 
     async def _call(self, method: str, path: str, payload: dict[str, Any] | None = None) -> Any:
         resp = await self._http.request(method, f"{_API_BASE}{path}", json=payload)
+        return self._check(path, resp)
+
+    def _check(self, path: str, resp: httpx.Response) -> Any:
+        """REST 响应的统一校验:401 归类凭据错误,4xx/5xx 抛业务错。"""
         if resp.status_code == 401:
             raise DiscordApiError("Discord bot token 无效或已吊销(HTTP 401)", auth_failed=True)
         if resp.status_code >= 400:
@@ -68,6 +73,16 @@ class DiscordClient:
 
     async def send_message(self, channel_id: str, text: str) -> None:
         await self._call("POST", f"/channels/{channel_id}/messages", {"content": text})
+
+    async def send_photo(self, channel_id: str, photo: bytes, text: str) -> None:
+        """发送图文消息:图片作附件 multipart 上传,text 作正文。"""
+        path = f"/channels/{channel_id}/messages"
+        resp = await self._http.post(
+            f"{_API_BASE}{path}",
+            data={"payload_json": json.dumps({"content": text})},
+            files={"files[0]": ("poster.jpg", photo, "image/jpeg")},
+        )
+        self._check(path, resp)
 
     async def trigger_typing(self, channel_id: str) -> None:
         await self._call("POST", f"/channels/{channel_id}/typing", {})
