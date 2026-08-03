@@ -13,6 +13,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+from collections.abc import Awaitable, Callable
 from typing import Any
 
 import httpx
@@ -56,15 +57,39 @@ def _extract_text(item_list: list[dict[str, Any]] | None) -> str:
 
 
 class WeixinAdapter:
-    """微信通道适配器(单账号)。"""
+    """微信通道适配器(单账号)。
+
+    会话令牌(context_token)的去向:iLink 的发送接口必须绑定一条会话,而令牌
+    只随入站消息下发。回复入站消息时原样回带即可;**主动推送**(订阅投递、
+    入库完成等)没有对应的入站消息,只能复用最近一次记住的令牌——这也是
+    Telegram(chat_id == user_id)、Discord(现开 DM 频道)各自的兜底位置。
+    令牌变化时经 ``on_context_token`` 落库,进程重启后由 ``initial_context_token``
+    读回,避免重启后第一次推送必然失联。
+
+    **只记绑定人的令牌**:陌生人也能给 bot 发消息(dispatcher 白名单会把这类
+    消息丢掉,但收消息循环仍会看到),不按 ``bound_user_id`` 过滤的话,推送就会
+    带上陌生人会话的令牌——轻则发不出去,重则发错人。同理,兜底令牌只在
+    收件人正是绑定人时才启用。
+    """
 
     channel_id = CHANNEL_ID
     #: 微信单条文本约 4000 字上限,留余量
     max_text_len = 3800
 
-    def __init__(self, client: WeixinClient, account_id: str) -> None:
+    def __init__(
+        self,
+        client: WeixinClient,
+        account_id: str,
+        *,
+        bound_user_id: str = "",
+        initial_context_token: str = "",
+        on_context_token: Callable[[str], Awaitable[None]] | None = None,
+    ) -> None:
         self._client = client
         self._account_id = account_id
+        self._bound_user_id = bound_user_id
+        self._context_token = initial_context_token
+        self._on_context_token = on_context_token
 
     async def run(self, ctx: ChannelContext) -> None:
         stop = ctx.stop or asyncio.Event()
@@ -130,6 +155,7 @@ class WeixinAdapter:
                 for raw in resp.get("msgs") or []:
                     msg = self._normalize(raw)
                     if msg is not None:
+                        await self._remember_context_token(msg)
                         await ctx.on_inbound(msg)
         finally:
             await self._client.notify_stop()
@@ -165,8 +191,29 @@ class WeixinAdapter:
             timestamp_ms=int(raw.get("create_time_ms") or 0),
         )
 
+    async def _remember_context_token(self, msg: InboundMessage) -> None:
+        """记住并持久化绑定人的会话令牌(仅在变化时写库,正常一次会话只写一次)。"""
+        if not self._bound_user_id or msg.user_id != self._bound_user_id:
+            return  # 陌生人的会话令牌不能拿来推送,见类文档
+        token = str(msg.reply.token.get("context_token") or "")
+        if not token or token == self._context_token:
+            return
+        self._context_token = token
+        if self._on_context_token is None:
+            return
+        try:
+            await self._on_context_token(token)
+        except Exception as exc:  # noqa: BLE001 -- 落库失败只影响重启后的首次推送
+            logger.warning("微信会话令牌落库失败(本进程内仍可用):%s", exc)
+
     async def send_text(self, reply: ReplyContext, text: str) -> None:
-        await self._client.send_text(reply.user_id, text, reply.token.get("context_token"))
+        # 主动推送构造的 ReplyContext 没有会话令牌(它只随入站消息下发),
+        # 回落到最近一次记住的那个——与 telegram 的 chat_id 兜底同一位置。
+        # 兜底只对绑定人生效:记住的令牌属于他的会话,不能拿去发给别人。
+        token = reply.token.get("context_token")
+        if not token and self._bound_user_id and reply.user_id == self._bound_user_id:
+            token = self._context_token or None
+        await self._client.send_text(reply.user_id, text, token)
 
     @staticmethod
     async def _sleep(stop: asyncio.Event, seconds: float) -> None:

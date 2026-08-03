@@ -32,6 +32,12 @@ class ChannelAccount(TimestampMixin, table=True):
 
     ``bound_user_id`` 是扫码人的平台用户 id,同时充当 P0 的白名单:
     只有这个用户发来的消息会被处理(谁扫码谁才能用,防陌生人探测)。
+
+    ``context_token`` 只对微信有意义:iLink 网关的发送接口必须绑定一条会话,
+    该令牌随每条入站消息下发。回复入站消息时原样回带即可,但**主动推送**
+    (订阅投递/入库完成等)没有对应的入站消息,只能复用最近一次记住的这个值
+    ——否则消息发出去也定位不到会话。Telegram/Discord 靠 user_id 就能直投,
+    不需要本字段。
     """
 
     __tablename__ = "channel_account"
@@ -46,6 +52,11 @@ class ChannelAccount(TimestampMixin, table=True):
     )
     cursor: str | None = Field(
         default=None, sa_column=Column(Text), description="收消息增量游标(get_updates_buf)"
+    )
+    context_token: str | None = Field(
+        default=None,
+        sa_column=Column(Text),
+        description="最近一次入站消息的会话令牌(仅微信,主动推送复用它定位会话)",
     )
     status: ChannelAccountStatus = Field(
         default=ChannelAccountStatus.ACTIVE, description="账号状态(active/stale)"

@@ -118,9 +118,16 @@ class WeixinChannelService:
 
         client = WeixinClient(row.base_url, token)
         self._clients[account_id] = client
-        adapter = WeixinAdapter(client, account_id)
-
         bound_user = (row.bound_user_id or "").strip()
+        adapter = WeixinAdapter(
+            client,
+            account_id,
+            # 主动推送要靠会话令牌定位会话:只记绑定人的,重启后从库里读回
+            bound_user_id=bound_user,
+            initial_context_token=row.context_token or "",
+            on_context_token=self._make_context_token_saver(account_id),
+        )
+
         dispatcher = make_dispatcher(
             adapter,
             # P0 白名单 = 扫码人本人;bound_user 缺失(异常数据)时拒绝所有人
@@ -143,6 +150,16 @@ class WeixinChannelService:
         async def save(cursor: str) -> None:
             async with get_database().session() as session:
                 await ChannelAccountRepository(session).save_cursor(account_id, cursor)
+
+        return save
+
+    @staticmethod
+    def _make_context_token_saver(account_id: str) -> Callable[[str], Awaitable[None]]:
+        async def save(context_token: str) -> None:
+            async with get_database().session() as session:
+                await ChannelAccountRepository(session).save_context_token(
+                    account_id, context_token
+                )
 
         return save
 
