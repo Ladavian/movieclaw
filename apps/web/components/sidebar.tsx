@@ -70,47 +70,10 @@ export function Sidebar({
   flat = false,
 }: SidebarProps) {
   const { backdrop } = useBackdrop();
-  const { conversations, rename, remove } = useAgentConversations();
   // 移动端的搜索入口在全局顶栏上（常驻可见），侧栏里这颗就是重复的。
   // 必须条件渲染而不是 CSS 隐藏：SearchCommand 自带全局 ⌘K 监听，
   // 挂两份会让一次快捷键把面板开了又关。
   const isMobile = useIsMobile();
-  const toast = useToast();
-  const confirm = useConfirm();
-  const prompt = usePrompt();
-
-  /** 重命名会话：空输入或未改动直接放弃。 */
-  const handleRename = async (id: string, currentTitle: string) => {
-    const input = await prompt({
-      title: "重命名会话",
-      initialValue: currentTitle,
-      maxLength: 80,
-    });
-    if (input == null) return;
-    const title = input.trim().slice(0, 80);
-    if (!title || title === currentTitle) return;
-    void rename(id, title).catch((error) => {
-      toast.error(`重命名失败：${(error as Error).message}`);
-    });
-  };
-
-  /** 彻底删除会话（二次确认）；删的是当前打开的会话时回到新任务页。 */
-  const handleDelete = async (id: string, title: string) => {
-    const ok = await confirm({
-      title: `彻底删除会话「${title}」？`,
-      description: "服务器上的完整对话记录将一并删除，此操作不可恢复。",
-      confirmLabel: "彻底删除",
-      tone: "danger",
-    });
-    if (!ok) return;
-    void remove(id)
-      .then(() => {
-        if (activeNav === id) onSelect("new");
-      })
-      .catch((error) => {
-        toast.error(`删除失败：${(error as Error).message}`);
-      });
-  };
   // 透明度/明暗/厚度来自「设置 → 外观」的用户偏好（ui.preferences.sidebar），
   // 基底为 LiquidGlassCard 同款材质；设置页拖动滑杆时经预览草稿实时生效。
   const { prefs } = useUiPrefs();
@@ -154,11 +117,15 @@ export function Sidebar({
         </div>
       )}
 
-      {/* 可滚动的导航区 */}
-      <nav className="scroll-thin flex-1 overflow-y-auto px-3 pb-2">
+      {/* 导航区。两段式：主导航固定在上方，「最近会话」占满剩余高度并自带
+          滚动条——会话可以有几百条，与主导航共用一条滚动条时翻会话会把
+          导航推出视野。min-h-0 是 flex 子项能真正收缩、把滚动交给内层的前提。 */}
+      <nav className="flex min-h-0 flex-1 flex-col px-3 pb-2">
         {/* 主导航：无分组标题、无图标底片的扁平列表（对齐 Codex 侧栏）；
-            折叠时只留居中图标，文案降级为 title 悬浮提示 */}
-        <div className="space-y-0.5">
+            折叠时只留居中图标，文案降级为 title 悬浮提示。
+            自带 overflow 是矮窗口下的安全阀：空间不够时它自己滚，
+            而不是把「最近会话」挤没。 */}
+        <div className="scroll-thin space-y-0.5 overflow-y-auto">
           {mainNavItems.map((item) => {
             const Icon = item.icon;
             return (
@@ -189,32 +156,7 @@ export function Sidebar({
         </div>
 
         {/* 分组：最近会话（真实 Agent 会话，按最近更新排序；折叠时整组隐藏） */}
-        {!collapsed && (
-          <div className="mt-6">
-            <Section label="最近会话" icon={<ClockIcon className="size-3.5" />}>
-              <div className="space-y-0.5">
-                {conversations.length === 0 ? (
-                  <p className="px-2.5 py-1 text-caption leading-5 text-[var(--text-faint)]">
-                    还没有会话，从「新任务」开始。
-                  </p>
-                ) : (
-                  conversations.slice(0, 12).map((c) => (
-                    <RunRow
-                      key={c.id}
-                      title={c.title}
-                      running={c.running}
-                      time={formatRelativeTime(new Date(c.updatedAt).toISOString())}
-                      active={activeNav === c.id}
-                      onClick={() => onSelect(c.id)}
-                      onRename={() => void handleRename(c.id, c.title)}
-                      onDelete={() => void handleDelete(c.id, c.title)}
-                    />
-                  ))
-                )}
-              </div>
-            </Section>
-          </div>
-        )}
+        {!collapsed && <RecentSessions activeNav={activeNav} onSelect={onSelect} />}
       </nav>
 
       {/* 左下角：用户信息（无分割线，靠间距区隔）；折叠时只留头像 */}
@@ -286,6 +228,125 @@ function CollapseToggle({ collapsed, onClick }: { collapsed: boolean; onClick: (
   );
 }
 
+/** 触底预加载的提前量：距底部还有这么多像素就取下一页，滚到底时数据已就位。 */
+const LOAD_MORE_THRESHOLD_PX = 120;
+
+/**
+ * 「最近会话」分组：独立滚动 + 触底增量加载 + 行尾相对时间。
+ *
+ * 单独成组件而不是写在 Sidebar 里，是为了把会话 store 的订阅限制在这棵子树：
+ * 流式生成时 store 每 80ms 就更新一次，订阅写在 Sidebar 上会连带 WebGL
+ * 玻璃面板一起重渲染。
+ *
+ * 分页有两个触发口：滚动触底，以及「列表没撑满容器」——大屏下首页 20 条
+ * 可能撑不出滚动条，用户永远滚不到底，会误以为只有这些会话。
+ */
+function RecentSessions({
+  activeNav,
+  onSelect,
+}: {
+  activeNav: string;
+  onSelect: (id: string) => void;
+}) {
+  const { conversations, hasMore, loadingMore, loadMore, rename, remove } =
+    useAgentConversations();
+  const toast = useToast();
+  const confirm = useConfirm();
+  const prompt = usePrompt();
+  const listRef = useRef<HTMLDivElement>(null);
+
+  // 行尾展示的是「x 分钟前」，不重渲染就会一直停在打开页面那一刻。
+  // 每分钟空转一次，代价只有这棵子树的一次 diff。
+  const [, setTick] = useState(0);
+  useEffect(() => {
+    const timer = window.setInterval(() => setTick((n) => n + 1), 60_000);
+    return () => window.clearInterval(timer);
+  }, []);
+
+  // 列表没撑满容器时主动补页（首屏数据少 / 高分屏侧栏很长 / 删到只剩几条）
+  useEffect(() => {
+    const el = listRef.current;
+    if (!el || !hasMore || loadingMore) return;
+    if (el.scrollHeight <= el.clientHeight) loadMore();
+  }, [conversations.length, hasMore, loadingMore, loadMore]);
+
+  const handleScroll = () => {
+    const el = listRef.current;
+    if (!el) return;
+    if (el.scrollHeight - el.scrollTop - el.clientHeight <= LOAD_MORE_THRESHOLD_PX) {
+      loadMore();
+    }
+  };
+
+  /** 重命名会话：空输入或未改动直接放弃。 */
+  const handleRename = async (id: string, currentTitle: string) => {
+    const input = await prompt({
+      title: "重命名会话",
+      initialValue: currentTitle,
+      maxLength: 80,
+    });
+    if (input == null) return;
+    const title = input.trim().slice(0, 80);
+    if (!title || title === currentTitle) return;
+    void rename(id, title).catch((error) => {
+      toast.error(`重命名失败：${(error as Error).message}`);
+    });
+  };
+
+  /** 彻底删除会话（二次确认）；删的是当前打开的会话时回到新任务页。 */
+  const handleDelete = async (id: string, title: string) => {
+    const ok = await confirm({
+      title: `彻底删除会话「${title}」？`,
+      description: "服务器上的完整对话记录将一并删除，此操作不可恢复。",
+      confirmLabel: "彻底删除",
+      tone: "danger",
+    });
+    if (!ok) return;
+    void remove(id)
+      .then(() => {
+        if (activeNav === id) onSelect("new");
+      })
+      .catch((error) => {
+        toast.error(`删除失败：${(error as Error).message}`);
+      });
+  };
+
+  return (
+    <div className="mt-6 flex min-h-0 flex-1 flex-col">
+      <Section label="最近会话" icon={<ClockIcon className="size-3.5" />}>
+        <div
+          ref={listRef}
+          onScroll={handleScroll}
+          className="scroll-thin min-h-0 flex-1 space-y-0.5 overflow-y-auto"
+        >
+          {conversations.length === 0 ? (
+            <p className="px-2.5 py-1 text-caption leading-5 text-[var(--text-faint)]">
+              还没有会话，从「新任务」开始。
+            </p>
+          ) : (
+            conversations.map((c) => (
+              <RunRow
+                key={c.id}
+                title={c.title}
+                running={c.running}
+                time={formatRelativeTime(new Date(c.updatedAt).toISOString())}
+                active={activeNav === c.id}
+                onClick={() => onSelect(c.id)}
+                onRename={() => void handleRename(c.id, c.title)}
+                onDelete={() => void handleDelete(c.id, c.title)}
+              />
+            ))
+          )}
+          {loadingMore && (
+            <p className="px-2.5 py-1.5 text-caption text-[var(--text-faint)]">加载中…</p>
+          )}
+        </div>
+      </Section>
+    </div>
+  );
+}
+
+/** 分组外壳：标题固定，内容区（通常是可滚动列表）占满剩余高度。 */
 function Section({
   label,
   icon,
@@ -296,8 +357,8 @@ function Section({
   children: React.ReactNode;
 }) {
   return (
-    <div className="space-y-1.5">
-      <div className="flex items-center gap-1.5 px-2.5 pb-1">
+    <div className="flex min-h-0 flex-1 flex-col gap-1.5">
+      <div className="flex shrink-0 items-center gap-1.5 px-2.5 pb-1">
         {icon && <span className="text-[var(--text-faint)]">{icon}</span>}
         <span className="group-label">{label}</span>
       </div>
@@ -381,17 +442,19 @@ function RunRow({
             </>
           )}
         </span>
-        {/* 标题占满整行，右端渐变透明淡出（无省略号）；悬停/菜单打开时淡出区
-            加宽，行尾按钮直接浮在淡出区上——文字看起来「渐隐进」按钮下方。
-            用 mask 而非渐变色遮罩：侧栏底是 WebGL 玻璃，没有可匹配的实色。 */}
+        {/* 标题占满剩余宽度，右端渐变透明淡出（无省略号）——用 mask 而非渐变色
+            遮罩：侧栏底是 WebGL 玻璃，没有可匹配的实色。 */}
+        <span className="flex-1 overflow-hidden whitespace-nowrap text-ui font-medium text-[var(--text)] [mask-image:linear-gradient(to_right,#000_calc(100%_-_16px),transparent)]">
+          {title}
+        </span>
+        {/* 行尾相对时间。桌面端悬停/菜单打开时让位给 ⋯ 按钮（两者占同一块地方）；
+            移动端 ⋯ 恒定可见（.touch-reveal），改用右外边距给它留出位置。 */}
         <span
-          className={`flex-1 overflow-hidden whitespace-nowrap text-ui font-medium text-[var(--text)] ${
-            open
-              ? "[mask-image:linear-gradient(to_right,#000_calc(100%_-_44px),transparent_calc(100%_-_12px))]"
-              : "[mask-image:linear-gradient(to_right,#000_calc(100%_-_16px),transparent)] group-hover/run:[mask-image:linear-gradient(to_right,#000_calc(100%_-_44px),transparent_calc(100%_-_12px))]"
+          className={`shrink-0 text-caption text-[var(--text-faint)] transition-opacity duration-200 max-md:mr-10 ${
+            open ? "opacity-0" : "group-hover/run:opacity-0"
           }`}
         >
-          {title}
+          {time}
         </span>
       </button>
 

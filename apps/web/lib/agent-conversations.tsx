@@ -113,6 +113,12 @@ export interface AgentConversation {
 interface AgentConversationsValue {
   /** 按最近更新倒序的会话列表（侧栏「最近会话」的数据源） */
   conversations: AgentConversation[];
+  /** 服务端还有更早的会话没取回（侧栏据此决定是否继续触底加载） */
+  hasMore: boolean;
+  /** 正在取下一页（避免触底时重复发起，也用于渲染加载提示） */
+  loadingMore: boolean;
+  /** 取下一页会话摘要并追加到列表尾部；没有更多或正在加载时是空操作 */
+  loadMore: () => void;
   get: (id: string) => AgentConversation | undefined;
   /** 打开会话：详情未加载时从服务端回放，running 时用 active_run_id 重挂 SSE */
   open: (id: string) => Promise<void>;
@@ -129,6 +135,9 @@ interface AgentConversationsValue {
 }
 
 const Ctx = createContext<AgentConversationsValue | null>(null);
+
+/** 会话列表的分页页长：首屏与滚动加载共用一个页长，offset 按已取回条数推进。 */
+const PAGE_SIZE = 20;
 
 /* —— 转录 entry → AgentTurn 时间线的回放映射 —— */
 
@@ -435,13 +444,23 @@ export function AgentConversationsProvider({ children }: { children: React.React
   const pendingLoads = useRef(new Map<string, Promise<void>>());
   const conversationsRef = useRef(conversations);
   conversationsRef.current = conversations;
+  // —— 分页游标 ——
+  // 已从服务端取回的条数 = 下一页的 offset。用「取回条数」而不是「列表长度」：
+  // 本地新建的会话也在列表里，用长度当 offset 会跳过服务端的真实数据。
+  const fetchedCount = useRef(0);
+  const [hasMore, setHasMore] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
+  // setState 是异步的，触底事件会连发好几次——并发闸门必须是 ref
+  const loadingRef = useRef(false);
 
-  // 挂载时拉取服务端会话列表；本地已有的会话（正在流式）以本地为准。
+  // 挂载时拉取首页会话列表；本地已有的会话（正在流式）以本地为准。
   useEffect(() => {
     let cancelled = false;
-    void listAgentSessions()
+    void listAgentSessions({ limit: PAGE_SIZE })
       .then((items) => {
         if (cancelled) return;
+        fetchedCount.current = items.length;
+        setHasMore(items.length === PAGE_SIZE);
         setConversations((previous) => {
           const local = new Map(previous.map((c) => [c.id, c]));
           const merged = items.map((item) => {
@@ -468,6 +487,36 @@ export function AgentConversationsProvider({ children }: { children: React.React
       if (activeFlushTimer.current !== null) window.clearTimeout(activeFlushTimer.current);
     };
   }, []);
+
+  /** 取下一页会话摘要追加到列表尾部（侧栏滚动触底时调用）。
+   *
+   * 按 id 去重：offset 分页期间若有会话被顶到前面（新活跃），后一页可能
+   * 重复返回已在列表里的条目——重复项直接丢弃，宁可漏一条也不渲染重复行。
+   * 失败只记日志：侧栏的历史列表加载不动没必要打断用户当前的操作。 */
+  const loadMore = useCallback(() => {
+    if (loadingRef.current || !hasMore) return;
+    loadingRef.current = true;
+    setLoadingMore(true);
+    void listAgentSessions({ limit: PAGE_SIZE, offset: fetchedCount.current })
+      .then((items) => {
+        fetchedCount.current += items.length;
+        setHasMore(items.length === PAGE_SIZE);
+        setConversations((previous) => {
+          const known = new Set(previous.map((c) => c.id));
+          const fresh = items
+            .filter((item) => !known.has(item.id))
+            .map(conversationFromSummary);
+          return fresh.length > 0 ? [...previous, ...fresh] : previous;
+        });
+      })
+      .catch((error) => {
+        console.warn("加载更多 Agent 会话失败", error);
+      })
+      .finally(() => {
+        loadingRef.current = false;
+        setLoadingMore(false);
+      });
+  }, [hasMore]);
 
   /** 对某会话中某轮做不可变更新，并刷新 updatedAt 与派生的 running。 */
   const updateTurn = useCallback(
@@ -710,6 +759,8 @@ export function AgentConversationsProvider({ children }: { children: React.React
     // 服务端会拒绝删除运行中的会话（400），错误交给调用方提示
     await deleteAgentSession(conversationId);
     pendingLoads.current.delete(conversationId);
+    // 服务端少了一行，后续分页的 offset 要跟着回退一格，否则下一页会跳过一条
+    fetchedCount.current = Math.max(0, fetchedCount.current - 1);
     setConversations((previous) =>
       previous.filter((conversation) => conversation.id !== conversationId),
     );
@@ -718,6 +769,9 @@ export function AgentConversationsProvider({ children }: { children: React.React
   const value = useMemo<AgentConversationsValue>(
     () => ({
       conversations: [...conversations].sort((a, b) => b.updatedAt - a.updatedAt),
+      hasMore,
+      loadingMore,
+      loadMore,
       get: (id) => conversations.find((conversation) => conversation.id === id),
       open,
       start,
@@ -726,7 +780,7 @@ export function AgentConversationsProvider({ children }: { children: React.React
       rename,
       remove,
     }),
-    [conversations, open, start, send, stop, rename, remove],
+    [conversations, hasMore, loadingMore, loadMore, open, start, send, stop, rename, remove],
   );
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
