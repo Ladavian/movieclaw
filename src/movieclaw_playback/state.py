@@ -61,7 +61,7 @@ async def record_playback_start(session: AsyncSession, unit: Unit) -> None:
 
 
 async def record_playback_progress(
-    session: AsyncSession, unit: Unit, *, position_ms: int, runtime_ms: int | None
+    session: AsyncSession, unit: Unit, *, position_ms: int | None, runtime_ms: int | None
 ) -> PlaybackState:
     """进度上报（Progress 与 Stopped 同入口）：按阈值三分支落库。"""
     row = await _get_or_create(session, unit)

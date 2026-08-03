@@ -32,15 +32,23 @@ class ProgressOutcome:
 
 
 def resolve_progress(
-    position_ms: int, runtime_ms: int | None, *, currently_played: bool
+    position_ms: int | None, runtime_ms: int | None, *, currently_played: bool
 ) -> ProgressOutcome:
     """按阈值三分支把"播到哪了"折算成落库状态。
 
     Progress 与 Stopped 都走本函数——播过 90% 后强杀 App（只发过 Progress）
     的场景同样要被标已看。
+
+    ``position_ms=None`` = 客户端**没报**位置（区别于报了 0）。对齐
+    UserDataManager.cs:445 的 ``reportedPositionTicks ?? runtimeTicks``：
+    不报位置视同播到结尾（标已看）；报 0 = 拖回开头（清续播点，已看不变）。
     """
+    if position_ms is None:
+        position_ms = runtime_ms or 0
+        if position_ms <= 0:
+            # 无位置也无时长：无从判定，宁可标完（UserDataManager.cs:492-496）
+            return ProgressOutcome(position_ms=0, played=True)
     if position_ms <= 0:
-        # 无位置信息的上报（如刚开始播放）：不动任何状态
         return ProgressOutcome(position_ms=0, played=currently_played)
     if not runtime_ms or runtime_ms <= 0:
         return ProgressOutcome(position_ms=0, played=True)

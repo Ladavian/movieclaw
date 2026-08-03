@@ -86,7 +86,7 @@ def root_guid() -> str:
 
 def normalize_guid(value: str) -> str | None:
     """把任意合法 GUID 写法归一化为 32 位小写 hex；不合法返回 None。"""
-    cleaned = value.strip().strip("{}").replace("-", "").lower()
+    cleaned = value.strip().strip("{}()").replace("-", "").lower()
     if len(cleaned) != 32:
         return None
     try:

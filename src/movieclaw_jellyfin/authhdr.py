@@ -67,9 +67,10 @@ def _split_parts(value: str) -> dict[str, str]:
             # 引号翻转 escape 态；引号内的逗号维持 escape 态（原文的 XOR 写法）
             escaped = (not escaped) == (ch == '"')
             if ch == "," and not escaped:
+                # key 只在真正产出一个值后重置（空片段保留 key，对齐 GetParts）
                 if start < i and key:
                     result[key.strip()] = unquote_plus(value[start:i].strip('"'))
-                key = ""
+                    key = ""
                 start = i + 1
         elif not escaped and ch == "=":
             key = value[start:i]

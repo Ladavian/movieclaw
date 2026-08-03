@@ -36,8 +36,8 @@ from movieclaw_jellyfin.ids import (
     episode_guid,
     item_guid,
     library_guid,
+    root_guid,
     season_guid,
-    user_guid,
 )
 from movieclaw_playback.streaming import container_mime_type, is_strm  # noqa: F401
 
@@ -245,9 +245,9 @@ def _folder_user_data(
     units = [u for u in bundle.units if season is None or u[0] == season]
     played = sum(1 for u in units if (st := bundle.state(*u)) and st.played)
     total = len(units)
-    favorite = bool(
-        (st := bundle.state(season or 0, 0)) and st.is_favorite
-    )
+    # 文件夹级收藏用哨兵单元：Season → (season, -1)，Series → (-1, -1)
+    sentinel = (season, -1) if season is not None else (-1, -1)
+    favorite = bool((st := bundle.state(*sentinel)) and st.is_favorite)
     data: dict[str, Any] = {
         "PlaybackPositionTicks": 0,
         "PlayCount": 0,
@@ -316,6 +316,19 @@ def _apply_metadata_fields(
         dto["Taglines"] = [meta.tagline]
 
 
+def _apply_parent_id(dto: dict[str, Any], parent: str | None, options: DtoOptions) -> None:
+    if parent and options.has("ParentId"):
+        dto["ParentId"] = parent
+
+
+def _item_library_guid(bundle: ItemBundle) -> str | None:
+    """条目所属库（多库归属取第一个文件行的库）。"""
+    for files in bundle.files.values():
+        for f in files:
+            return library_guid(f.library_id)
+    return None
+
+
 def _apply_provider_ids(dto: dict[str, Any], bundle: ItemBundle, options: DtoOptions) -> None:
     if not options.has("ProviderIds"):
         return
@@ -354,6 +367,7 @@ def movie_dto(ctx: DtoContext, bundle: ItemBundle, options: DtoOptions) -> dict[
     _apply_metadata_fields(dto, bundle, options)
     _apply_provider_ids(dto, bundle, options)
     _apply_item_images(dto, ctx, bundle, options)
+    _apply_parent_id(dto, _item_library_guid(bundle), options)
     if options.has("Path"):
         files = bundle.files.get((0, 0), [])
         if files:
@@ -363,7 +377,7 @@ def movie_dto(ctx: DtoContext, bundle: ItemBundle, options: DtoOptions) -> dict[
         if files:
             dto["DateCreated"] = format_datetime(min(f.created_at for f in files))
     if options.has("MediaSources") or options.has("MediaStreams"):
-        sources = [media_source_dto(f) for f in bundle.files.get((0, 0), [])]
+        sources = [s for f in bundle.files.get((0, 0), []) if (s := media_source_dto(f))]
         if options.has("MediaSources"):
             dto["MediaSources"] = sources
         if options.has("MediaStreams") and sources:
@@ -389,6 +403,7 @@ def series_dto(ctx: DtoContext, bundle: ItemBundle, options: DtoOptions) -> dict
     _apply_metadata_fields(dto, bundle, options)
     _apply_provider_ids(dto, bundle, options)
     _apply_item_images(dto, ctx, bundle, options)
+    _apply_parent_id(dto, _item_library_guid(bundle), options)
     if options.has("ChildCount"):
         dto["ChildCount"] = len({s for s, _ in bundle.units})
     if options.has("RecursiveItemCount"):
@@ -411,6 +426,7 @@ def season_dto(
     dto["IndexNumber"] = season
     dto["SeriesId"] = item_guid(bundle.item.id)
     dto["SeriesName"] = bundle.item.title
+    _apply_parent_id(dto, item_guid(bundle.item.id), options)
     if row and row.air_date:
         dto["PremiereDate"] = row.air_date.strftime("%Y-%m-%dT00:00:00.0000000Z")
         dto["ProductionYear"] = row.air_date.year
@@ -450,6 +466,7 @@ def episode_dto(
     dto["SeriesId"] = item_guid(bundle.item.id)
     dto["SeasonId"] = season_guid(bundle.item.id, season)
     dto["SeriesName"] = bundle.item.title
+    _apply_parent_id(dto, season_guid(bundle.item.id, season), options)
     season_row = bundle.seasons.get(season)
     dto["SeasonName"] = ((season_row.name if season_row else "") or
                          ("Specials" if season == 0 else f"Season {season}"))
@@ -497,7 +514,9 @@ def episode_dto(
         if files:
             dto["DateCreated"] = format_datetime(min(f.created_at for f in files))
     if options.has("MediaSources") or options.has("MediaStreams"):
-        sources = [media_source_dto(f) for f in bundle.files.get((season, episode), [])]
+        sources = [
+            s for f in bundle.files.get((season, episode), []) if (s := media_source_dto(f))
+        ]
         if options.has("MediaSources"):
             dto["MediaSources"] = sources
         if options.has("MediaStreams") and sources:
@@ -513,7 +532,7 @@ def library_view_dto(ctx: DtoContext, library: Library) -> dict[str, Any]:
     dto["CollectionType"] = "movies" if library.kind == "movie" else "tvshows"
     dto["ImageTags"] = {}
     dto["BackdropImageTags"] = []
-    dto["ParentId"] = user_guid()
+    dto["ParentId"] = root_guid()
     # 库视图不做已看聚合（CollectionFolder.SupportsPlayedStatus=false）
     guid = library_guid(library.id)
     dto["UserData"] = {
@@ -586,7 +605,9 @@ def _video_stream(f: LibraryFile) -> dict[str, Any]:
     if f.resolution:
         # 归一化分辨率标签反推常见宽高（探测层未落 width/height，先给标称值）
         heights = {
+            "4320p": (7680, 4320),
             "2160p": (3840, 2160),
+            "1440p": (2560, 1440),
             "1080p": (1920, 1080),
             "720p": (1280, 720),
             "480p": (720, 480),
@@ -655,11 +676,8 @@ def _subtitle_stream(raw: dict, index: int) -> dict[str, Any]:
 
 
 def media_streams_dto(f: LibraryFile) -> list[dict[str, Any]]:
-    streams: list[dict[str, Any]] = []
-    index = 0
-    if f.video_codec or f.resolution:
-        streams.append(_video_stream(f))
-        index = 1
+    streams: list[dict[str, Any]] = [_video_stream(f)]
+    index = 1
     for raw in f.audio_streams or []:
         streams.append(_audio_stream(raw, index))
         index += 1
@@ -674,18 +692,23 @@ def version_name(f: LibraryFile) -> str:
     return " ".join(parts) or Path(f.file_path).stem
 
 
-def media_source_dto(f: LibraryFile) -> dict[str, Any]:
+def media_source_dto(f: LibraryFile) -> dict[str, Any] | None:
     """单个文件版本 → MediaSourceInfo（含 v1.1 核实的 8 个恒输出字段）。
 
     strm 条目：Path=云端 URL、Protocol=Http、IsRemote=true——客户端 DirectPlay
-    直连云端，服务器零流量；解析失败时退化为指向 /stream 的占位（302 兜底会
-    再解析一次并给出错误）。
+    直连云端，服务器零流量。strm 内容解析失败（非法/被安全条款拒绝）时
+    返回 None，调用方把该版本从 MediaSources 里剔除（全部失败 →
+    NoCompatibleStream），不给客户端一个必然播不了的残源。
     """
     from movieclaw_jellyfin.ids import media_source_guid
     from movieclaw_playback.streaming import resolve_strm_url
 
     streams = media_streams_dto(f)
-    audio_index = next((s["Index"] for s in streams if s["Type"] == "Audio"), None)
+    audio_streams = [s for s in streams if s["Type"] == "Audio"]
+    audio_index = next(
+        (s["Index"] for s in audio_streams if s.get("IsDefault")),
+        audio_streams[0]["Index"] if audio_streams else None,
+    )
 
     source: dict[str, Any] = {
         "Protocol": "File",
@@ -726,13 +749,14 @@ def media_source_dto(f: LibraryFile) -> dict[str, Any]:
 
     if is_strm(f.file_path):
         url = resolve_strm_url(f.file_path)
-        if url:
-            source["Path"] = url
-            source["Protocol"] = "Http"
-            source["IsRemote"] = True
-            ext = Path(url.split("?", 1)[0]).suffix.lstrip(".").lower()
-            if ext:
-                source["Container"] = ext
+        if url is None:
+            return None
+        source["Path"] = url
+        source["Protocol"] = "Http"
+        source["IsRemote"] = True
+        ext = Path(url.split("?", 1)[0]).suffix.lstrip(".").lower()
+        if ext:
+            source["Container"] = ext
     else:
         files = bundle_etag(f)
         if files:

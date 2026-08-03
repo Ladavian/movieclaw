@@ -96,7 +96,11 @@ async def get_item_image(
 
     tag = request.query_params.get("tag")
     headers = {"Vary": "Accept"}
-    if tag:
+    no_cache = "no-cache" in (request.headers.get("Cache-Control") or "")
+    if no_cache:
+        # 客户端明确要新鲜内容：不缓存也不做 304 协商
+        headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+    elif tag:
         headers["Cache-Control"] = "public, max-age=31536000, immutable"
         headers["ETag"] = f'"{tag}"'
         inm = request.headers.get("If-None-Match", "")
@@ -104,6 +108,19 @@ async def get_item_image(
             return Response(status_code=304, headers=headers)
     else:
         headers["Cache-Control"] = "public"
+
+    if not no_cache:
+        # If-Modified-Since 协商（只发它不发 ETag 的客户端也要能 304）
+        ims = request.headers.get("If-Modified-Since")
+        if ims:
+            from email.utils import parsedate_to_datetime
+
+            try:
+                since = parsedate_to_datetime(ims).timestamp()
+                if target.stat().st_mtime <= since:
+                    return Response(status_code=304, headers=headers)
+            except (TypeError, ValueError, OSError):
+                pass
 
     media_type = mimetypes.guess_type(str(target))[0] or "image/jpeg"
     return FileResponse(target, media_type=media_type, headers=headers)

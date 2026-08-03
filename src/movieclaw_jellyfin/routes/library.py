@@ -26,10 +26,14 @@ from movieclaw_jellyfin.catalog import (
     movie_dto,
     season_dto,
     series_dto,
-    sort_entries,
 )
 from movieclaw_jellyfin.errors import not_found, not_found_message
-from movieclaw_jellyfin.ids import EntityKind, decode_guid, is_empty_guid
+from movieclaw_jellyfin.ids import (
+    FIXED_ROOT,
+    EntityKind,
+    decode_guid,
+    is_empty_guid,
+)
 from movieclaw_jellyfin.routes.common import (
     dto_context,
     dto_options,
@@ -86,8 +90,13 @@ def _entry_resumable(entry: Entry) -> bool:
 
 
 def _entry_favorite(entry: Entry) -> bool:
-    _, bundle, season, episode = entry
-    st = bundle.state(season, episode)
+    kind, bundle, season, episode = entry
+    if kind == "Series":
+        st = bundle.state(-1, -1)
+    elif kind == "Season":
+        st = bundle.state(season, -1)
+    else:
+        st = bundle.state(season, episode)
     return bool(st and st.is_favorite)
 
 
@@ -125,6 +134,92 @@ def _build_entries(
                     continue
                 entries.append(("Episode", bundle, season, episode))
     return entries
+
+
+def _parse_int(raw: str | None, default: int = 0) -> int:
+    try:
+        return int(raw) if raw is not None else default
+    except ValueError:
+        return default
+
+
+def _entry_sort_value(name: str, entry: Entry):
+    """排序键直接从数据取（不受 fields/enableUserData 门控影响）。"""
+    kind, bundle, season, episode = entry
+    if name in ("SortName", "Name"):
+        if kind == "Episode":
+            row = bundle.episodes.get((season, episode))
+            return ((row.name if row else "") or f"{season:04d}{episode:04d}").lower()
+        if kind == "Season":
+            return f"{season:04d}"
+        return bundle.item.title.lower()
+    if name == "ProductionYear":
+        return bundle.item.year or 0
+    if name == "PremiereDate":
+        if kind == "Episode":
+            row = bundle.episodes.get((season, episode))
+            return (row.air_date.isoformat() if row and row.air_date else "")
+        meta = bundle.metadata
+        return meta.release_date.isoformat() if meta and meta.release_date else ""
+    if name == "CommunityRating":
+        if kind == "Episode":
+            row = bundle.episodes.get((season, episode))
+            return row.vote_average or 0 if row else 0
+        return (bundle.metadata.vote_average if bundle.metadata else 0) or 0
+    if name == "Runtime":
+        return bundle.unit_runtime_ms(season, episode) or 0
+    if name == "DateCreated":
+        units = [(season, episode)] if kind in ("Movie", "Episode") else bundle.units
+        stamps = [
+            f.created_at for u in units for f in bundle.files.get(u, [])
+        ]
+        return max(stamps).isoformat() if stamps else ""
+    if name == "DatePlayed":
+        units = [(season, episode)] if kind in ("Movie", "Episode") else bundle.units
+        stamps = [
+            st.last_played_at
+            for u in units
+            if (st := bundle.state(*u)) and st.last_played_at
+        ]
+        return max(stamps).isoformat() if stamps else ""
+    if name in ("ParentIndexNumber", "AiredEpisodeOrder", "IndexNumber"):
+        return (season, episode)
+    return None
+
+
+_SORTABLE = {
+    "SortName", "Name", "ProductionYear", "PremiereDate", "CommunityRating",
+    "Runtime", "DateCreated", "DatePlayed", "ParentIndexNumber",
+    "AiredEpisodeOrder", "IndexNumber",
+}
+
+
+def _sort_entries(entries: list[Entry], sort_by: list[str], sort_orders: list[str]) -> list[Entry]:
+    if not sort_by:
+        return entries
+    if sort_by[0] == "Random":
+        import random
+
+        shuffled = entries[:]
+        random.shuffle(shuffled)
+        return shuffled
+    result = entries
+    # 从次要键到主键逐轮稳定排序；未知键静默忽略（枚举宽容语义）
+    for pos in range(len(sort_by) - 1, -1, -1):
+        name = sort_by[pos]
+        if name not in _SORTABLE:
+            continue
+        order = (
+            sort_orders[pos]
+            if pos < len(sort_orders)
+            else (sort_orders[-1] if sort_orders else "Ascending")
+        )
+        result = sorted(
+            result,
+            key=lambda e: _entry_sort_value(name, e),
+            reverse=order.lower().startswith("desc"),
+        )
+    return result
 
 
 def _entry_dto(ctx: DtoContext, entry: Entry, options: DtoOptions) -> dict[str, Any]:
@@ -203,15 +298,16 @@ async def _query_items(request: Request) -> JSONResponse:
     if "IsFavorite" in filters or parse_bool(q.get("isFavorite")) is True:
         entries = [e for e in entries if _entry_favorite(e)]
 
-    # ---- DTO / 排序 / 分页 -------------------------------------------------
-    dtos = [_entry_dto(ctx, e, options) for e in entries]
-    dtos = sort_entries(dtos, parse_comma(q.get("sortBy")), parse_comma(q.get("sortOrder")))
-
-    total = len(dtos)
-    start_index = int(q.get("startIndex") or 0)
-    limit = q.get("limit")
-    page = dtos[start_index : start_index + int(limit)] if limit else dtos[start_index:]
-    return JSONResponse(query_result(page, total, start_index))
+    # ---- 排序 / 分页 / DTO -------------------------------------------------
+    entries = _sort_entries(
+        entries, parse_comma(q.get("sortBy")), parse_comma(q.get("sortOrder"))
+    )
+    total = len(entries)
+    start_index = _parse_int(q.get("startIndex"))
+    limit = _parse_int(q.get("limit"), default=-1)
+    page = entries[start_index : start_index + limit] if limit >= 0 else entries[start_index:]
+    dtos = [_entry_dto(ctx, e, options) for e in page]
+    return JSONResponse(query_result(dtos, total, start_index))
 
 
 async def _entries_for_ids(session: AsyncSession, ids_raw: list[str]) -> list[Entry]:
@@ -255,6 +351,8 @@ async def _entries_for_parent(
     ref = decode_guid(parent_raw)
     if ref is None:
         raise not_found()
+    if ref.kind == EntityKind.FIXED and ref.entity_id == FIXED_ROOT:
+        return None  # 根文件夹 → 视图列表
 
     if ref.kind == EntityKind.LIBRARY:
         library = await session.get(Library, ref.entity_id)
@@ -264,8 +362,15 @@ async def _entries_for_parent(
         effective_recursive = recursive
         if include_types and recursive is None:
             effective_recursive = True
-        default_type = "Movie" if library.kind == "movie" else "Series"
-        types = include_types if (include_types and effective_recursive) else {default_type}
+        default_types = {"Movie"} if library.kind == "movie" else {"Series"}
+        all_types = (
+            {"Movie"} if library.kind == "movie" else {"Series", "Season", "Episode"}
+        )
+        if effective_recursive:
+            types = include_types or all_types
+        else:
+            # 非递归 = 只看直接子级，includeItemTypes 在其上做过滤（可为空集）
+            types = (include_types & default_types) if include_types else default_types
         ids = await item_ids_with_files(session, library_id=ref.entity_id)
         bundles = await load_bundles(session, ids, library_id=ref.entity_id)
         return _build_entries(bundles, types)
@@ -337,13 +442,13 @@ async def items_latest(
             break
         if bundle.item.kind == "movie":
             entry: Entry = ("Movie", bundle, 0, 0)
-            if is_played is False and _entry_played(entry):
+            if is_played is not None and _entry_played(entry) is not is_played:
                 continue
             dtos.append(movie_dto(ctx, bundle, options))
             continue
         # 剧集：两态简化（设计文档偏离⑥）——同剧多集新入库聚合为 Series
         entry = ("Episode", bundle, season, episode)
-        if is_played is False and _entry_played(entry):
+        if is_played is not None and _entry_played(entry) is not is_played:
             continue
         if not groupItems:
             dtos.append(episode_dto(ctx, bundle, season, episode, options))
@@ -396,11 +501,11 @@ async def items_resume(request: Request, user_id: str | None = None) -> JSONResp
     )
 
     total = len(resumable)
-    start_index = int(q.get("startIndex") or 0)
-    limit = q.get("limit")
+    start_index = _parse_int(q.get("startIndex"))
+    limit = _parse_int(q.get("limit"), default=-1)
     page = (
-        resumable[start_index : start_index + int(limit)]
-        if limit
+        resumable[start_index : start_index + limit]
+        if limit >= 0
         else resumable[start_index:]
     )
     dtos = [_entry_dto(ctx, e, options) for e in page]
@@ -519,19 +624,19 @@ async def shows_next_up(request: Request) -> JSONResponse:
             (st.last_played_at for _, st in watched if st.last_played_at),
             default=None,
         )
-        # enableResumable=true 语义：看了一半的那集本身就是 NextUp
-        in_progress = [u for u, st in watched if st.position_ms > 0 and not st.played]
-        played_units = [u for u, st in watched if st.played]
-        if in_progress:
-            next_unit = max(in_progress)
-        elif played_units:
-            last_played = max(played_units)
-            following = [u for u in bundle.units if u[0] != 0 and u > last_played]
+        # 锚点 = 最近活动（last_played_at 最新）的单元：
+        # 锚点未看完 → 锚点本身（enableResumable 语义）；已看完 → 其后第一集
+        fallback_stamp = bundle.item.created_at
+        anchor_unit, anchor_state = max(
+            watched, key=lambda pair: pair[1].last_played_at or fallback_stamp
+        )
+        if anchor_state.position_ms > 0 and not anchor_state.played:
+            next_unit = anchor_unit
+        else:
+            following = [u for u in bundle.units if u[0] != 0 and u > anchor_unit]
             if not following:
                 continue
             next_unit = min(following)
-        else:
-            continue
         candidates.append(
             (
                 last_activity or bundle.item.created_at,
@@ -540,10 +645,10 @@ async def shows_next_up(request: Request) -> JSONResponse:
         )
 
     candidates.sort(key=lambda t: t[0], reverse=True)
-    start_index = int(q.get("startIndex") or 0)
-    limit = q.get("limit")
+    start_index = _parse_int(q.get("startIndex"))
+    limit = _parse_int(q.get("limit"), default=-1)
     dtos = [dto for _, dto in candidates]
-    page = dtos[start_index : start_index + int(limit)] if limit else dtos[start_index:]
+    page = dtos[start_index : start_index + limit] if limit >= 0 else dtos[start_index:]
     return JSONResponse(query_result(page, len(dtos), start_index))
 
 
@@ -620,7 +725,7 @@ async def shows_episodes(request: Request, series_id: str) -> JSONResponse:
         random.shuffle(dtos)
 
     total = len(dtos)
-    start_index = int(q.get("startIndex") or 0)
-    limit = q.get("limit")
-    page = dtos[start_index : start_index + int(limit)] if limit else dtos[start_index:]
+    start_index = _parse_int(q.get("startIndex"))
+    limit = _parse_int(q.get("limit"), default=-1)
+    page = dtos[start_index : start_index + limit] if limit >= 0 else dtos[start_index:]
     return JSONResponse(query_result(page, total, start_index))

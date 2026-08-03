@@ -45,6 +45,8 @@ def _looks_like_docker_bridge(ip: str) -> bool:
 class _DiscoveryProtocol(asyncio.DatagramProtocol):
     def __init__(self, http_port: int) -> None:
         self._http_port = http_port
+        # 事件循环只持任务弱引用，不自持会被 GC 掉在飞的应答
+        self._tasks: set[asyncio.Task] = set()
 
     def connection_made(self, transport) -> None:  # type: ignore[override]
         self._transport = transport
@@ -56,7 +58,9 @@ class _DiscoveryProtocol(asyncio.DatagramProtocol):
             return
         if _MAGIC not in text.lower():
             return
-        asyncio.get_running_loop().create_task(self._respond(addr))
+        task = asyncio.get_running_loop().create_task(self._respond(addr))
+        self._tasks.add(task)
+        task.add_done_callback(self._tasks.discard)
 
     async def _respond(self, addr: tuple[str, int]) -> None:
         try:

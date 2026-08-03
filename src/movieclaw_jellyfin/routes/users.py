@@ -17,10 +17,9 @@ from movieclaw_jellyfin.errors import (
     JellyfinError,
     bad_request_text,
     not_found_message,
-    unauthorized,
 )
 from movieclaw_jellyfin.identity import session_info_dto, user_dto
-from movieclaw_jellyfin.ids import is_empty_guid, normalize_guid, user_guid
+from movieclaw_jellyfin.ids import normalize_guid, user_guid
 from movieclaw_jellyfin.security import read_authorization, require_device
 
 router = APIRouter()
@@ -108,8 +107,9 @@ async def users_me() -> JSONResponse:
 async def users_by_id(user_id: str) -> JSONResponse:
     normalized = normalize_guid(user_id)
     if normalized is None:
-        raise unauthorized()
-    if normalized != user_guid() and not is_empty_guid(user_id):
+        # 路由段解析失败是参数错误（400），绝不能 401——会触发客户端登录循环
+        raise bad_request_text()
+    if normalized != user_guid():
         raise not_found_message("User not found")
     setting = await get_jellyfin_compat()
     return JSONResponse(await user_dto(setting.server_id))
