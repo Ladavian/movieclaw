@@ -48,7 +48,9 @@
 ⑥ Latest 聚合简化为两态（见 5.5）；⑦ strm 条目的 `Container` 从 URL 猜而非
 Jellyfin 的 `"strm"` 字面量、`ETag` 省略（见 6.4）；⑧ 未知 `parentId` 返回
 404（Jellyfin 是 400，见 5.2）；⑨ `stream` 无 `static=true` 时返回 400
-（Jellyfin 会走 ffmpeg 转码）。
+（Jellyfin 会走 ffmpeg 转码）；⑩ 图片接口原图直出——`maxWidth/quality/
+fillWidth` 等缩放参数接受但忽略（实现期决策：不为缩放引入图像处理依赖
+触发 runtime bump；海报资产本身是 TMDB 中等尺寸，带宽代价可接受）。
 
 ## 1. 协议总览与全局约定
 

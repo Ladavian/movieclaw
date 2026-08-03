@@ -171,10 +171,18 @@ def build_lifespan(settings: Settings):
         from movieclaw_api.services.im_channel import init_im_channels
 
         await init_im_channels()
+        # Jellyfin 兼容层的局域网自动发现（UDP 7359）：开关关闭/端口被占时
+        # 内部自行降级，不阻断启动
+        from movieclaw_jellyfin.udp import start_discovery
+
+        await start_discovery(settings.jellyfin_public_port)
         logger.info("应用启动完成，数据库就绪")
         try:
             yield
         finally:
+            from movieclaw_jellyfin.udp import stop_discovery
+
+            stop_discovery()
             # 先停媒体库监听（观察者线程持有事件循环引用，须在循环关闭前退出）
             from movieclaw_api.services.library.ingest import close_ingest_watcher
             from movieclaw_api.services.library.watch import close_library_watcher

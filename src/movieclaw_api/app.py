@@ -28,4 +28,10 @@ def create_app() -> FastAPI:
     register_exception_handlers(app)
     register_middlewares(app, settings)
     app.include_router(api_router, prefix=settings.api_v1_prefix)
+
+    # Jellyfin 兼容播放接口（docs/design/jellyfin-compat.md）：根路径命名空间，
+    # 不进业务 OpenAPI，自带 token 体系与错误形态
+    from movieclaw_jellyfin.router import register as register_jellyfin
+
+    register_jellyfin(app)
     return app

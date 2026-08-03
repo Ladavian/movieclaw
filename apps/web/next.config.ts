@@ -36,11 +36,38 @@ const nextConfig: NextConfig = {
       return [];
     }
 
+    // Jellyfin 兼容播放接口的命名空间（docs/design/jellyfin-compat.md 8.3）：
+    // 播放器直连本前端端口，这些前缀反代到后端根路径。大小写两种形态都注册
+    // （Next 匹配大小写敏感；后端另有归一化中间件兜底）。
+    const jellyfinNamespaces = [
+      "System",
+      "Users",
+      "UserViews",
+      "UserItems",
+      "UserPlayedItems",
+      "UserFavoriteItems",
+      "Items",
+      "Videos",
+      "Shows",
+      "Sessions",
+      "PlayingItems",
+      "Branding",
+      "QuickConnect",
+      "emby",
+    ];
+    const jellyfinRewrites = [
+      ...new Set(jellyfinNamespaces.flatMap((ns) => [ns, ns.toLowerCase()])),
+    ].map((ns) => ({
+      source: `/${ns}/:path*`,
+      destination: `${proxyTarget}/${ns}/:path*`,
+    }));
+
     return [
       {
         source: `${apiBaseUrl}/:path*`,
         destination: `${proxyTarget}${apiBaseUrl}/:path*`,
       },
+      ...jellyfinRewrites,
     ];
   },
 };

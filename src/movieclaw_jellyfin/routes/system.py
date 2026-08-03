@@ -1,0 +1,69 @@
+"""系统身份接口（设计文档 3.2）：/System/Info/Public、/System/Ping、/System/Endpoint。"""
+
+from __future__ import annotations
+
+from fastapi import APIRouter, Depends, Request
+from fastapi.responses import JSONResponse
+
+from movieclaw_api.settings.schemas import get_jellyfin_compat
+from movieclaw_jellyfin.identity import PRODUCT_NAME, REPORTED_VERSION
+from movieclaw_jellyfin.security import require_device
+
+router = APIRouter()
+
+
+async def _local_address(request: Request) -> str:
+    """published_server_url 优先；否则回显本次请求的 scheme+Host（必然可达）。"""
+    setting = await get_jellyfin_compat()
+    if setting.published_server_url:
+        return setting.published_server_url.rstrip("/")
+    host = request.headers.get("Host") or request.url.netloc
+    scheme = request.headers.get("X-Forwarded-Proto") or request.url.scheme or "http"
+    return f"{scheme}://{host}"
+
+
+@router.get("/System/Info/Public")
+async def system_info_public(request: Request) -> JSONResponse:
+    setting = await get_jellyfin_compat()
+    return JSONResponse(
+        {
+            "LocalAddress": await _local_address(request),
+            "ServerName": setting.server_name,
+            "Version": REPORTED_VERSION,
+            "ProductName": PRODUCT_NAME,
+            "OperatingSystem": "",
+            "Id": setting.server_id,
+            "StartupWizardCompleted": True,
+        }
+    )
+
+
+@router.get("/System/Ping")
+@router.post("/System/Ping")
+async def system_ping() -> JSONResponse:
+    # 产品名固定 "Jellyfin Server"（带引号的 JSON 字符串），不是服务器名
+    return JSONResponse(PRODUCT_NAME)
+
+
+@router.get("/System/Endpoint", dependencies=[Depends(require_device)])
+async def system_endpoint() -> JSONResponse:
+    return JSONResponse({"IsLocal": True, "IsInNetwork": True})
+
+
+@router.get("/System/Info", dependencies=[Depends(require_device)])
+async def system_info(request: Request) -> JSONResponse:
+    """完整 SystemInfo：复用 Public 字段 + 少量兼容字段（P2 兜底）。"""
+    public = await system_info_public(request)
+    import json
+
+    body = json.loads(public.body)
+    body.update(
+        {
+            "HasPendingRestart": False,
+            "IsShuttingDown": False,
+            "SupportsLibraryMonitor": False,
+            "WebSocketPortNumber": request.url.port or 80,
+            "CompletedInstallations": [],
+        }
+    )
+    return JSONResponse(body)

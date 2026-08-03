@@ -1,0 +1,315 @@
+"""播放进度回报与已看/收藏标记（设计文档 §7）。
+
+落库语义（v1.1 按源码修正版）：
+- play_count+1 与 last_played_at 在 /Sessions/Playing（开始）时更新；
+- Progress 与 Stopped 跑同一套阈值三分支（movieclaw_playback.progress）；
+- Failed=true 的 Stopped 完全跳过落库；
+- UserPlayedItems：datePlayed 才 +1，否则 max(count,1)；DELETE 全清零；
+- 作用于 Series/Season GUID 时级联全部有文件的子单元。
+"""
+
+from __future__ import annotations
+
+from datetime import datetime
+from typing import Any
+
+from fastapi import APIRouter, Depends, Request, Response
+from fastapi.responses import JSONResponse
+from sqlalchemy import select
+
+from movieclaw_db.engine import get_database
+from movieclaw_db.models import LibraryFile, MediaEpisode, MediaMetadata
+from movieclaw_jellyfin.catalog import TICKS_PER_MS
+from movieclaw_jellyfin.errors import bad_request_text, not_found
+from movieclaw_jellyfin.identity import format_datetime
+from movieclaw_jellyfin.ids import EntityKind, EntityRef, decode_guid
+from movieclaw_jellyfin.security import require_device
+from movieclaw_playback import state as playback_state
+
+router = APIRouter(dependencies=[Depends(require_device)])
+
+
+async def _read_body(request: Request) -> dict[str, Any]:
+    """宽容读取 JSON body：键名小写化、未知字段忽略、坏 JSON 当空。"""
+    try:
+        body = await request.json()
+    except Exception:
+        return {}
+    if not isinstance(body, dict):
+        return {}
+    return {str(k).lower(): v for k, v in body.items()}
+
+
+def _position_ms(body: dict[str, Any], query_ticks: str | None = None) -> int:
+    raw = body.get("positionticks")
+    if raw is None and query_ticks is not None:
+        raw = query_ticks
+    try:
+        ticks = int(raw)
+    except (TypeError, ValueError):
+        return 0
+    return max(0, ticks // TICKS_PER_MS)
+
+
+async def _resolve_units(ref: EntityRef) -> list[playback_state.Unit]:
+    """GUID → 受影响的 (item, season, episode) 单元列表（文件夹级联）。"""
+    async with get_database().session() as session:
+        q = select(LibraryFile.season_number, LibraryFile.episode_number).where(
+            LibraryFile.media_item_id == ref.entity_id,
+            LibraryFile.missing_since.is_(None),
+        )
+        rows = list((await session.execute(q)).all())
+    units = sorted({(ref.entity_id, s, e) for s, e in rows})
+    if ref.kind == EntityKind.EPISODE:
+        return [(ref.entity_id, ref.season, ref.episode)]
+    if ref.kind == EntityKind.SEASON:
+        return [u for u in units if u[1] == ref.season]
+    if ref.kind == EntityKind.ITEM:
+        # 电影 = (0,0) 单元；剧 = 全部集
+        return units or [(ref.entity_id, 0, 0)]
+    return []
+
+
+async def _unit_runtime_ms(unit: playback_state.Unit) -> int | None:
+    item_id, season, episode = unit
+    async with get_database().session() as session:
+        files = list(
+            (
+                await session.execute(
+                    select(LibraryFile).where(
+                        LibraryFile.media_item_id == item_id,
+                        LibraryFile.season_number == season,
+                        LibraryFile.episode_number == episode,
+                        LibraryFile.missing_since.is_(None),
+                    )
+                )
+            ).scalars()
+        )
+        for f in files:
+            if f.duration_seconds:
+                return f.duration_seconds * 1000
+        ep = (
+            await session.execute(
+                select(MediaEpisode).where(
+                    MediaEpisode.media_item_id == item_id,
+                    MediaEpisode.season_number == season,
+                    MediaEpisode.episode_number == episode,
+                )
+            )
+        ).scalar_one_or_none()
+        if ep and ep.runtime_minutes:
+            return ep.runtime_minutes * 60_000
+        meta = (
+            await session.execute(
+                select(MediaMetadata).where(MediaMetadata.media_item_id == item_id)
+            )
+        ).scalar_one_or_none()
+        if meta and meta.runtime_minutes:
+            return meta.runtime_minutes * 60_000
+    return None
+
+
+def _leaf_unit(ref: EntityRef) -> playback_state.Unit:
+    if ref.kind == EntityKind.EPISODE:
+        return (ref.entity_id, ref.season, ref.episode)
+    return (ref.entity_id, 0, 0)
+
+
+def _decode_item_ref(raw: Any) -> EntityRef | None:
+    if not raw:
+        return None
+    ref = decode_guid(str(raw))
+    if ref is None or ref.kind not in (
+        EntityKind.ITEM,
+        EntityKind.SEASON,
+        EntityKind.EPISODE,
+    ):
+        return None
+    return ref
+
+
+# ---------------------------------------------------------------------------
+# Sessions/Playing*
+# ---------------------------------------------------------------------------
+
+
+@router.post("/Sessions/Playing", status_code=204)
+async def playing_start(request: Request) -> Response:
+    body = await _read_body(request)
+    ref = _decode_item_ref(body.get("itemid"))
+    if ref is not None:
+        async with get_database().session() as session:
+            await playback_state.record_playback_start(session, _leaf_unit(ref))
+            await session.commit()
+    return Response(status_code=204)
+
+
+async def _apply_progress(ref: EntityRef, position_ms: int) -> None:
+    unit = _leaf_unit(ref)
+    runtime_ms = await _unit_runtime_ms(unit)
+    async with get_database().session() as session:
+        await playback_state.record_playback_progress(
+            session, unit, position_ms=position_ms, runtime_ms=runtime_ms
+        )
+        await session.commit()
+
+
+@router.post("/Sessions/Playing/Progress", status_code=204)
+async def playing_progress(request: Request) -> Response:
+    body = await _read_body(request)
+    ref = _decode_item_ref(body.get("itemid"))
+    if ref is not None:
+        position = _position_ms(body)
+        if position > 0:
+            await _apply_progress(ref, position)
+    return Response(status_code=204)
+
+
+@router.post("/Sessions/Playing/Stopped", status_code=204)
+async def playing_stopped(request: Request) -> Response:
+    body = await _read_body(request)
+    if body.get("failed") is True:
+        # 播放失败的上报不落库（SessionManager.cs:1164-1167）
+        return Response(status_code=204)
+    ref = _decode_item_ref(body.get("itemid"))
+    if ref is not None:
+        await _apply_progress(ref, _position_ms(body))
+    return Response(status_code=204)
+
+
+@router.post("/Sessions/Playing/Ping", status_code=204)
+async def playing_ping(request: Request) -> Response:
+    if "playSessionId" not in request.query_params:
+        raise bad_request_text()
+    return Response(status_code=204)
+
+
+# ---------------------------------------------------------------------------
+# legacy /PlayingItems（P2 兜底，参数走 query；停止是 DELETE）
+# ---------------------------------------------------------------------------
+
+
+@router.post("/PlayingItems/{item_id}", status_code=204)
+@router.post("/Users/{user_id}/PlayingItems/{item_id}", status_code=204)
+async def playing_start_legacy(item_id: str, user_id: str | None = None) -> Response:
+    ref = _decode_item_ref(item_id)
+    if ref is not None:
+        async with get_database().session() as session:
+            await playback_state.record_playback_start(session, _leaf_unit(ref))
+            await session.commit()
+    return Response(status_code=204)
+
+
+@router.post("/PlayingItems/{item_id}/Progress", status_code=204)
+@router.post("/Users/{user_id}/PlayingItems/{item_id}/Progress", status_code=204)
+async def playing_progress_legacy(
+    request: Request, item_id: str, user_id: str | None = None
+) -> Response:
+    ref = _decode_item_ref(item_id)
+    if ref is not None:
+        position = _position_ms({}, request.query_params.get("positionTicks"))
+        if position > 0:
+            await _apply_progress(ref, position)
+    return Response(status_code=204)
+
+
+@router.delete("/PlayingItems/{item_id}", status_code=204)
+@router.delete("/Users/{user_id}/PlayingItems/{item_id}", status_code=204)
+async def playing_stopped_legacy(
+    request: Request, item_id: str, user_id: str | None = None
+) -> Response:
+    ref = _decode_item_ref(item_id)
+    if ref is not None:
+        await _apply_progress(
+            ref, _position_ms({}, request.query_params.get("positionTicks"))
+        )
+    return Response(status_code=204)
+
+
+# ---------------------------------------------------------------------------
+# 已看 / 收藏（200 + UserItemDataDto）
+# ---------------------------------------------------------------------------
+
+
+def _user_data_response(
+    row, guid: str
+) -> JSONResponse:
+    data: dict[str, Any] = {
+        "PlaybackPositionTicks": (row.position_ms if row else 0) * TICKS_PER_MS,
+        "PlayCount": row.play_count if row else 0,
+        "IsFavorite": bool(row and row.is_favorite),
+        "Played": bool(row and row.played),
+        "Key": guid,
+        "ItemId": guid,
+    }
+    if row and row.played:
+        data["PlayedPercentage"] = 100
+    if row and row.last_played_at:
+        data["LastPlayedDate"] = format_datetime(row.last_played_at)
+    return JSONResponse(data)
+
+
+def _parse_date_played(raw: str | None) -> datetime | None:
+    if not raw:
+        return None
+    try:
+        return datetime.fromisoformat(raw.replace("Z", "+00:00")).replace(tzinfo=None)
+    except ValueError:
+        return None
+
+
+@router.post("/UserPlayedItems/{item_id}")
+@router.post("/Users/{user_id}/PlayedItems/{item_id}")
+async def mark_played(
+    request: Request, item_id: str, user_id: str | None = None
+) -> JSONResponse:
+    ref = _decode_item_ref(item_id)
+    if ref is None:
+        raise not_found()
+    units = await _resolve_units(ref)
+    if not units:
+        raise not_found()
+    date_played = _parse_date_played(request.query_params.get("datePlayed"))
+    async with get_database().session() as session:
+        row = await playback_state.mark_played(session, units, date_played=date_played)
+        await session.commit()
+    return _user_data_response(row, item_id.lower().replace("-", ""))
+
+
+@router.delete("/UserPlayedItems/{item_id}")
+@router.delete("/Users/{user_id}/PlayedItems/{item_id}")
+async def mark_unplayed(item_id: str, user_id: str | None = None) -> JSONResponse:
+    ref = _decode_item_ref(item_id)
+    if ref is None:
+        raise not_found()
+    units = await _resolve_units(ref)
+    if not units:
+        raise not_found()
+    async with get_database().session() as session:
+        row = await playback_state.mark_unplayed(session, units)
+        await session.commit()
+    return _user_data_response(row, item_id.lower().replace("-", ""))
+
+
+@router.post("/UserFavoriteItems/{item_id}")
+@router.post("/Users/{user_id}/FavoriteItems/{item_id}")
+async def mark_favorite(item_id: str, user_id: str | None = None) -> JSONResponse:
+    ref = _decode_item_ref(item_id)
+    if ref is None:
+        raise not_found()
+    async with get_database().session() as session:
+        row = await playback_state.set_favorite(session, _leaf_unit(ref), favorite=True)
+        await session.commit()
+    return _user_data_response(row, item_id.lower().replace("-", ""))
+
+
+@router.delete("/UserFavoriteItems/{item_id}")
+@router.delete("/Users/{user_id}/FavoriteItems/{item_id}")
+async def unmark_favorite(item_id: str, user_id: str | None = None) -> JSONResponse:
+    ref = _decode_item_ref(item_id)
+    if ref is None:
+        raise not_found()
+    async with get_database().session() as session:
+        row = await playback_state.set_favorite(session, _leaf_unit(ref), favorite=False)
+        await session.commit()
+    return _user_data_response(row, item_id.lower().replace("-", ""))
