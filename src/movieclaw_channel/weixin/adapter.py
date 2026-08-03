@@ -82,17 +82,17 @@ class WeixinAdapter:
                 except (httpx.HTTPError, WeixinApiError) as exc:
                     # 传输层/网关错误在循环内退避重试(与业务错误同节奏),
                     # 不抛给 supervisor 整层重启——那会重发 notifystart 且粒度太粗
+                    # 与 telegram 侧同款：退避线性升到上限后保持,不再周期性归零
+                    # (归零会让持续故障循环打快速重试 2s,2s,30s,2s…),成功后才清零
                     failures += 1
+                    delay = min(_BACKOFF_DELAY_S, _RETRY_DELAY_S * failures)
                     logger.error(
-                        "getupdates 请求失败 (%d/%d):%s",
+                        "getupdates 请求失败(连续第 %d 次),%.0f 秒后重试:%s",
                         failures,
-                        _MAX_CONSECUTIVE_FAILURES,
+                        delay,
                         exc,
                     )
-                    hit_cap = failures >= _MAX_CONSECUTIVE_FAILURES
-                    if hit_cap:
-                        failures = 0
-                    await self._sleep(stop, _BACKOFF_DELAY_S if hit_cap else _RETRY_DELAY_S)
+                    await self._sleep(stop, delay)
                     continue
 
                 ret = resp.get("ret") or 0
@@ -103,18 +103,16 @@ class WeixinAdapter:
                     )
                 if ret != 0 or errcode != 0:
                     failures += 1
+                    delay = min(_BACKOFF_DELAY_S, _RETRY_DELAY_S * failures)
                     logger.error(
-                        "getupdates 返回错误 ret=%s errcode=%s errmsg=%s (%d/%d)",
+                        "getupdates 返回错误 ret=%s errcode=%s errmsg=%s"
+                        "(连续第 %d 次,%.0f 秒后重试)",
                         ret,
                         errcode,
                         resp.get("errmsg"),
                         failures,
-                        _MAX_CONSECUTIVE_FAILURES,
+                        delay,
                     )
-                    hit_cap = failures >= _MAX_CONSECUTIVE_FAILURES
-                    delay = _BACKOFF_DELAY_S if hit_cap else _RETRY_DELAY_S
-                    if failures >= _MAX_CONSECUTIVE_FAILURES:
-                        failures = 0
                     await self._sleep(stop, delay)
                     continue
                 failures = 0

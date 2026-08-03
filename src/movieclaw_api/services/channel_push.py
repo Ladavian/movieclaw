@@ -19,6 +19,10 @@ from movieclaw_db.repositories.channel_account_repo import ChannelAccountReposit
 
 logger = logging.getLogger("movieclaw_api.channel_push")
 
+#: 在飞的推送任务:事件循环只持任务的弱引用,不留强引用的话
+#: 任务可能在执行中途被 GC 回收,推送就会无声丢失
+_push_tasks: set[asyncio.Task[None]] = set()
+
 
 async def push_to_all_channels(text: str) -> int:
     """推送到所有通道(微信 + Telegram + Discord),返回入队的账号数。"""
@@ -81,6 +85,9 @@ def notify_channels(text: str, event: str = "") -> None:
             logger.exception("通道推送失败(已忽略)")
 
     try:
-        asyncio.get_running_loop().create_task(_run())
+        task = asyncio.get_running_loop().create_task(_run())
     except RuntimeError:
         logger.debug("无运行中的事件循环,推送已跳过")
+        return
+    _push_tasks.add(task)
+    task.add_done_callback(_push_tasks.discard)

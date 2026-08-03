@@ -61,6 +61,9 @@ class FakeAdapter:
         await ctx.stop.wait()
 
     async def send_text(self, reply: ReplyContext, text: str) -> None:
+        # 模拟真实 HTTP 往返耗时:配对终态回执若走出站队列,会在随后的
+        # 账号停止(close 不排空队列)时被取消丢失,这个延迟能暴露该竞态
+        await asyncio.sleep(0.05)
         self.sent.append(text)
 
 
@@ -127,6 +130,28 @@ async def test_wrong_pair_code_attempt_cap(db, monkeypatch) -> None:
         await _wait_for(lambda: any("作废" in text for text in adapters[0].sent))
         await _wait_for(lambda: not service.manager.is_running("telegram", challenge.bot_id))
         assert adapters[0].client.closed
+    finally:
+        await service.stop()
+
+
+async def test_correct_pair_code_confirms_and_delivers_receipt(db, monkeypatch) -> None:
+    """配对成功:回执必须在临时账号被热切换停掉之前真正送达,且切到正式账号。"""
+    from movieclaw_api.services.im_channel import ImChannelService
+
+    adapters: list[FakeAdapter] = []
+    _install_fake_spec(monkeypatch, adapters)
+    service = ImChannelService()
+    try:
+        challenge = await service.begin_binding("telegram", "tok-abc")
+        dispatcher = service.manager.get_dispatcher("telegram", challenge.bot_id)
+        assert dispatcher is not None
+        await dispatcher.submit_inbound(_inbound(challenge.pair_code, 0))
+        await _wait_for(lambda: challenge.status == "confirmed")
+        # 成功回执经临时账号的 adapter 直发,不能因发送泵被关而丢失
+        await _wait_for(lambda: any("绑定成功" in text for text in adapters[0].sent))
+        # 热切换完成:新的正式账号(第二个 adapter)在运行
+        await _wait_for(lambda: len(adapters) >= 2)
+        await _wait_for(lambda: service.manager.is_running("telegram", challenge.bot_id))
     finally:
         await service.stop()
 

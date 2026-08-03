@@ -22,8 +22,9 @@ logger = logging.getLogger("movieclaw_channel.telegram.adapter")
 
 CHANNEL_ID = "telegram"
 
-_MAX_CONSECUTIVE_FAILURES = 3
+#: 单次失败的基础重试间隔;退避 = min(上限, 基础 × 连续失败次数)
 _RETRY_DELAY_S = 2.0
+#: 退避间隔上限
 _BACKOFF_DELAY_S = 30.0
 
 
@@ -50,22 +51,20 @@ class TelegramAdapter:
             except TelegramApiError as exc:
                 if exc.auth_failed:
                     raise ChannelAuthError(str(exc)) from exc
+                # 退避随连续失败次数线性上升到上限,只在成功后清零——计数不能
+                # 在达到上限时重置,否则持续故障会循环打快速重试(2s,2s,30s,2s…)
                 failures += 1
-                logger.error("getUpdates 失败 (%d/%d):%s", failures, _MAX_CONSECUTIVE_FAILURES, exc)
-                hit_cap = failures >= _MAX_CONSECUTIVE_FAILURES
-                if hit_cap:
-                    failures = 0
-                await self._sleep(stop, _BACKOFF_DELAY_S if hit_cap else _RETRY_DELAY_S)
+                delay = min(_BACKOFF_DELAY_S, _RETRY_DELAY_S * failures)
+                logger.error("getUpdates 失败(连续第 %d 次),%.0f 秒后重试:%s", failures, delay, exc)
+                await self._sleep(stop, delay)
                 continue
             except httpx.HTTPError as exc:
                 failures += 1
+                delay = min(_BACKOFF_DELAY_S, _RETRY_DELAY_S * failures)
                 logger.error(
-                    "getUpdates 网络错误 (%d/%d):%s", failures, _MAX_CONSECUTIVE_FAILURES, exc
+                    "getUpdates 网络错误(连续第 %d 次),%.0f 秒后重试:%s", failures, delay, exc
                 )
-                hit_cap = failures >= _MAX_CONSECUTIVE_FAILURES
-                if hit_cap:
-                    failures = 0
-                await self._sleep(stop, _BACKOFF_DELAY_S if hit_cap else _RETRY_DELAY_S)
+                await self._sleep(stop, delay)
                 continue
             failures = 0
 
