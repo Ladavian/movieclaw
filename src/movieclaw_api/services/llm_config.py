@@ -44,14 +44,16 @@ def to_domain_config(row: LlmProvider, api_key: str) -> LlmProviderConfig:
         default_model=row.default_model,
         extra_models=[ModelInfo.model_validate(m) for m in row.extra_models or []],
         is_default=True,
+        user_agent=row.user_agent,
     )
 
 
-async def resolve_provider_endpoint(session: AsyncSession) -> tuple[str, str]:
-    """解析当前供应商的 API 端点与明文密钥，返回 ``(base_url, api_key)``。
+async def resolve_provider_endpoint(session: AsyncSession) -> tuple[str, str, str | None]:
+    """解析当前供应商的接入参数，返回 ``(base_url, api_key, user_agent)``。
 
     端点取值：显式配置 → 预设默认；两者皆空抛 BadRequest。
-    这是端点/密钥解析的唯一判据来源——网络连通性测试（routes/network）
+    user_agent 未配置时为 None（调用方保持自己的默认 UA）。
+    这是端点/密钥/UA 解析的唯一判据来源——网络连通性测试（routes/network）
     复用本函数，不允许在别处再实现一遍取值顺序。
     """
     from movieclaw_api.exceptions import BadRequestException
@@ -63,7 +65,7 @@ async def resolve_provider_endpoint(session: AsyncSession) -> tuple[str, str]:
     base = row.base_url or (get_preset(row.provider_type).base_url or "")
     if not base:
         raise BadRequestException("该供应商未配置 API 端点地址")
-    return base, repo.decrypted_api_key(row) or ""
+    return base, repo.decrypted_api_key(row) or "", row.user_agent
 
 
 class LlmConfigService:
@@ -144,6 +146,7 @@ class LlmConfigService:
         api_key: str,
         default_model: str,
         extra_models: list[ModelInfo] | None = None,
+        user_agent: str | None = None,
     ) -> LlmProvider:
         """保存配置（有则覆盖）。状态置 PENDING，等待后台验证。"""
         try:
@@ -164,6 +167,7 @@ class LlmConfigService:
             api_key=api_key,
             default_model=default_model,
             extra_models=[m.model_dump() for m in extras] or None,
+            user_agent=user_agent,
         )
 
     async def start_verification(self) -> LlmProvider:

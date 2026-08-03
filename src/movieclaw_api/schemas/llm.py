@@ -36,6 +36,9 @@ class LlmProviderView(BaseModel):
 
     provider_type: str
     base_url: str | None = None
+    user_agent: str | None = Field(
+        default=None, description="自定义 User-Agent；null 表示用 SDK 默认 UA"
+    )
     default_model: str
     status: ConfigStatus
     usable: bool = Field(description="是否可用 = 连接测试通过（status=active）")
@@ -65,6 +68,7 @@ class LlmProviderView(BaseModel):
         return cls(
             provider_type=row.provider_type,
             base_url=row.base_url,
+            user_agent=row.user_agent,
             default_model=row.default_model,
             status=row.status,
             usable=row.status == ConfigStatus.ACTIVE,
@@ -85,6 +89,11 @@ class LlmProviderPayload(BaseModel):
 
     provider_type: str = Field(description="供应商类型：openai / bailian / openai_compat")
     base_url: str | None = Field(default=None, description="API 端点（留空用预设默认）")
+    user_agent: str | None = Field(
+        default=None,
+        max_length=200,
+        description="自定义 User-Agent 请求头（留空使用 openai SDK 自带 UA）",
+    )
     api_key: str = Field(min_length=1, description="API Key")
     default_model: str = Field(min_length=1, description="默认使用的模型 id")
     # 自定义端点的 default_model 必须能在这里找到——只有裸 id 没有参数，
@@ -96,7 +105,9 @@ class LlmProviderPayload(BaseModel):
         "（openai_compat 端点必填，且须包含 default_model 对应的条目）",
     )
 
-    @field_validator("provider_type", "base_url", "api_key", "default_model", mode="before")
+    @field_validator(
+        "provider_type", "base_url", "user_agent", "api_key", "default_model", mode="before"
+    )
     @classmethod
     def _strip(cls, value: str | None) -> str | None:
         """去除首尾空白；空串归一为 None（可选字段"没填"的统一表达）。"""
@@ -113,3 +124,17 @@ class LlmProviderPayload(BaseModel):
         if not value.startswith(("http://", "https://")):
             raise ValueError("API 端点必须以 http:// 或 https:// 开头")
         return value.rstrip("/")
+
+    @field_validator("user_agent")
+    @classmethod
+    def _validate_user_agent(cls, value: str | None) -> str | None:
+        """请求头值只允许可打印 ASCII。
+
+        换行会造成请求头注入，中文等非 ASCII 字符会被 HTTP 客户端直接拒绝——
+        两类都在入口拦下，比等到调模型时报一句看不懂的底层异常更友好。
+        """
+        if value is None:
+            return None
+        if any(ch < " " or ch > "~" for ch in value):
+            raise ValueError("User-Agent 只能包含可打印的 ASCII 字符（不能含换行或中文）")
+        return value

@@ -32,6 +32,9 @@ class LlmProvider(TimestampMixin, table=True):
     provider_type: str = Field(description="供应商预设 id：openai / bailian / openai_compat")
     base_url: str | None = Field(default=None, description="API 端点（留空用预设默认）")
     api_key: str = Field(description="API Key（SecretBox 加密密文）")
+    # 自定义 User-Agent：留空用 openai SDK 自带 UA。自建网关/反代常按 UA
+    # 放行或限流，官方渠道用不到，故仅在可自填端点的供应商上开放配置。
+    user_agent: str | None = Field(default=None, description="自定义 User-Agent（留空用 SDK 默认）")
     # 用户指定的默认模型：未来 agent 不显式选模型时都用它
     default_model: str = Field(description="默认使用的模型 id，如 qwen-plus")
 

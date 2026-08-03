@@ -260,6 +260,9 @@ class LlmProviderConfig(BaseModel):
     enabled: bool = True
     is_default: bool = False
     timeout_seconds: float | None = None  # None 用 SDK 默认
+    #: 自定义 User-Agent 请求头。None = 用 openai SDK 自带的 UA；
+    #: 自建网关 / 反代前置 WAF 常按 UA 放行或限流，这里给用户一个覆盖口子。
+    user_agent: str | None = None
 
     @field_validator("name")
     @classmethod

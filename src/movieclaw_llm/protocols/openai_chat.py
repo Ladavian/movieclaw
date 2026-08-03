@@ -68,6 +68,10 @@ class OpenAIChatProtocol(BaseLlmProtocol):
             kwargs["base_url"] = base_url
         if config.timeout_seconds is not None:
             kwargs["timeout"] = config.timeout_seconds
+        if config.user_agent:
+            # default_headers 在 SDK 内部是最后一层合并，能盖掉 SDK 自带的
+            #「AsyncOpenAI/Python x.y.z」；留空则完全不干预，保持 SDK 默认。
+            kwargs["default_headers"] = {"User-Agent": config.user_agent}
         # 统一出口：底层 httpx 客户端注入服务标签 llm 的出口 transport，
         # 用户可在「设置 → 网络」让 LLM 请求走代理（OpenAI 官方等被墙端点）。
         # 超时仍由 AsyncOpenAI 的 timeout 参数按请求控制，这里不重复设置。

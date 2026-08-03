@@ -253,6 +253,42 @@ def test_custom_thinking_model_requires_budget(client) -> None:
     assert "思考预算上限" in r.json()["message"]
 
 
+def test_user_agent_defaults_to_sdk(client) -> None:
+    """不填 User-Agent → 落库与领域配置都是 None，协议层保持 SDK 默认 UA。"""
+    c, _ = client
+    c.put("/api/v1/llm/provider", json=_COMPAT_PAYLOAD)
+    assert c.get("/api/v1/llm/provider").json()["data"]["user_agent"] is None
+    assert _captured_configs[-1].user_agent is None
+
+
+def test_custom_user_agent_persisted_and_passed_down(client) -> None:
+    """填了 User-Agent → 回显在配置视图里，并原样传到协议层。"""
+    c, _ = client
+    ua = "movieclaw/1.0 (gateway-allowlist)"
+    r = c.put("/api/v1/llm/provider", json={**_COMPAT_PAYLOAD, "user_agent": ua})
+    assert r.status_code == 200
+    assert c.get("/api/v1/llm/provider").json()["data"]["user_agent"] == ua
+    assert _captured_configs[-1].user_agent == ua
+
+
+def test_blank_user_agent_normalized_to_null(client) -> None:
+    """空串（用户清空输入框）归一为 None，等同「用 SDK 默认」。"""
+    c, _ = client
+    c.put("/api/v1/llm/provider", json={**_COMPAT_PAYLOAD, "user_agent": "   "})
+    assert c.get("/api/v1/llm/provider").json()["data"]["user_agent"] is None
+
+
+def test_user_agent_rejects_header_injection(client) -> None:
+    """换行等控制字符会造成请求头注入，入口即拦。"""
+    c, _ = client
+    r = c.put(
+        "/api/v1/llm/provider",
+        json={**_COMPAT_PAYLOAD, "user_agent": "ua\r\nX-Admin: 1"},
+    )
+    assert r.status_code == 422
+    assert any("ASCII" in d["message"] for d in r.json()["details"])
+
+
 def test_openai_compat_requires_base_url(client) -> None:
     c, _ = client
     r = c.put(

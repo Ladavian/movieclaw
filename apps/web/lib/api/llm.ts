@@ -58,6 +58,8 @@ export interface LlmPreset {
 export interface LlmProviderConfig {
   provider_type: LlmProviderType;
   base_url: string | null;
+  /** 自定义 User-Agent；null 表示用 SDK 自带 UA */
+  user_agent: string | null;
   default_model: string;
   status: LlmProviderStatus;
   /** 是否可用 = 连接测试通过 */
@@ -76,6 +78,8 @@ export interface LlmProviderConfig {
 export interface LlmProviderPayload {
   provider_type: LlmProviderType;
   base_url?: string | null;
+  /** 自定义 User-Agent：留空（null）使用 SDK 自带 UA */
+  user_agent?: string | null;
   api_key: string;
   default_model: string;
   /** 自定义模型目录：default_model 不在预设目录时，必须在这里带齐参数 */
