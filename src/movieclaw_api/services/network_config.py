@@ -177,8 +177,13 @@ async def _probe_target(service: str, session: AsyncSession) -> tuple[str, dict[
         # 轻量连通性探测（/models），完整有效性验证仍归 verify_llm_provider
         from movieclaw_api.services.llm_config import resolve_provider_endpoint
 
-        base, api_key = await resolve_provider_endpoint(session)
-        return f"{base.rstrip('/')}/models", {"Authorization": f"Bearer {api_key}"}
+        base, api_key, user_agent = await resolve_provider_endpoint(session)
+        headers = {"Authorization": f"Bearer {api_key}"}
+        # 配了自定义 UA 就一并带上：网关按 UA 放行时，探测必须与真实调用
+        # 发同样的头，否则测试结论与实际能否调通不一致
+        if user_agent:
+            headers["User-Agent"] = user_agent
+        return f"{base.rstrip('/')}/models", headers
     if service == "github":
         # 与应用内更新的检查请求同源（api.github.com 或 UPDATE_API_BASE_URL 反代）
         settings = get_settings()

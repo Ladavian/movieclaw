@@ -29,6 +29,28 @@ def make_protocol(provider_type: str = "bailian") -> OpenAIChatProtocol:
     return OpenAIChatProtocol(config, get_preset(provider_type))
 
 
+# -- 客户端构建 -------------------------------------------------------------
+
+
+def test_default_user_agent_is_sdk_builtin():
+    """不配 user_agent → 保持 openai SDK 自带 UA，不做任何干预。"""
+    p = make_protocol()
+    assert p._client.default_headers["User-Agent"].startswith("AsyncOpenAI/Python")
+
+
+def test_custom_user_agent_overrides_sdk_default():
+    """配了 user_agent → 覆盖 SDK 自带 UA（自建网关按 UA 放行的场景）。"""
+    config = LlmProviderConfig(
+        name="自建网关",
+        provider_type="openai_compat",
+        api_key="sk-test",
+        base_url="http://192.168.1.5:8000/v1",
+        user_agent="movieclaw/1.0",
+    )
+    p = OpenAIChatProtocol(config, get_preset("openai_compat"))
+    assert p._client.default_headers["User-Agent"] == "movieclaw/1.0"
+
+
 # -- 请求转换 ---------------------------------------------------------------
 
 

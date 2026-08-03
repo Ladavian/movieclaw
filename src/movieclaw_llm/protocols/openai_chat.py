@@ -47,6 +47,16 @@ from movieclaw_net import egress_transport
 
 logger = logging.getLogger(__name__)
 
+
+def sdk_default_user_agent() -> str:
+    """openai SDK 自带的 User-Agent（用户不覆盖时实际发送的值）。
+
+    按 SDK 内部公式（BaseClient.user_agent：``{类名}/Python {版本}``）拼出，
+    而不是写死字符串——升级 SDK 后设置页展示的默认值自动跟着变。
+    供设置页作为 User-Agent 输入框的占位提示，帮用户排查网关按 UA 放行的场景。
+    """
+    return f"{AsyncOpenAI.__name__}/Python {openai.__version__}"
+
 # OpenAI 的 finish_reason → 统一枚举；未知值按 stop 兜底
 _FINISH_REASON_MAP: dict[str, FinishReason] = {
     "stop": "stop",
@@ -68,6 +78,10 @@ class OpenAIChatProtocol(BaseLlmProtocol):
             kwargs["base_url"] = base_url
         if config.timeout_seconds is not None:
             kwargs["timeout"] = config.timeout_seconds
+        if config.user_agent:
+            # default_headers 在 SDK 内部是最后一层合并，能盖掉 SDK 自带的
+            #「AsyncOpenAI/Python x.y.z」；留空则完全不干预，保持 SDK 默认。
+            kwargs["default_headers"] = {"User-Agent": config.user_agent}
         # 统一出口：底层 httpx 客户端注入服务标签 llm 的出口 transport，
         # 用户可在「设置 → 网络」让 LLM 请求走代理（OpenAI 官方等被墙端点）。
         # 超时仍由 AsyncOpenAI 的 timeout 参数按请求控制，这里不重复设置。

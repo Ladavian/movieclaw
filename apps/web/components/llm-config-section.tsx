@@ -210,6 +210,8 @@ export function LlmConfigSection() {
                 value={config.base_url ?? preset?.base_url ?? "官方默认"}
               />
               <InfoStat label="默认模型" value={config.default_model} />
+              {/* 仅在用户覆盖过 UA 时展示——没配的用户不需要知道有这回事 */}
+              {config.user_agent && <InfoStat label="User-Agent" value={config.user_agent} />}
             </div>
           </div>
         )
@@ -317,6 +319,7 @@ function LlmProviderForm({ config, presets, onSubmit, onCancel, onError }: LlmPr
     config?.provider_type ?? "bailian",
   );
   const [baseUrl, setBaseUrl] = useState(config?.base_url ?? "");
+  const [userAgent, setUserAgent] = useState(config?.user_agent ?? "");
   // 出于安全后端不回传 Key，编辑时需重新填写
   const [apiKey, setApiKey] = useState("");
   const [model, setModel] = useState(config?.default_model ?? "");
@@ -349,16 +352,22 @@ function LlmProviderForm({ config, presets, onSubmit, onCancel, onError }: LlmPr
   const isNew = model === NEW_MODEL;
 
   const needBaseUrl = preset?.requires_base_url ?? false;
+  // 端点没有预设默认值 = 用户自定义接入点（OpenAI 可配镜像 / 通用兼容端点），
+  // 只有这类才需要端点与 User-Agent 输入；官方固定渠道两者都不展示
+  const canCustomizeEndpoint = !preset?.base_url;
   // 新增模型的必填校验：id / 上下文 / 最大输出；开思考则思考预算也必填
   const draftValid =
     draft.id.trim().length > 0 &&
     Number(draft.contextWindow) > 0 &&
     Number(draft.maxOutput) > 0 &&
     (!draft.thinking || Number(draft.thinkingBudget) > 0);
+  // 请求头值只能是可打印 ASCII（与后端校验同一判据），空即用 SDK 默认
+  const userAgentValid = userAgent.trim() === "" || /^[\x20-\x7e]+$/.test(userAgent.trim());
   const canSubmit =
     apiKey.trim().length > 0 &&
     (isNew ? draftValid : model.trim().length > 0) &&
-    (!needBaseUrl || /^https?:\/\/.+/.test(baseUrl.trim()));
+    (!needBaseUrl || /^https?:\/\/.+/.test(baseUrl.trim())) &&
+    userAgentValid;
 
   function submit() {
     let defaultModel = model.trim();
@@ -390,6 +399,9 @@ function LlmProviderForm({ config, presets, onSubmit, onCancel, onError }: LlmPr
     void onSubmit({
       provider_type: providerType,
       base_url: baseUrl.trim() || null,
+      // 端点固定的官方渠道不开放 UA 配置，一律回传 null，避免切换供应商后
+      // 残留上一个自定义端点的 UA
+      user_agent: (canCustomizeEndpoint && userAgent.trim()) || null,
       api_key: apiKey.trim(),
       default_model: defaultModel,
       extra_models: nextExtras,
@@ -416,6 +428,7 @@ function LlmProviderForm({ config, presets, onSubmit, onCancel, onError }: LlmPr
               onClick={() => {
                 setProviderType(p.id);
                 setBaseUrl("");
+                setUserAgent("");
                 setModel("");
               }}
               data-active={providerType === p.id}
@@ -433,26 +446,52 @@ function LlmProviderForm({ config, presets, onSubmit, onCancel, onError }: LlmPr
       </div>
 
       {/* 端点固定的官方渠道（百炼/DeepSeek/Kimi/GLM）不展示端点输入；
-          OpenAI 保留可选输入（代理/镜像场景），通用兼容端点必填 */}
-      {!preset?.base_url && (
-        <div>
-          <label className={labelClass}>
-            API 端点{needBaseUrl ? "" : "（可选）"}
-          </label>
-          <input
-            type="text"
-            value={baseUrl}
-            onChange={(e) => setBaseUrl(e.target.value)}
-            placeholder={needBaseUrl ? "http://192.168.1.5:8000/v1" : "官方默认端点"}
-            className={inputClass}
-            {...NO_AUTOFILL}
-          />
-          {!needBaseUrl && (
-            <p className="mt-1.5 text-caption leading-relaxed text-[var(--text-faint)]">
-              留空使用官方端点；使用代理或镜像时填写完整地址。
+          OpenAI 保留可选输入（代理/镜像场景），通用兼容端点必填。
+          User-Agent 与端点同进退：能自定义端点才谈得上按对端要求改 UA */}
+      {canCustomizeEndpoint && (
+        <>
+          <div>
+            <label className={labelClass}>
+              API 端点{needBaseUrl ? "" : "（可选）"}
+            </label>
+            <input
+              type="text"
+              value={baseUrl}
+              onChange={(e) => setBaseUrl(e.target.value)}
+              placeholder={needBaseUrl ? "http://192.168.1.5:8000/v1" : "官方默认端点"}
+              className={inputClass}
+              {...NO_AUTOFILL}
+            />
+            {!needBaseUrl && (
+              <p className="mt-1.5 text-caption leading-relaxed text-[var(--text-faint)]">
+                留空使用官方端点；使用代理或镜像时填写完整地址。
+              </p>
+            )}
+          </div>
+
+          <div>
+            <label className={labelClass}>User-Agent（可选）</label>
+            <input
+              type="text"
+              value={userAgent}
+              onChange={(e) => setUserAgent(e.target.value)}
+              // 占位符直接展示留空时实际发送的 SDK 自带 UA（后端按 SDK 版本现算），
+              // 排查网关按 UA 放行时用户第一眼就能看到「当前到底在发什么」
+              placeholder={preset?.default_user_agent ?? "留空使用 SDK 默认标识"}
+              className={inputClass}
+              {...NO_AUTOFILL}
+            />
+            <p
+              className={`mt-1.5 text-caption leading-relaxed ${
+                userAgentValid ? "text-[var(--text-faint)]" : "text-[#ff6b6b]"
+              }`}
+            >
+              {userAgentValid
+                ? "留空时按上述 SDK 默认标识发送；网关或 WAF 按 UA 放行、限流时，在此填写它要求的标识。"
+                : "只能包含可打印的 ASCII 字符（不能含换行或中文）。"}
             </p>
-          )}
-        </div>
+          </div>
+        </>
       )}
 
       <div>

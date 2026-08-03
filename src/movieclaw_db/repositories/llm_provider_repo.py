@@ -42,6 +42,7 @@ class LlmProviderRepository:
         api_key: str,
         default_model: str,
         extra_models: list[dict] | None = None,
+        user_agent: str | None = None,
     ) -> LlmProvider:
         """保存配置：有则整体覆盖、无则创建（维护单例不变量）。
 
@@ -56,6 +57,7 @@ class LlmProviderRepository:
                 api_key=encrypted,
                 default_model=default_model,
                 extra_models=extra_models,
+                user_agent=user_agent,
             )
             self._session.add(row)
         else:
@@ -64,6 +66,7 @@ class LlmProviderRepository:
             row.api_key = encrypted
             row.default_model = default_model
             row.extra_models = extra_models
+            row.user_agent = user_agent
             row.status = ConfigStatus.PENDING
             row.last_error = None
             row.available_models = None

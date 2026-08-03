@@ -167,9 +167,17 @@ export async function startAgentRun(
   return { runId: response.data.run_id, sessionId: response.data.session_id };
 }
 
-/** 最近会话列表（按最后活跃时间倒序）。 */
-export async function listAgentSessions(): Promise<AgentSessionSummary[]> {
-  const response = await request<ApiEnvelope<AgentSessionSummary[]>>("/agent/sessions");
+/** 最近会话列表（按最后活跃时间倒序，limit/offset 分页）。 */
+export async function listAgentSessions(
+  params: { limit?: number; offset?: number } = {},
+): Promise<AgentSessionSummary[]> {
+  const query = new URLSearchParams();
+  if (params.limit != null) query.set("limit", String(params.limit));
+  if (params.offset) query.set("offset", String(params.offset));
+  const suffix = query.size > 0 ? `?${query}` : "";
+  const response = await request<ApiEnvelope<AgentSessionSummary[]>>(
+    `/agent/sessions${suffix}`,
+  );
   return response.data;
 }
 

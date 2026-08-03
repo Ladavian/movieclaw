@@ -60,6 +60,7 @@ async def save_llm_provider(
         api_key=payload.api_key,
         default_model=payload.default_model,
         extra_models=payload.extra_models,
+        user_agent=payload.user_agent,
     )
     row = await service.start_verification()
     background_tasks.add_task(verify_llm_provider)
