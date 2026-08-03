@@ -105,6 +105,15 @@ def _parse_supported_auth_types(raw: dict[str, Any], framework: str) -> tuple[st
     if declared is None:
         return _DEFAULT_AUTH_BY_FRAMEWORK.get(framework, ())
 
+    if not isinstance(declared, (list, tuple)):
+        logger.warning(
+            "站点 %s 的 auth.supported 应写成列表（如 supported: [cookie]），"
+            "当前值 '%s' 格式不对，已按框架默认值处理",
+            raw.get("site_id"),
+            declared,
+        )
+        return _DEFAULT_AUTH_BY_FRAMEWORK.get(framework, ())
+
     result: list[str] = []
     for item in declared:
         value = str(item).lower()
@@ -169,53 +178,62 @@ def _load_site_yaml(
         logger.warning("站点配置缺少必填字段 site_id，已跳过: %s", yaml_file)
         return None
 
-    framework = raw.get("framework", "")
-    category_map = _parse_category_map(raw)
-    supported_auth_types = _parse_supported_auth_types(raw, framework)
+    # 整段解析都兜底：用户手写 YAML 里字段拼错、类型写错（如 selectors 键名
+    # 打错、促销系数写成非数字、categories 写成列表）会抛各种异常，
+    # 任何一种都只跳过这一个文件，不能拖垮其它站点的加载
+    try:
+        framework = raw.get("framework", "")
+        category_map = _parse_category_map(raw)
+        supported_auth_types = _parse_supported_auth_types(raw, framework)
 
-    # 确定站点类和选择器
-    # 若同时指定了 custom_class 和 framework，则：
-    #   - custom_class 替换默认站点类（可继承 framework 的基类并扩展）
-    #   - framework 继续负责解析 selectors，使 YAML 中的选择器覆盖正常生效
-    # 若仅有 custom_class 而无 framework，selectors 为 None（自定义类自行管理）
-    if "custom_class" in raw:
-        try:
-            site_class = _import_class(raw["custom_class"])
-        except Exception:
-            logger.exception(
-                "站点 %s 的 custom_class '%s' 导入失败（类路径写错？），已跳过: %s",
-                site_id,
-                raw["custom_class"],
-                yaml_file,
-            )
-            return None
-        if framework in framework_defaults:
-            _, selector_cls = framework_defaults[framework]
+        # 确定站点类和选择器
+        # 若同时指定了 custom_class 和 framework，则：
+        #   - custom_class 替换默认站点类（可继承 framework 的基类并扩展）
+        #   - framework 继续负责解析 selectors，使 YAML 中的选择器覆盖正常生效
+        # 若仅有 custom_class 而无 framework，selectors 为 None（自定义类自行管理）
+        if "custom_class" in raw:
+            try:
+                site_class = _import_class(raw["custom_class"])
+            except Exception:
+                logger.exception(
+                    "站点 %s 的 custom_class '%s' 导入失败（类路径写错？），已跳过: %s",
+                    site_id,
+                    raw["custom_class"],
+                    yaml_file,
+                )
+                return None
+            if framework in framework_defaults:
+                _, selector_cls = framework_defaults[framework]
+                selectors = _parse_selectors(raw, selector_cls)
+            else:
+                selectors = None
+        elif framework in framework_defaults:
+            site_class, selector_cls = framework_defaults[framework]
             selectors = _parse_selectors(raw, selector_cls)
         else:
-            selectors = None
-    elif framework in framework_defaults:
-        site_class, selector_cls = framework_defaults[framework]
-        selectors = _parse_selectors(raw, selector_cls)
-    else:
-        logger.warning("未知的 framework '%s'（支持: nexusphp），已跳过: %s", framework, yaml_file)
-        return None
+            logger.warning(
+                "未知的 framework '%s'（支持: nexusphp），已跳过: %s", framework, yaml_file
+            )
+            return None
 
-    return SiteConfig(
-        site_id=site_id,
-        display_name=raw.get("display_name", site_id),
-        base_url=raw.get("base_url", ""),
-        web_base_url=raw.get("web_base_url"),
-        framework=framework,
-        site_class=site_class,
-        selectors=selectors,
-        category_map=category_map,
-        http2=raw.get("http2", False),
-        timeout=raw.get("timeout", 30.0),
-        max_retries=raw.get("max_retries", 3),
-        min_request_interval=raw.get("min_request_interval"),
-        supported_auth_types=supported_auth_types,
-    )
+        return SiteConfig(
+            site_id=site_id,
+            display_name=raw.get("display_name", site_id),
+            base_url=raw.get("base_url", ""),
+            web_base_url=raw.get("web_base_url"),
+            framework=framework,
+            site_class=site_class,
+            selectors=selectors,
+            category_map=category_map,
+            http2=raw.get("http2", False),
+            timeout=raw.get("timeout", 30.0),
+            max_retries=raw.get("max_retries", 3),
+            min_request_interval=raw.get("min_request_interval"),
+            supported_auth_types=supported_auth_types,
+        )
+    except Exception:
+        logger.exception("站点配置文件 %s 解析失败（字段写法有误？），已跳过", yaml_file)
+        return None
 
 
 def _load_configs_dir(
