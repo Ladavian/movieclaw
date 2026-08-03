@@ -13,7 +13,7 @@ from enum import Enum, StrEnum
 from pydantic import BaseModel, Field
 
 
-class MediaKind(str, Enum):
+class MediaKind(str, Enum):  # noqa: UP042 —— 改 StrEnum 会改变 str()/f-string 输出，牵连面大，维持现状
     """媒体类型：电影 / 剧集。取值与 TMDB 的路径段一致，可直接拼接 URL。"""
 
     MOVIE = "movie"
@@ -144,5 +144,7 @@ class MediaDetail(BaseModel):
     card: MediaCard
     facts: MediaFacts
     backdrops: list[MediaImage] = Field(default_factory=list, description="剧照（16:9 宽幅）")
-    posters: list[MediaImage] = Field(default_factory=list, description="海报（2:3 竖版，配置语言优先）")
+    posters: list[MediaImage] = Field(
+        default_factory=list, description="海报（2:3 竖版，配置语言优先）"
+    )
     related: list[MediaCard] = Field(default_factory=list, description="TMDB 推荐的相似作品")

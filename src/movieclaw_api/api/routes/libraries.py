@@ -1211,13 +1211,15 @@ async def get_library_item(
     if bundle.has_local_poster:
         poster_url = f"{art_base}?kind=poster&v={bundle.local_poster_version}"
     elif meta_row is not None and meta_row.poster_file:
-        poster_url = f"/images/assets/{meta_row.poster_file}?v={media_scrape.asset_version(meta_row.poster_file)}"
+        poster_version = media_scrape.asset_version(meta_row.poster_file)
+        poster_url = f"/images/assets/{meta_row.poster_file}?v={poster_version}"
     else:
         poster_url = f"{base}/w500{item.poster_path}" if item.poster_path else None
     if bundle.has_local_fanart:
         backdrop_url = f"{art_base}?kind=fanart&v={bundle.local_fanart_version}"
     elif meta_row is not None and meta_row.backdrop_file:
-        backdrop_url = f"/images/assets/{meta_row.backdrop_file}?v={media_scrape.asset_version(meta_row.backdrop_file)}"
+        backdrop_version = media_scrape.asset_version(meta_row.backdrop_file)
+        backdrop_url = f"/images/assets/{meta_row.backdrop_file}?v={backdrop_version}"
     else:
         # w1280 而非 original：作为全站沉浸背景铺视口足够清晰，体积小一个
         # 数量级——首次访问的背景切换等待从"原图下载"变成秒级

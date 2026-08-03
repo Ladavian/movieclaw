@@ -9,10 +9,9 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 
-from alembic import op
 import sqlalchemy as sa
 import sqlmodel
-
+from alembic import op
 
 # revision identifiers, used by Alembic.
 revision: str = 'b4162f0ac46b'
@@ -26,9 +25,18 @@ def upgrade() -> None:
     with op.batch_alter_table('site_credential', schema=None) as batch_op:
         # server_default='PENDING'：老数据升级时新列需要默认值回填，否则
         # 已有记录会因 NOT NULL 无值而报错。存量凭据回到 PENDING 会被重新验证。
-        batch_op.add_column(sa.Column('status', sa.Enum('PENDING', 'VERIFYING', 'ACTIVE', 'FAILED', name='configstatus'), nullable=False, server_default='PENDING'))
+        batch_op.add_column(
+            sa.Column(
+                'status',
+                sa.Enum('PENDING', 'VERIFYING', 'ACTIVE', 'FAILED', name='configstatus'),
+                nullable=False,
+                server_default='PENDING',
+            )
+        )
         batch_op.add_column(sa.Column('last_verified_at', sa.DateTime(), nullable=True))
-        batch_op.add_column(sa.Column('last_error', sqlmodel.sql.sqltypes.AutoString(), nullable=True))
+        batch_op.add_column(
+            sa.Column('last_error', sqlmodel.sql.sqltypes.AutoString(), nullable=True)
+        )
         batch_op.create_index(batch_op.f('ix_site_credential_status'), ['status'], unique=False)
 
     # ### end Alembic commands ###

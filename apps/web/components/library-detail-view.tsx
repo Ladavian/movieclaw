@@ -1822,7 +1822,6 @@ function ReviewGroupRow({ group, onChanged }: { group: ReviewGroup; onChanged: (
   const side = (info: ReviewGroup["current"], tone: "current" | "suggestion") => (
     <div className="flex min-w-0 flex-1 items-center gap-2.5">
       {info.poster_url ? (
-        // eslint-disable-next-line @next/next/no-img-element
         <img
           src={cachedImageUrl(info.poster_url)}
           alt=""

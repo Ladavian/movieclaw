@@ -1,0 +1,79 @@
+# =============================================================================
+# 合并门禁 CI（CLAUDE.md「合并前必须通过」四件套的自动化）
+#
+# 此前 pytest / ruff / web:lint / web:typecheck 全靠本地自觉，外部贡献 PR
+# 没有任何机器把关。本工作流把四条门禁固化到 CI：
+#
+#   - python 作业：ruff check . + pytest（跳过 integration 标记的用例）。
+#     enrich 的片名/季集抽取依赖 NER 模型（运行期数据，不入 git），缺模型时
+#     季集相关的一批测试会稳定失败——所以先从模型 Release 下载三个文件，
+#     并用 actions/cache 按 tag 缓存，避免每次跑 CI 都拉 15MB。
+#   - web 作业：eslint + tsc，与 release.yml 的前端环境保持同一套版本。
+# =============================================================================
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+# NER 模型的 Release tag；模型发新版时同步改这里（发版流程见 .claude/skills/release）
+env:
+  NER_MODEL_TAG: torrent-ner-v1
+
+jobs:
+  python:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: 安装依赖（含 dev 工具链）
+        run: pip install -e ".[dev]"
+
+      - name: 恢复 NER 模型缓存
+        id: ner-cache
+        uses: actions/cache@v4
+        with:
+          path: data/models/torrent-ner
+          key: ner-model-${{ env.NER_MODEL_TAG }}
+
+      - name: 下载 NER 模型（缓存未命中时）
+        if: steps.ner-cache.outputs.cache-hit != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release download "$NER_MODEL_TAG" \
+            --repo "${{ github.repository }}" \
+            --dir data/models/torrent-ner
+
+      - name: ruff
+        run: ruff check .
+
+      - name: pytest
+        run: python -m pytest -q -m "not integration"
+
+  web:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: 安装依赖
+        run: pnpm install --frozen-lockfile
+
+      - name: eslint
+        run: pnpm web:lint
+
+      - name: typecheck
+        run: pnpm web:typecheck

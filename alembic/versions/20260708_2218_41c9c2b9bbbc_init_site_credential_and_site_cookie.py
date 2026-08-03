@@ -9,10 +9,9 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 
-from alembic import op
 import sqlalchemy as sa
 import sqlmodel
-
+from alembic import op
 
 # revision identifiers, used by Alembic.
 revision: str = '41c9c2b9bbbc'
@@ -39,7 +38,9 @@ def upgrade() -> None:
     sa.Column('updated_at', sa.DateTime(), nullable=False),
     sa.Column('id', sa.Integer(), nullable=False),
     sa.Column('site_id', sqlmodel.sql.sqltypes.AutoString(), nullable=False),
-    sa.Column('auth_type', sa.Enum('COOKIE', 'APIKEY', 'CREDENTIAL', name='authtype'), nullable=False),
+    sa.Column(
+        'auth_type', sa.Enum('COOKIE', 'APIKEY', 'CREDENTIAL', name='authtype'), nullable=False
+    ),
     sa.Column('cookie', sqlmodel.sql.sqltypes.AutoString(), nullable=True),
     sa.Column('api_key', sqlmodel.sql.sqltypes.AutoString(), nullable=True),
     sa.Column('username', sqlmodel.sql.sqltypes.AutoString(), nullable=True),

@@ -9,10 +9,9 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 
-from alembic import op
 import sqlalchemy as sa
 import sqlmodel
-
+from alembic import op
 
 # revision identifiers, used by Alembic.
 revision: str = 'c8d5e9f3a627'
@@ -50,9 +49,13 @@ def upgrade() -> None:
     sa.UniqueConstraint('media_item_id', name='uq_subscription_media_item')
     )
     with op.batch_alter_table('subscription', schema=None) as batch_op:
-        batch_op.create_index(batch_op.f('ix_subscription_media_item_id'), ['media_item_id'], unique=False)
+        batch_op.create_index(
+            batch_op.f('ix_subscription_media_item_id'), ['media_item_id'], unique=False
+        )
         batch_op.create_index(batch_op.f('ix_subscription_kind'), ['kind'], unique=False)
-        batch_op.create_index(batch_op.f('ix_subscription_rule_set_id'), ['rule_set_id'], unique=False)
+        batch_op.create_index(
+            batch_op.f('ix_subscription_rule_set_id'), ['rule_set_id'], unique=False
+        )
         batch_op.create_index(batch_op.f('ix_subscription_status'), ['status'], unique=False)
 
     op.create_table('wanted_item',
@@ -73,12 +76,18 @@ def upgrade() -> None:
     sa.ForeignKeyConstraint(['subscription_id'], ['subscription.id'], ondelete='CASCADE'),
     sa.ForeignKeyConstraint(['media_item_id'], ['media_item.id'], ondelete='CASCADE'),
     sa.PrimaryKeyConstraint('id'),
-    sa.UniqueConstraint('subscription_id', 'season_number', 'episode_number', name='uq_wanted_sub_season_episode')
+    sa.UniqueConstraint(
+        'subscription_id', 'season_number', 'episode_number', name='uq_wanted_sub_season_episode'
+    )
     )
     with op.batch_alter_table('wanted_item', schema=None) as batch_op:
-        batch_op.create_index(batch_op.f('ix_wanted_item_subscription_id'), ['subscription_id'], unique=False)
+        batch_op.create_index(
+            batch_op.f('ix_wanted_item_subscription_id'), ['subscription_id'], unique=False
+        )
         batch_op.create_index(batch_op.f('ix_wanted_item_status'), ['status'], unique=False)
-        batch_op.create_index(batch_op.f('ix_wanted_item_next_search_at'), ['next_search_at'], unique=False)
+        batch_op.create_index(
+            batch_op.f('ix_wanted_item_next_search_at'), ['next_search_at'], unique=False
+        )
         batch_op.create_index('ix_wanted_media_status', ['media_item_id', 'status'], unique=False)
 
 
