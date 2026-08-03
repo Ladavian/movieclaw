@@ -85,6 +85,7 @@ class ImportWatchConfigService:
         library_id: int | None,
         kind: str | None = None,
         target_path: str | None = None,
+        process_existing: bool = True,
     ) -> ImportWatch:
         source, kind, target = await self._validate(
             source_path=source_path,
@@ -99,6 +100,7 @@ class ImportWatchConfigService:
             library_id=library_id,
             kind=kind,
             target_path=target,
+            process_existing=process_existing,
         )
         self._session.add(row)
         await self._session.commit()
@@ -122,6 +124,7 @@ class ImportWatchConfigService:
         library_id: int | None,
         kind: str | None = None,
         target_path: str | None = None,
+        process_existing: bool = True,
     ) -> ImportWatch:
         row = await self.get(rule_id)
         source, kind, target = await self._validate(
@@ -132,11 +135,16 @@ class ImportWatchConfigService:
             target_path=target_path,
             exclude_id=rule_id,
         )
+        # 换了源目录或改了存量选项 → 复位基线：下轮巡检对（新）目录重新
+        # 盖章。「跳过存量」的"存量"始终指**该设置生效那一刻**目录里已有的
+        if source != row.source_path or process_existing != row.process_existing:
+            row.baseline_done = False
         row.source_path = source
         row.strategy = strategy
         row.library_id = library_id
         row.kind = kind
         row.target_path = target
+        row.process_existing = process_existing
         row.updated_at = utcnow()
         await self._session.commit()
         await self._session.refresh(row)

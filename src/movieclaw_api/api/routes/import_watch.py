@@ -8,6 +8,7 @@ services.library.ingest 模块头）：媒体库只有一套目录体系；把�
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from pathlib import PurePosixPath
 from typing import Literal
 
 from fastapi import APIRouter, Depends
@@ -16,9 +17,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from movieclaw_api.schemas.response import ApiResponse, ok
 from movieclaw_api.services.import_watch_config import ImportWatchConfigService
+from movieclaw_api.services.library import ingest
 from movieclaw_api.services.library.config import LibraryConfigService
 from movieclaw_db.engine import get_session
-from movieclaw_db.models import ImportWatch
+from movieclaw_db.models import ImportWatch, IngestEntry, IngestStatus
 
 router = APIRouter(prefix="/import-watch", tags=["import-watch"])
 
@@ -46,6 +48,13 @@ class ImportWatchPayload(BaseModel):
     kind: Literal["movie", "tv"] | None = Field(
         default=None, description="自动路由/自定义目录的媒体类型；指定库时忽略"
     )
+    process_existing: bool = Field(
+        default=True,
+        description=(
+            "是否整理源目录里已有的存量内容；false=跳过存量只处理新增"
+            "（存量条目在首轮巡检被标记为已忽略，清单中可恢复）"
+        ),
+    )
 
 
 class ImportWatchView(BaseModel):
@@ -63,10 +72,17 @@ class ImportWatchView(BaseModel):
     target_label: str = Field(
         description="目标展示名：库名 /「自动路由（电影/剧集）」/「自定义目录 …」"
     )
+    process_existing: bool = Field(description="是否整理存量（false=跳过存量只处理新增）")
+    stats: dict[str, int] = Field(
+        default_factory=dict,
+        description="台账状态计数（imported/pending/failed/skipped/ignored → 条目数）",
+    )
     created_at: datetime
 
     @classmethod
-    def from_model(cls, row: ImportWatch, *, library_name: str | None) -> ImportWatchView:
+    def from_model(
+        cls, row: ImportWatch, *, library_name: str | None, stats: dict[str, int] | None = None
+    ) -> ImportWatchView:
         created = row.created_at
         if created.tzinfo is None:
             created = created.replace(tzinfo=UTC)
@@ -85,13 +101,21 @@ class ImportWatchView(BaseModel):
             target_path=row.target_path,
             kind=row.kind,  # type: ignore[arg-type]
             target_label=label,
+            process_existing=row.process_existing,
+            stats=stats or {},
             created_at=created,
         )
 
 
 async def _views(session: AsyncSession, rows: list[ImportWatch]) -> list[ImportWatchView]:
     names = {lib.id: lib.name for lib in await LibraryConfigService(session).list_all()}
-    return [ImportWatchView.from_model(r, library_name=names.get(r.library_id)) for r in rows]
+    stats = await ingest.entry_stats(session, rows)
+    return [
+        ImportWatchView.from_model(
+            r, library_name=names.get(r.library_id), stats=stats.get(r.id or 0)
+        )
+        for r in rows
+    ]
 
 
 @router.get(
@@ -124,6 +148,7 @@ async def create_rule(
         library_id=payload.library_id,
         kind=payload.kind,
         target_path=payload.target_path,
+        process_existing=payload.process_existing,
     )
     views = await _views(session, [row])
     return ok(views[0], message=f"已创建监听导入规则：{row.source_path}")
@@ -148,6 +173,7 @@ async def update_rule(
         library_id=payload.library_id,
         kind=payload.kind,
         target_path=payload.target_path,
+        process_existing=payload.process_existing,
     )
     views = await _views(session, [row])
     return ok(views[0], message="已更新")
@@ -167,3 +193,112 @@ async def delete_rule(
     service = ImportWatchConfigService(session)
     await service.delete(rule_id)
     return ok({}, message="已删除（源目录与已导入的文件均未受影响）")
+
+
+# —— 台账清单与人工拍板（实现层：services.library.ingest）——————————
+
+
+class IngestEntryView(BaseModel):
+    """监听目录一个条目的处理台账行（清单展示）。"""
+
+    id: int
+    name: str = Field(description="条目名（源目录顶层的文件/目录名）")
+    entry_path: str
+    status: Literal["imported", "pending", "failed", "skipped", "ignored"]
+    message: str | None = Field(default=None, description="处理结论（中文）")
+    imported_count: int
+    attempted_at: datetime
+
+    @classmethod
+    def from_model(cls, row: IngestEntry) -> IngestEntryView:
+        attempted = row.attempted_at
+        if attempted.tzinfo is None:
+            attempted = attempted.replace(tzinfo=UTC)
+        return cls(
+            id=row.id,  # type: ignore[arg-type]
+            name=PurePosixPath(row.entry_path).name,
+            entry_path=row.entry_path,
+            status=row.status,  # type: ignore[arg-type]
+            message=row.message,
+            imported_count=row.imported_count,
+            attempted_at=attempted,
+        )
+
+
+class IngestEntriesView(BaseModel):
+    """一条规则的台账清单 + 各状态计数。"""
+
+    counts: dict[str, int]
+    entries: list[IngestEntryView]
+
+
+class ClaimPayload(BaseModel):
+    """人工认领请求：把条目钉到指定 TMDB 条目并立即入库。"""
+
+    tmdb_id: int = Field(description="TMDB 条目 id（类型按规则先验：库类型或规则声明）")
+
+
+@router.get(
+    "/{rule_id}/entries",
+    response_model=ApiResponse[IngestEntriesView],
+    summary="一条规则的台账清单（待处理/失败/已忽略/已入库）",
+    operation_id="watch.entries",
+)
+async def list_rule_entries(
+    rule_id: int,
+    status: Literal["imported", "pending", "failed", "skipped", "ignored"] | None = None,
+    session: AsyncSession = Depends(get_session),
+) -> ApiResponse[IngestEntriesView]:
+    rule = await ImportWatchConfigService(session).get(rule_id)
+    counts = (await ingest.entry_stats(session, [rule])).get(rule_id, {})
+    rows = await ingest.list_entries(session, rule, status)
+    return ok(
+        IngestEntriesView(counts=counts, entries=[IngestEntryView.from_model(r) for r in rows])
+    )
+
+
+@router.post(
+    "/entries/{entry_id}/ignore",
+    response_model=ApiResponse[IngestEntryView],
+    summary="忽略条目：永久跳过，不再处理（可恢复）",
+    operation_id="watch.entries.ignore",
+)
+async def ignore_entry(
+    entry_id: int,
+    session: AsyncSession = Depends(get_session),
+) -> ApiResponse[IngestEntryView]:
+    row = await ingest.ignore_entry(session, entry_id)
+    return ok(IngestEntryView.from_model(row), message="已忽略（清单中可随时恢复）")
+
+
+@router.post(
+    "/entries/{entry_id}/restore",
+    response_model=ApiResponse[IngestEntryView],
+    summary="恢复条目：重新进入处理流程",
+    operation_id="watch.entries.restore",
+)
+async def restore_entry(
+    entry_id: int,
+    session: AsyncSession = Depends(get_session),
+) -> ApiResponse[IngestEntryView]:
+    row = await ingest.restore_entry(session, entry_id)
+    return ok(IngestEntryView.from_model(row), message="已恢复，将在下轮巡检时重新处理")
+
+
+@router.post(
+    "/entries/{entry_id}/claim",
+    response_model=ApiResponse[IngestEntryView],
+    summary="认领条目：钉到指定 TMDB 身份并立即入库",
+    operation_id="watch.entries.claim",
+)
+async def claim_entry(
+    entry_id: int,
+    payload: ClaimPayload,
+    session: AsyncSession = Depends(get_session),
+) -> ApiResponse[IngestEntryView]:
+    row = await ingest.claim_entry(session, entry_id, payload.tmdb_id)
+    view = IngestEntryView.from_model(row)
+    if row.status == IngestStatus.IMPORTED:
+        return ok(view, message=row.message or "已入库")
+    # 认领本身成功但处理未完成（探测失败/搬运出错等）：结论如实带回
+    return ok(view, message=row.message or "已认领，处理未完成")
