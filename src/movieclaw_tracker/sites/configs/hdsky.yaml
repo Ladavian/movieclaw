@@ -1,0 +1,95 @@
+# HDSky 站点配置
+# 官网：https://hdsky.me/
+site_id: hdsky
+display_name: HDSky
+base_url: https://hdsky.me
+framework: nexusphp
+selectors:
+  # ── 种子列表 ─────────────────────────────────────────────────────
+  # 标准 NexusPHP 表格结构：table.torrents 中的 tr 行
+  torrent_row_css: "table.torrents.progresstable tr"
+  # 分类 ID 来自 ?cat=XXX 链接（第一列分类图标链接）
+  torrent_category_css: "td:first-child a[href*='cat=']::attr(href)"
+  # 标题：table.torrentname 内嵌表格中的详情链接 b span
+  torrent_title_css: "table.torrentname a[href*='details.php'] b span"
+  # 副标题：br 后的描述文本 span
+  torrent_subtitle_css: "table.torrentname br + span"
+  # 大小：第5列（分类/标题/评论/时间/大小）
+  torrent_size_css: "td:nth-child(5)"
+  # 种子数：包含 seeders 的链接文本
+  torrent_seeders_css: "a[href*='dllist=1#seeders']"
+  # 下载数：包含 leechers 的链接文本
+  torrent_leechers_css: "a[href*='dllist=1#leechers']"
+  # 完成数：viewsnatches 链接或直接文本
+  torrent_snatched_css: "a[href*='viewsnatches.php'] b, td:nth-child(8)"
+  # 发布时间：span title 属性存精确时间戳
+  torrent_time_css: "td:nth-child(4) span::attr(title)"
+  torrent_time_fallback_css: "td:nth-child(4)"
+  # 详情链接：torrentname 表格中的详情链接
+  torrent_detail_url_css: "table.torrentname a[href*='details.php']::attr(href)"
+  # 下载链接：form action 属性（POST 表单）
+  torrent_download_url_css: "form[action*='download.php']::attr(action)"
+  # 发布者：最后一列中的用户链接
+  torrent_uploader_css: "td:last-child a[href*='userdetails.php']"
+
+  # ── 登录验证 ──────────────────────────────────────────────────────
+  # 分页从 0 开始：page=0 显示 1-100
+  page_offset: -1
+  # 登录成功后存在精确匹配 logout.php 的退出链接
+  login_success_css: "a[href='logout.php']"
+
+  # ── 促销 ──────────────────────────────────────────────────────────
+  # 标准 NexusPHP 促销图标 class（来自 sprites.css）
+  promo_download_rules:
+    "img.pro_free": 0
+    "img.pro_free2up": 0
+    "img.pro_50pctdown": 0.5
+    "img.pro_50pctdown2up": 0.5
+    "img.pro_30pctdown": 0.3
+  promo_upload_rules:
+    "img.pro_2up": 2
+    "img.pro_free2up": 2
+    "img.pro_50pctdown2up": 2
+
+  # ── H&R 标记 ──────────────────────────────────────────────────────
+  # HDSky 暂无 H&R 考核系统
+
+  # ── 用户资料 ──────────────────────────────────────────────────────
+  # 用户名/UID/等级均取自顶部导航栏的用户链接（class 以 _Name 结尾，如 EliteUser_Name）。
+  # 这样即使访问 userdetails.php（不带 id 参数）也能正确提取，不依赖资料页主体容器。
+  profile_uid_css: "a[class*='_Name']::attr(href)"
+  profile_username_css: "a[class*='_Name'] b"
+  # 用户等级编码在用户名链接的 class 属性中（如 "EliteUser_Name"）
+  profile_class_css: "a[class*='_Name']::attr(class)"
+  # 上传量/下载量：顶部导航栏 font.color_* 后的文本节点
+  profile_uploaded_css: "font.color_uploaded::next_sibling_text"
+  profile_downloaded_css: "font.color_downloaded::next_sibling_text"
+  # 分享率：顶部导航栏 font.color_ratio 后的文本节点
+  profile_ratio_css: "font.color_ratio::next_sibling_text"
+  # 魔力值：顶部导航栏 font.color_bonus 区域（包含 [使用]: 数值 格式）
+  profile_bonus_css: "font.color_bonus"
+  # 做种数/下载数：顶部导航栏箭头图标后的文本节点
+  profile_seeding_css: "img.arrowup::next_sibling_text"
+  profile_leeching_css: "img.arrowdown::next_sibling_text"
+
+  # ── 详情页 ────────────────────────────────────────────────────────
+  detail_title_css: "h1#top"
+  detail_subtitle_css: "td.rowhead:contains('副标题') + td.rowfollow"
+  detail_size_css: "td.rowhead:contains('基本信息') + td.rowfollow"
+  detail_download_css: "form[action*='download.php']::attr(action)"
+  detail_imdb_css: "a[href*='imdb.com']::attr(href)"
+  detail_douban_css: "a[href*='douban.com']::attr(href)"
+
+# ── 分类映射 ──────────────────────────────────────────────────────
+# 401电影 / 402剧集(分集) / 403综艺 / 404纪录片 / 405动漫 /
+# 406音乐MV / 407体育 / 408无损音乐 / 409其他 / 410iPad影视 /
+# 411剧集(合集) / 412海外剧集(分集) / 413海外剧集(合集) /
+# 414海外综艺(分集) / 415海外综艺(合集) / 416短剧
+categories:
+  movie:       [401, 410]
+  # 体育(407)归入 tv，与项目其他站点（chdbits/ssd 等）惯例一致
+  tv:          [402, 403, 407, 411, 412, 413, 414, 415, 416]
+  documentary: [404]
+  anime:       [405]
+  music:       [406, 408]
+  other:       [409]
