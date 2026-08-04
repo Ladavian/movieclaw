@@ -1,0 +1,90 @@
+# HHCLUB（憨憨）站点配置
+# 官网：https://hhanclub.net/
+site_id: hhanclub
+display_name: 憨憨
+base_url: https://hhanclub.net
+framework: nexusphp
+selectors:
+  # ── 种子列表 ─────────────────────────────────────────────────────
+  # 自定义模板：每个种子是一张 div.torrent-table-sub-info 卡片（100 张/页）
+  torrent_row_css: "div.torrent-table-sub-info"
+  # 分类 ID 来自 ?cat[]=XXX 链接（注意是数组参数 cat[]）
+  torrent_category_css: "div.torrent-cat a::attr(href)"
+  # 标题：a.torrent-info-text-name（无 title 属性，直接取链接文本）
+  torrent_title_css: "div.torrent-title a.torrent-info-text-name"
+  # 副标题（中文描述）在 torrent-info-text-small_name
+  torrent_subtitle_css: "div.torrent-info-text-small_name"
+  # 数据列都是明确的语义 class
+  torrent_size_css: "div.torrent-info-text-size"
+  torrent_seeders_css: "div.torrent-info-text-seeders"
+  torrent_leechers_css: "div.torrent-info-text-leechers"
+  torrent_snatched_css: "div.torrent-info-text-finished"
+  torrent_uploader_css: "div.torrent-info-text-author"
+  # 发布时间：span[title] 属性存精确时间戳（页面显示 "4天4时"）
+  torrent_time_css: "div.torrent-info-text-added > span::attr(title)"
+  torrent_time_fallback_css: "div.torrent-info-text-added"
+  # 详情/下载链接
+  torrent_detail_url_css: "div.torrent-title a[href*='details.php']::attr(href)"
+  torrent_download_url_css: "div.torrent-manage a[href*='download.php']::attr(href)"
+  # ── 登录验证 ──────────────────────────────────────────────────────
+  # HHClub 分页从 0 开始：?page=0 才是第一页（分页导航第 1 页显示为「1-100」）。
+  page_offset: -1
+  # 登录成功后存在精确匹配 logout.php 的退出链接
+  login_success_css: "a[href='logout.php']"
+  # ── 促销 ──────────────────────────────────────────────────────────
+  # 自定义类 promotion-tag-*。站点模板存在新旧两套类名，全部并入规则表：
+  #   新版（2026-08 实测）：free / 50 / 30 / 2xfree
+  #   旧版（pre-dessert 配置）：free2up / 50pctdown / 50pctdown2up / 2up
+  promo_download_rules:
+    "span.promotion-tag-free": 0
+    "span.promotion-tag-free2up": 0
+    "span.promotion-tag-2xfree": 0
+    "span.promotion-tag-50": 0.5
+    "span.promotion-tag-50pctdown": 0.5
+    "span.promotion-tag-50pctdown2up": 0.5
+    "span.promotion-tag-30": 0.3
+    "span.promotion-tag-30pctdown": 0.3
+  promo_upload_rules:
+    "span.promotion-tag-free2up": 2
+    "span.promotion-tag-50pctdown2up": 2
+    "span.promotion-tag-2up": 2
+    "span.promotion-tag-2xfree": 2
+  # ── H&R 标记 ──────────────────────────────────────────────────────
+  # 有 H&R 考核的种子带黑底白字天数标记 div.torrent-info-hr（出现较少）。
+  torrent_hr_css: "div.torrent-info-hr"
+  # ── 用户资料 ──────────────────────────────────────────────────────
+  # 用户名/UID/等级均取自顶部导航栏的用户链接（class 以 _Name 结尾，如 EliteUser_Name）。
+  # 这样即使访问 userdetails.php（不带 id 参数）也能正确提取，不依赖资料页主体容器。
+  profile_uid_css: "a[class*='_Name']::attr(href)"
+  profile_username_css: "a[class*='_Name']"
+  # 用户等级编码在用户名链接的 class 属性中（如 "EliteUser_Name"）
+  profile_class_css: "a[class*='_Name']::attr(class)"
+  # 上传量/下载量：顶部导航栏用户面板中图标后的文本节点
+  profile_uploaded_css: "img[alt='上传']::next_sibling_text"
+  profile_downloaded_css: "img[alt='下载']::next_sibling_text"
+  # 分享率：顶部导航栏中图标旁的 div 文本（格式："[分享率]: 4.689"）
+  profile_ratio_css: "img[alt='分享率'] + div"
+  # 魔力值（憨豆）：顶部导航栏中图标旁的链接文本
+  profile_bonus_css: "img[alt='憨豆'] + a div"
+  # 做种数/下载数：顶部导航栏中图标后的文本节点
+  profile_seeding_css: "img[alt='做种数']::next_sibling_text"
+  profile_leeching_css: "img[alt='下载数']::next_sibling_text"
+  # ── 详情页 ────────────────────────────────────────────────────────
+  # 自定义模板："标题"/"副标题" label div 后的同级 div
+  detail_title_css: "div.font-bold.leading-6:contains('标题'):not(:contains('副标题')) + div.font-bold.leading-6"
+  detail_subtitle_css: "div.font-bold.leading-6:contains('副标题') + div.font-bold.leading-6"
+  # 大小："大小："标签后的 span
+  detail_size_css: "span.font-bold:contains('大小') + span"
+  detail_download_css: "a[href*='download.php']::attr(href)"
+  detail_imdb_css: "a[href*='imdb.com']::attr(href)"
+  detail_douban_css: "a[href*='douban.com']::attr(href)"
+# ── 分类映射 ──────────────────────────────────────────────────────
+# 导航栏分类：401电影 / 402电视剧 / 403综艺 / 404纪录片 / 405动漫 /
+#             407体育 / 409其他 / 410音乐 / 411MV / 412短剧
+categories:
+  movie:       [401]
+  tv:          [402, 403, 407, 412]   # 电视剧 / 综艺 / 体育 / 短剧
+  documentary: [404]
+  anime:       [405]
+  music:       [410, 411]             # 音乐 / MV
+  other:       [409]

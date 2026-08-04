@@ -1,0 +1,69 @@
+# HDVIDEO 站点配置
+# 官网：https://hdvideo.top/
+site_id: hdvideo
+display_name: HDVIDEO
+base_url: https://hdvideo.top
+framework: nexusphp
+selectors:
+  # ── 种子列表 ─────────────────────────────────────────────────────
+  torrent_row_css: "table.torrents tr"
+  torrent_category_css: "td:nth-child(2) a[href*='cat=']::attr(href)"
+  torrent_title_css: "span.tt-name a b"
+  torrent_subtitle_css: "span.tt-sub"
+  torrent_size_css: "td:nth-child(6)"
+  torrent_seeders_css: "a[href*='dllist=1#seeders']"
+  torrent_leechers_css: "a[href*='dllist=1#leechers'], td:nth-child(8)"
+  torrent_snatched_css: "a[href*='viewsnatches.php'] b"
+  torrent_time_css: "td:nth-child(5) span::attr(title)"
+  torrent_time_fallback_css: "td:nth-child(5)"
+  torrent_detail_url_css: "span.tt-name a::attr(href)"
+  torrent_download_url_css: "a[href*='download.php']::attr(href)"
+  torrent_uploader_css: "td:last-child a[href*='userdetails.php'], td:last-child i.torrent-uploader-anonymous"
+
+  # ── 登录验证 ──────────────────────────────────────────────────────
+  page_offset: -1
+  login_success_css: "a[href='logout.php']"
+
+  # ── 促销 ──────────────────────────────────────────────────────────
+  promo_download_rules:
+    "img.pro_free": 0
+    "img.pro_free2up": 0
+    "img.pro_50pctdown": 0.5
+    "img.pro_50pctdown2up": 0.5
+    "img.pro_30pctdown": 0.3
+  promo_upload_rules:
+    "img.pro_2up": 2
+    "img.pro_free2up": 2
+    "img.pro_50pctdown2up": 2
+
+  # ── H&R 标记 ──────────────────────────────────────────────────────
+  # HDVIDEO 有 H&R 系统，种子列表中标记待确认
+
+  # ── 用户资料 ──────────────────────────────────────────────────────
+  profile_uid_css: "a[class*='_Name']::attr(href)"
+  profile_username_css: "a[class*='_Name'] b"
+  profile_class_css: "a[class*='_Name']::attr(class)"
+  profile_uploaded_css: "font.color_uploaded::next_sibling_text"
+  profile_downloaded_css: "font.color_downloaded::next_sibling_text"
+  profile_ratio_css: "font.color_ratio::next_sibling_text"
+  profile_bonus_css: "font.color_bonus"
+  profile_seeding_css: "img.arrowup::next_sibling_text"
+  profile_leeching_css: "img.arrowdown::next_sibling_text"
+
+  # ── 详情页 ────────────────────────────────────────────────────────
+  detail_title_css: "h1#top"
+  detail_subtitle_css: "td.rowhead:contains('副标题') + td.rowfollow"
+  detail_size_css: "td.rowhead:contains('基本信息') + td.rowfollow"
+  detail_download_css: "a[href*='download.php']::attr(href)"
+  detail_imdb_css: "a[href*='imdb.com']::attr(href)"
+  detail_douban_css: "a[href*='douban.com']::attr(href)"
+
+# ── 分类映射 ──────────────────────────────────────────────────────
+categories:
+  movie:       [401]
+  # 体育(407)归入 tv，与项目其他站点（chdbits/ssd 等）惯例一致
+  tv:          [402, 403, 407]
+  documentary: [404]
+  anime:       [405]
+  music:       [406, 408]
+  other:       []
