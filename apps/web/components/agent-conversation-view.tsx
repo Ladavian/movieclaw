@@ -69,6 +69,20 @@ export function AgentConversationView({ conversationId }: { conversationId: stri
     if (el && nearBottomRef.current) el.scrollTop = el.scrollHeight;
   }, [conversation]);
 
+  // 软键盘弹起时外壳按 --keyboard-inset 收缩（见 components/viewport-keyboard.tsx），
+  // 消息列跟着变矮但 scrollTop 不变——本来贴底的最后几条会被顶出视野，用户
+  // 一点输入框就「丢了上下文」。键盘每次伸缩后重新贴底（离开底部时不打扰）。
+  useEffect(() => {
+    const vv = window.visualViewport;
+    if (!vv) return;
+    const pin = () => {
+      const el = scrollRef.current;
+      if (el && nearBottomRef.current) el.scrollTop = el.scrollHeight;
+    };
+    vv.addEventListener("resize", pin);
+    return () => vv.removeEventListener("resize", pin);
+  }, []);
+
   if (loadError) {
     return (
       <div className="immersive-theme flex h-full items-center justify-center px-6">
