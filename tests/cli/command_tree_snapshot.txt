@@ -4,6 +4,7 @@ agent sessions delete
 agent sessions list
 agent sessions rename
 agent sessions show
+agent sessions truncate
 agent start
 app restart
 app set
