@@ -38,6 +38,7 @@ import {
   renameAgentSession,
   startAgentRun,
   streamAgentRun,
+  truncateAgentSession,
 } from "@/lib/api/agent";
 import { HttpError } from "@/lib/http";
 import { nanoid } from "nanoid";
@@ -80,6 +81,10 @@ export interface AgentTurn {
   id: string;
   /** 后端异步运行编号；创建接口成功后写入，重连和取消都依赖它。 */
   runId?: string;
+  /** 本轮用户输入在服务端转录里的 entry uuid：「改写重问」的截断锚点。
+   *  回放的历史轮次天然带它；新发起的一轮要等 /agent/start 回执才有，
+   *  在那之前不给用户看到改写入口（没有锚点就无从截断）。 */
+  entryUuid?: string;
   input: string;
   status: "running" | "done" | "error";
   /** 本轮开始时刻（epoch ms）：进行中据此显示实时耗时；回放时取用户消息的转录时间戳 */
@@ -130,6 +135,9 @@ interface AgentConversationsValue {
   stop: (conversationId: string) => void;
   /** 重命名会话（改索引元数据，成功后同步本地标题）。 */
   rename: (conversationId: string, title: string) => Promise<void>;
+  /** 改写重问：丢弃该轮及其之后的全部记录（服务端转录一并删除，不可逆），
+   *  返回被丢弃那轮的原始提问文本，供调用方填回输入框。 */
+  truncate: (conversationId: string, entryUuid: string) => Promise<string>;
   /** 彻底删除会话（服务端转录与索引一并删除；运行中的会话会被服务端拒绝）。 */
   remove: (conversationId: string) => Promise<void>;
 }
@@ -138,6 +146,9 @@ const Ctx = createContext<AgentConversationsValue | null>(null);
 
 /** 会话列表的分页页长：首屏与滚动加载共用一个页长，offset 按已取回条数推进。 */
 const PAGE_SIZE = 20;
+
+/** 没有任何消息可供命名时的会话名（服务端把 title 置空，这里是渲染兜底）。 */
+const UNNAMED_TITLE = "未命名会话";
 
 /* —— 转录 entry → AgentTurn 时间线的回放映射 —— */
 
@@ -191,6 +202,7 @@ function entriesToTurns(entries: AgentSessionAnyEntry[]): AgentTurn[] {
     if (message.role === "user") {
       turns.push({
         id: entry.uuid,
+        entryUuid: entry.uuid,
         input: messageText(message),
         status: "done",
         segments: [],
@@ -235,7 +247,7 @@ function entriesToTurns(entries: AgentSessionAnyEntry[]): AgentTurn[] {
 function conversationFromSummary(summary: AgentSessionSummary): AgentConversation {
   return {
     id: summary.id,
-    title: summary.title ?? summary.last_prompt ?? "未命名会话",
+    title: summary.title ?? summary.last_prompt ?? UNNAMED_TITLE,
     updatedAt: Date.parse(summary.updated_at),
     running: summary.running,
     turns: [],
@@ -266,7 +278,7 @@ function conversationFromDetail(detail: AgentSessionDetail): AgentConversation {
   }
   return {
     id: summary.id,
-    title: summary.title ?? summary.last_prompt ?? "未命名会话",
+    title: summary.title ?? summary.last_prompt ?? UNNAMED_TITLE,
     updatedAt: Date.parse(summary.updated_at),
     running,
     turns,
@@ -671,8 +683,8 @@ export function AgentConversationsProvider({ children }: { children: React.React
   const runTurn = useCallback(
     (conversationId: string, turnId: string, input: string) => {
       void startAgentRun(input, conversationId)
-        .then(({ runId }) => {
-          updateTurn(conversationId, turnId, (current) => ({ ...current, runId }));
+        .then(({ runId, entryUuid }) => {
+          updateTurn(conversationId, turnId, (current) => ({ ...current, runId, entryUuid }));
           connectRun(conversationId, turnId, runId);
         })
         .catch((error) => {
@@ -690,7 +702,7 @@ export function AgentConversationsProvider({ children }: { children: React.React
     async (input: string) => {
       // 新建必须等服务端分配 session_id 才能得到路由地址，因此这一步是
       // 同步等待的；创建失败直接抛给调用方（如尚未配置模型供应商）。
-      const { runId, sessionId } = await startAgentRun(input);
+      const { runId, sessionId, entryUuid } = await startAgentRun(input);
       const turnId = nanoid();
       setConversations((previous) => [
         {
@@ -700,7 +712,15 @@ export function AgentConversationsProvider({ children }: { children: React.React
           updatedAt: Date.now(),
           running: true,
           turns: [
-            { id: turnId, runId, input, status: "running", segments: [], startedAt: Date.now() },
+            {
+              id: turnId,
+              runId,
+              entryUuid,
+              input,
+              status: "running",
+              segments: [],
+              startedAt: Date.now(),
+            },
           ],
           loaded: true,
         },
@@ -722,6 +742,10 @@ export function AgentConversationsProvider({ children }: { children: React.React
                 ...conversation,
                 updatedAt: Date.now(),
                 running: true,
+                // 会话被截空后重新开口的第一句，同 start 那样给它命名
+                // （服务端也是这条规则：title 为空时由下一条消息回填）
+                title:
+                  conversation.turns.length === 0 ? input.slice(0, 30) : conversation.title,
                 turns: [
                   ...conversation.turns,
                   { id: turnId, input, status: "running", segments: [], startedAt: Date.now() },
@@ -758,6 +782,37 @@ export function AgentConversationsProvider({ children }: { children: React.React
     );
   }, []);
 
+  /**
+   * 改写重问：把某一轮及其之后的记录从服务端转录里删掉，本地时间线同步截断，
+   * 返回被删掉那轮的原始提问，交给调用方填回输入框。
+   *
+   * 服务端删完才动本地：删除失败（会话运行中 / 记录已不在）时界面保持原样，
+   * 错误抛给调用方提示——绝不能出现「界面上没了、服务端还在」的假象，那会让
+   * 用户以为已经改写，实际下一轮上下文里旧对话还在。
+   */
+  const truncate = useCallback(async (conversationId: string, entryUuid: string) => {
+    const conversation = conversationsRef.current.find((item) => item.id === conversationId);
+    const index = conversation?.turns.findIndex((turn) => turn.entryUuid === entryUuid) ?? -1;
+    if (!conversation || index < 0) throw new Error("这条提问已不在当前会话里");
+    const input = conversation.turns[index].input;
+    await truncateAgentSession(conversationId, entryUuid);
+    setConversations((previous) =>
+      previous.map((item) =>
+        item.id === conversationId
+          ? {
+              ...item,
+              updatedAt: Date.now(),
+              // 从首轮截断 = 会话被清空，标题也随之作废（服务端同样清掉，
+              // 见 repo.resync_after_truncate），下一条消息会重新命名它
+              title: index === 0 ? UNNAMED_TITLE : item.title,
+              turns: item.turns.slice(0, index),
+            }
+          : item,
+      ),
+    );
+    return input;
+  }, []);
+
   const remove = useCallback(async (conversationId: string) => {
     // 服务端会拒绝删除运行中的会话（400），错误交给调用方提示
     await deleteAgentSession(conversationId);
@@ -781,9 +836,22 @@ export function AgentConversationsProvider({ children }: { children: React.React
       send,
       stop,
       rename,
+      truncate,
       remove,
     }),
-    [conversations, hasMore, loadingMore, loadMore, open, start, send, stop, rename, remove],
+    [
+      conversations,
+      hasMore,
+      loadingMore,
+      loadMore,
+      open,
+      start,
+      send,
+      stop,
+      rename,
+      truncate,
+      remove,
+    ],
   );
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;

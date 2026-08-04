@@ -1,12 +1,13 @@
 "use client";
 
-import { memo, useEffect, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { Composer } from "@/components/composer";
 import { CopyButton, REVEAL_CLASS, useTapReveal } from "@/components/copy-button";
+import { useConfirm, useToast } from "@/components/feedback";
 import { HighlightedCode } from "@/components/highlighted-code";
 import { LlmSetupNotice, useLlmConfigured } from "@/components/llm-gate";
-import { ChevronRightIcon } from "@/components/icons";
+import { ChevronRightIcon, PencilIcon } from "@/components/icons";
 import { Markdown } from "@/components/markdown";
 import type { CodeLang } from "@/lib/shiki";
 import {
@@ -33,7 +34,7 @@ import { usePageTitle } from "@/lib/use-page-title";
  *   一个持续推进的动画比一句会过期的文案更可信。
  */
 export function AgentConversationView({ conversationId }: { conversationId: string }) {
-  const { get, open, send, stop } = useAgentConversations();
+  const { get, open, send, stop, truncate } = useAgentConversations();
   const conversation = get(conversationId);
   usePageTitle(conversation?.title);
   // 移动端全局顶栏：把会话标题挂上去顶替品牌字标（见 lib/page-chrome.tsx），
@@ -48,6 +49,8 @@ export function AgentConversationView({ conversationId }: { conversationId: stri
   const [input, setInput] = useState("");
   // 服务端详情加载失败的提示（404 = 会话不存在；其余为网络/服务错误）
   const [loadError, setLoadError] = useState<string | null>(null);
+  const confirm = useConfirm();
+  const toast = useToast();
   // 供应商被删除后打开旧会话：追问同样锁定并引导去设置（false = 明确未配置）
   const locked = useLlmConfigured() === false;
 
@@ -83,6 +86,33 @@ export function AgentConversationView({ conversationId }: { conversationId: stri
     vv.addEventListener("resize", pin);
     return () => vv.removeEventListener("resize", pin);
   }, []);
+
+  /**
+   * 改写重问：丢弃这一轮及其之后的全部记录，原提问填回输入框。
+   *
+   * 二次确认是硬要求——服务端删的是事实源转录，删完没有任何回退路径，
+   * 而入口就浮在气泡边上，误触代价太大。确认文案必须把「删到哪、不可恢复」
+   * 说清楚，光说「确定吗」等于没说。
+   */
+  const handleEdit = useCallback(
+    async (entryUuid: string) => {
+      const agreed = await confirm({
+        title: "改写这条提问？",
+        description:
+          "这条提问、以及它之后的所有对话（含回答）会被永久删除，无法恢复。\n" +
+          "原文会填回输入框，你可以改完再发一次，Agent 将从这里继续。",
+        confirmLabel: "删除并改写",
+        tone: "danger",
+      });
+      if (!agreed) return;
+      try {
+        setInput(await truncate(conversationId, entryUuid));
+      } catch (error) {
+        toast.error((error as Error).message);
+      }
+    },
+    [confirm, conversationId, toast, truncate],
+  );
 
   if (loadError) {
     return (
@@ -141,7 +171,8 @@ export function AgentConversationView({ conversationId }: { conversationId: stri
         >
           <div className="mx-auto max-w-3xl space-y-8">
             {conversation.turns.map((turn) => (
-              <TurnView key={turn.id} turn={turn} />
+              // 运行中不给改写入口：服务端会拒绝截断正在写转录的会话
+              <TurnView key={turn.id} turn={turn} onEdit={running ? undefined : handleEdit} />
             ))}
           </div>
         </div>
@@ -188,11 +219,22 @@ export function AgentConversationView({ conversationId }: { conversationId: stri
 /** memo：流式更新只替换正在生成那一轮的 turn 对象（store 是逐轮不可变更新），
  *  历史轮次引用不变、比对通过即整轮跳过——长会话里没有它，每次增量都要
  *  重建全部历史轮次的元素树。 */
-const TurnView = memo(function TurnView({ turn }: { turn: AgentTurn }) {
+const TurnView = memo(function TurnView({
+  turn,
+  onEdit,
+}: {
+  turn: AgentTurn;
+  /** 改写本轮重问；不给（运行中）则气泡上不出现该入口 */
+  onEdit?: (entryUuid: string) => void;
+}) {
+  const entryUuid = turn.entryUuid;
   return (
     <div className="group/turn space-y-3">
       {/* 用户消息：右侧玻璃气泡 */}
-      <UserBubble text={turn.input} />
+      <UserBubble
+        text={turn.input}
+        onEdit={onEdit && entryUuid ? () => onEdit(entryUuid) : undefined}
+      />
 
       {/* Agent 回应：整栏正文，不挂头像、不套气泡（ChatGPT / Claude 同款版式） */}
       <div className="min-w-0 space-y-2.5">
@@ -227,23 +269,23 @@ const TurnView = memo(function TurnView({ turn }: { turn: AgentTurn }) {
 });
 
 /**
- * 用户提问气泡 + 浮现的复制键。
+ * 用户提问气泡 + 浮现的行内操作（复制 / 改写重问）。
  *
  * 单独拆成组件是为了把「点开/收起」的 state 关在这一条消息里——留在 TurnView
  * 里的话，点一下气泡会连带重渲染同一轮那一大段 Markdown 正文。
  *
- * 复制键落在气泡左侧而不是下方：下方要么常占一行高度（气泡与回答之间凭空
+ * 操作键落在气泡左侧而不是下方：下方要么常占一行高度（气泡与回答之间凭空
  * 多出一条空隙），要么浮现时把下文顶一下。左侧是右对齐气泡天然空出来的地方，
  * 不占额外高度、也不会推动任何内容。
  *
  * flex-row-reverse：DOM 顺序保持「先正文、后操作」（读屏与 Tab 顺序更自然），
- * 视觉上仍是气泡贴右、复制键在它左边。
+ * 视觉上仍是气泡贴右、操作键在它左边。
  */
-function UserBubble({ text }: { text: string }) {
+function UserBubble({ text, onEdit }: { text: string; onEdit?: () => void }) {
   const { revealProps, toggle } = useTapReveal();
   return (
     <div className="group/copy flex flex-row-reverse items-end justify-start" {...revealProps}>
-      {/* 触摸端点气泡浮现复制键（桌面端靠 hover，这一下点击是多余但无害的）。
+      {/* 触摸端点气泡浮现操作键（桌面端靠 hover，这一下点击是多余但无害的）。
           onClick 挂在气泡而非整行上：右对齐留出的空白不该也是热区。 */}
       <div
         onClick={toggle}
@@ -255,6 +297,21 @@ function UserBubble({ text }: { text: string }) {
         text={text}
         className={`${REVEAL_CLASS} touch-target mb-1 mr-1 shrink-0 p-1 text-[var(--text-faint)] hover:text-[var(--text)]`}
       />
+      {onEdit && (
+        <button
+          type="button"
+          aria-label="改写这条提问"
+          title="改写这条提问（会删除其后的对话）"
+          onClick={(event) => {
+            // 不冒泡到气泡的 toggle：否则点完操作键，浮现态立刻被切回去
+            event.stopPropagation();
+            onEdit();
+          }}
+          className={`${REVEAL_CLASS} touch-target mb-1 mr-1 shrink-0 rounded-md p-1 text-[var(--text-faint)] transition-colors hover:text-[var(--text)]`}
+        >
+          <PencilIcon className="size-3.5" />
+        </button>
+      )}
     </div>
   );
 }

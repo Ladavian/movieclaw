@@ -68,6 +68,25 @@ class AgentStartView(BaseModel):
 
     run_id: str
     session_id: str
+    #: 本轮用户输入在转录里的 entry uuid；前端拿它做「改写本轮重新提问」的截断锚点
+    entry_uuid: str
+
+
+class AgentSessionTruncatePayload(BaseModel):
+    """从某条用户提问处截断会话的请求体。"""
+
+    entry_uuid: str = Field(
+        min_length=1,
+        max_length=64,
+        description="要丢弃的那条用户提问的 entry uuid（它及其之后的记录全部删除）",
+    )
+
+
+class AgentTruncateView(BaseModel):
+    """截断回执：删了多少条、还剩多少条（前端据此校对本地时间线）。"""
+
+    removed_entries: int
+    entry_count: int
 
 
 class AgentSessionRenamePayload(BaseModel):

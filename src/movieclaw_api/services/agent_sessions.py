@@ -4,6 +4,8 @@
 
 1. **一个会话一个 append-only JSONL 文件**：首行是会话头，之后每行一条
    消息 entry。历史行永不改写——中断、重启都只会追加，不会破坏已有内容。
+   唯一例外是 ``truncate_from``（用户显式确认的「改写某轮重问」），见该方法
+   的说明；除它以外，任何写入路径都只准 append。
 2. **只落定稿消息，不落流式 delta**：SSE 增量属于 UI 通道；文件里的
    ``message`` 就是 LLM API 原样格式（ChatMessage），resume 重建上下文
    零转换。
@@ -25,6 +27,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import uuid as uuid_mod
 from datetime import UTC, datetime
 from pathlib import Path
@@ -33,7 +36,7 @@ from typing import Annotated, Literal
 from pydantic import BaseModel, Field, TypeAdapter, ValidationError
 
 from movieclaw_agent import CompactionResult
-from movieclaw_api.exceptions import NotFoundException
+from movieclaw_api.exceptions import BadRequestException, NotFoundException
 from movieclaw_llm import ChatMessage, TokenUsage
 
 logger = logging.getLogger("movieclaw_api.agent_sessions")
@@ -251,6 +254,46 @@ class AgentSessionStore:
                 )
                 sealed += 1
         return sealed
+
+    def truncate_from(self, session_id: str, entry_uuid: str) -> int:
+        """删除 entry_uuid 这条用户提问及其之后的全部 entry，返回删除条数。
+
+        「改写某轮重新提问」的落盘动作（前端在弹窗二次确认后调用）：把这一轮
+        及其后的所有往返从事实源上抹掉，会话链尾回到上一轮结束处，下一次
+        ``append`` 自然接在那里，重建出的 LLM 上下文里也不再有被丢弃的内容。
+
+        **这是本模块唯一改写历史行的方法**，与顶部「append-only」的约定相悖，
+        属于刻意的例外：用户要的就是「这些记录不该再存在」，而不是「藏起来」。
+        另一条路是按 parent_uuid 另开分支（格式早已留好字段），但那要求
+        build_history / summarize / 回放 / 收尾全部改成沿父链回溯，为一个
+        「用户明确要求丢弃」的场景付出的代价过大。
+
+        整文件重写，写临时文件后 ``os.replace`` 原子换入：中途崩溃要么是旧文件
+        完好、要么是新文件完整，不存在写坏一半的转录。
+
+        已知副作用：重写会顺带丢掉文件里无法解析的坏行（异常退出的残留半行）
+        ——它们本就不参与任何读取路径，清掉无损。
+        """
+        header, entries = self.read(session_id)
+        index = next((i for i, e in enumerate(entries) if e.uuid == entry_uuid), None)
+        if index is None:
+            raise NotFoundException("会话中没有这条记录，可能已被改写")
+        target = entries[index]
+        # 只允许从「用户提问」处截断：从 assistant/tool 中间切一刀会留下没有
+        # 回执的 tool_call，重建出的上下文喂回模型直接 400
+        if not isinstance(target, SessionEntry) or target.message.role != "user":
+            raise BadRequestException("只能从用户提问处截断会话")
+
+        kept = entries[:index]
+        path = self.path(session_id)
+        tmp = path.with_name(path.name + ".tmp")
+        with tmp.open("w", encoding="utf-8") as f:
+            f.write(header.model_dump_json() + "\n")
+            for entry in kept:
+                f.write(entry.model_dump_json(exclude_none=True) + "\n")
+        os.replace(tmp, path)
+        self._leaf_cache[session_id] = kept[-1].uuid if kept else None
+        return len(entries) - len(kept)
 
     def delete(self, session_id: str) -> None:
         """删除会话文件（幂等：文件不存在不报错）。"""

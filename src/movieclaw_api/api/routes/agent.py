@@ -20,8 +20,10 @@ from movieclaw_api.schemas.agent import (
     AgentSessionDetailView,
     AgentSessionListItem,
     AgentSessionRenamePayload,
+    AgentSessionTruncatePayload,
     AgentStartPayload,
     AgentStartView,
+    AgentTruncateView,
 )
 from movieclaw_api.schemas.response import ApiResponse, ok
 from movieclaw_api.services import auth as auth_service
@@ -183,7 +185,7 @@ async def start_agent(
         entry_count = 0
 
     recorder = AgentSessionRecorder(store, session_id, entry_count=entry_count)
-    await recorder.record_user_input(payload.input)
+    entry_uuid = await recorder.record_user_input(payload.input)
 
     runner = AgentRunner(
         llm_router,
@@ -200,7 +202,7 @@ async def start_agent(
     run_id = get_agent_run_registry().start(runner, params, on_terminal=recorder.on_terminal)
     await recorder.begin(run_id)
     return ok(
-        AgentStartView(run_id=run_id, session_id=session_id),
+        AgentStartView(run_id=run_id, session_id=session_id, entry_uuid=entry_uuid),
         message="Agent 运行已创建",
     )
 
@@ -333,6 +335,49 @@ async def compact_agent_session(
             entry_uuid=entry.uuid,
         ),
         message="会话上下文已压缩",
+    )
+
+
+@router.post(
+    "/sessions/{session_id}/truncate",
+    response_model=ApiResponse[AgentTruncateView],
+    summary="从某条提问处截断会话（该轮及其后的记录全部丢弃）",
+    operation_id="agent.sessions.truncate",
+    openapi_extra={"x-cli-dangerous": "confirm"},
+)
+async def truncate_agent_session(
+    session_id: str,
+    payload: AgentSessionTruncatePayload,
+    session: AsyncSession = Depends(get_session),
+) -> ApiResponse[AgentTruncateView]:
+    """「改写某轮重新提问」的服务端动作：把这一轮连同其后的往返从转录里删除。
+
+    调用方（会话页）随后把原提问填回输入框，用户改完再发一次——新的一轮就
+    接在被截断处，重建出的 LLM 上下文里不再有被丢弃的内容。**不可逆**：转录
+    是事实源，删掉即无从恢复，前端必须先做二次确认。
+
+    运行中拒绝：正在写转录的运行与整文件重写并发，会把链尾写乱。
+    """
+    store = get_agent_session_store()
+    repo = AgentSessionRepository(session)
+    row = await repo.get(session_id)
+    if row is None:
+        raise NotFoundException("Agent 会话不存在")
+    if is_running(row):
+        raise BadRequestException("该会话正在运行中，请先停止运行再改写")
+
+    removed = store.truncate_from(session_id, payload.entry_uuid)
+    # 按截断后的文件重新校准索引：条数、链尾、列表副标题都变了
+    summary = store.summarize(session_id)
+    await repo.resync_after_truncate(
+        session_id,
+        leaf_uuid=summary.leaf_uuid,
+        entry_count=summary.entry_count,
+        last_prompt=summary.last_prompt,
+    )
+    return ok(
+        AgentTruncateView(removed_entries=removed, entry_count=summary.entry_count),
+        message="会话已截断",
     )
 
 

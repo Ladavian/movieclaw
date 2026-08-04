@@ -156,15 +156,18 @@ interface ApiEnvelope<T> {
 export async function startAgentRun(
   input: string,
   sessionId?: string,
-): Promise<{ runId: string; sessionId: string }> {
-  const response = await request<ApiEnvelope<{ run_id: string; session_id: string }>>(
-    "/agent/start",
-    {
-      method: "POST",
-      body: JSON.stringify(sessionId ? { input, session_id: sessionId } : { input }),
-    },
-  );
-  return { runId: response.data.run_id, sessionId: response.data.session_id };
+): Promise<{ runId: string; sessionId: string; entryUuid: string }> {
+  const response = await request<
+    ApiEnvelope<{ run_id: string; session_id: string; entry_uuid: string }>
+  >("/agent/start", {
+    method: "POST",
+    body: JSON.stringify(sessionId ? { input, session_id: sessionId } : { input }),
+  });
+  return {
+    runId: response.data.run_id,
+    sessionId: response.data.session_id,
+    entryUuid: response.data.entry_uuid,
+  };
 }
 
 /** 最近会话列表（按最后活跃时间倒序，limit/offset 分页）。 */
@@ -201,6 +204,20 @@ export async function renameAgentSession(
 }
 
 /** 删除会话（转录文件与索引一并删除；运行中的会话会被服务端拒绝）。 */
+/**
+ * 从某条用户提问处截断会话：该提问及其之后的全部转录记录被永久删除。
+ * 不可逆，调用前必须让用户二次确认（会话页的「改写重问」入口）。
+ */
+export async function truncateAgentSession(
+  sessionId: string,
+  entryUuid: string,
+): Promise<void> {
+  await request<ApiEnvelope<{ removed_entries: number; entry_count: number }>>(
+    `/agent/sessions/${sessionId}/truncate`,
+    { method: "POST", body: JSON.stringify({ entry_uuid: entryUuid }) },
+  );
+}
+
 export async function deleteAgentSession(sessionId: string): Promise<void> {
   await request<ApiEnvelope<Record<string, never>>>(`/agent/sessions/${sessionId}`, {
     method: "DELETE",
