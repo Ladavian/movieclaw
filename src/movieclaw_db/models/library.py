@@ -60,6 +60,17 @@ class Library(TimestampMixin, table=True):
     # Kodi/Emby 规范，只增不覆盖不删除——docs/design/metadata.md 6.2）。
     # 默认开：无破坏性且反哺播放器生态；不想污染目录的用户按库关闭
     write_media_assets: bool = Field(default=True, description="刮削图片/NFO 是否写入媒体目录")
+    # 扫描结束后自动清理已确认丢失的库存记录（默认**关**）。
+    # 关闭时台账保留 missing 行——它不是垃圾数据，而是三件事的输入：缺失清单
+    # 的「重新下载」（把缺失单元交回订阅管线）、跨轮次改名归并的候选池（尺寸
+    # 指纹匹配靠它，删了再出现就是新文件、人工认领的身份锚会丢），以及行上
+    # 不可再生的介质规格与来源种子。开启则是另一种诉求：用户自己在管磁盘，
+    # 删掉的文件就该从台账上消失，不想每次扫描后再手动清一遍。
+    # 清理只在**本轮扫描可信**时执行（见 scan._auto_clear_missing），且只删
+    # 台账、绝不动磁盘
+    auto_clear_missing: bool = Field(
+        default=False, description="扫描后自动清理已确认丢失的库存记录（不可恢复）"
+    )
 
     @property
     def primary_root(self) -> str | None:

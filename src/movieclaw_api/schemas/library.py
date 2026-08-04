@@ -26,6 +26,15 @@ class LibraryPayload(BaseModel):
             "genres 存 TMDB 类型 ID，origin_countries 存国家码；空=未声明"
         ),
     )
+    # 不传 = 不改动（更新时保持原值，创建时为关）。这是个不可恢复的操作开关，
+    # 不能因为某个客户端没带这个字段就被静默改掉
+    auto_clear_missing: bool | None = Field(
+        default=None,
+        description=(
+            "扫描后自动清理已确认丢失的库存记录（只删台账不动磁盘，不可恢复）；"
+            "不传表示不改动，新建时默认关闭"
+        ),
+    )
 
 
 class LibraryReorderPayload(BaseModel):
@@ -57,6 +66,9 @@ class LastScanView(BaseModel):
     identified: int
     unidentified: int
     marked_missing: int = Field(description="本轮标记丢失的文件数")
+    cleared_missing: int = Field(
+        default=0, description="本轮自动清理出台账的丢失记录数（库开了自动清理才非 0）"
+    )
     deferred: int = Field(default=0, description="疑似写入中暂缓入账的文件数（稍后自动补扫）")
     retried: int = Field(
         default=0, description="识别重试数：在位但待识别的文件重走识别链（不算新入账）"
@@ -137,6 +149,9 @@ class LibraryView(BaseModel):
     primary_root: str | None = Field(description="主根路径（root_paths 第一项）")
     is_default: bool
     match_rules: list[dict] = Field(default_factory=list, description="收藏范围条件")
+    auto_clear_missing: bool = Field(
+        default=False, description="扫描后自动清理已确认丢失的库存记录"
+    )
     stats: LibraryStats = Field(default_factory=LibraryStats)
     scanning: bool = Field(default=False, description="是否正在扫描")
     scan_progress: ScanProgressView | None = Field(default=None, description="扫描实时进度")
@@ -182,6 +197,7 @@ class LibraryView(BaseModel):
             primary_root=row.primary_root,
             is_default=row.is_default,
             match_rules=list(row.match_rules),
+            auto_clear_missing=row.auto_clear_missing,
             stats=stats or LibraryStats(),
             scanning=scanning,
             scan_progress=scan_progress,

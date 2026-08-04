@@ -494,6 +494,9 @@ export function LibraryDetailView({ libraryId }: { libraryId: number }) {
             {library.last_scan.marked_missing > 0
               ? ` · 标记丢失 ${library.last_scan.marked_missing}`
               : ""}
+            {library.last_scan.cleared_missing > 0
+              ? ` · 清理丢失记录 ${library.last_scan.cleared_missing}`
+              : ""}
             {library.last_scan.deferred > 0
               ? ` · ${library.last_scan.deferred} 个写入中暂缓（稍后自动补扫）`
               : ""}
@@ -1354,7 +1357,7 @@ function IssueDrawer({
         {/* 说明行 */}
         <p className="px-5 pt-3 text-caption leading-5 text-[var(--text-muted)]">
           {open === "missing"
-            ? "文件已不在磁盘；「重新下载」交给订阅管线补回，「清理记录」只删台账（都不动磁盘）；文件回归会自动恢复。"
+            ? "文件已不在磁盘；「重新下载」交给订阅管线补回，「清理记录」只删台账（都不动磁盘）；文件回归会自动恢复。经常自己删片子的话，可在库设置里打开「扫描后自动清理丢失记录」，以后扫完即对齐。"
             : open === "unidentified"
               ? "同一目录的文件聚成一组，认领一次整组生效；点候选可先核对海报简介再确认。状态标签悬停看完整原因。"
               : open === "review"

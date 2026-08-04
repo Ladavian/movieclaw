@@ -997,6 +997,8 @@ export function LibraryFormDialog({
   // 收藏范围（可选声明）：类型 ID 多选 + 区域国家码多选，条件间是"且"
   const [matchGenres, setMatchGenres] = useState<number[]>([]);
   const [matchRegions, setMatchRegions] = useState<string[]>([]);
+  // 扫描后自动清理已确认丢失的库存记录（默认关，见 Library.auto_clear_missing）
+  const [autoClearMissing, setAutoClearMissing] = useState(false);
   // 表单分两个页签：必填的基本信息 / 可选的收藏范围，避免单页长滚动拥挤
   const [tab, setTab] = useState<"basic" | "scope">("basic");
   const routingOptions = useRoutingOptions();
@@ -1011,6 +1013,7 @@ export function LibraryFormDialog({
     const parsed = parseMatchRules(library?.match_rules ?? []);
     setMatchGenres(parsed.genres);
     setMatchRegions(parsed.regions);
+    setAutoClearMissing(library?.auto_clear_missing ?? false);
     setPickerTarget(null);
     setTab("basic");
   }, [state, library]);
@@ -1039,6 +1042,7 @@ export function LibraryFormDialog({
       kind,
       root_paths: roots,
       match_rules: buildMatchRules(genres, matchRegions),
+      auto_clear_missing: autoClearMissing,
     };
     void (library ? updateLibrary(library.id, payload) : createLibrary(payload))
       .then(onSaved)
@@ -1239,6 +1243,31 @@ export function LibraryFormDialog({
               新入库的内容落在<strong className="font-medium text-[var(--text-muted)]">主根</strong>下：主根/标题
               (年份)。其余为扩展根：扫描与监控照常覆盖，但不写入新内容。
             </p>
+          </div>
+
+          {/* 自动清理丢失记录：默认关。开着才在扫描收尾把"磁盘上确认没了"的
+              台账行删掉——自己在磁盘上删片的用户不必每次扫完再手动清一遍；
+              不开则保留记录（缺失清单的「重新下载」与改名归并都靠它） */}
+          <div>
+            <label className="flex cursor-pointer select-none items-start gap-2.5">
+              <input
+                type="checkbox"
+                checked={autoClearMissing}
+                onChange={(e) => setAutoClearMissing(e.target.checked)}
+                className="mt-0.5 size-4 shrink-0 accent-[var(--accent)]"
+              />
+              <span className="min-w-0">
+                <span className="block text-ui font-medium text-[var(--text)]">
+                  扫描后自动清理丢失记录
+                </span>
+                <span className="mt-1 block text-caption leading-relaxed text-[var(--text-faint)]">
+                  自己在磁盘上删了片子后，扫描结束即把这些记录清出台账，文件数与磁盘保持一致，
+                  不必再手动清一次缺失。<strong className="font-medium text-[var(--text-muted)]">只删台账、不动磁盘，但记录删了不可恢复</strong>
+                  ——「缺失」清单里的「重新下载」也会随之消失。关闭时记录保留，文件回归自动恢复。
+                  目录读不动（权限/掉盘/网络挂载抖动）的那一轮不会清理。
+                </span>
+              </span>
+            </label>
           </div>
             </>
           )}
