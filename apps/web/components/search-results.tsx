@@ -2033,11 +2033,14 @@ function PosterResults({ hits }: { hits: TorrentHit[] }) {
 }
 
 /**
- * 种子海报卡片：2:3 竖版海报 + 底部渐变上的标题/来源，hover 浮出详情/下载。
+ * 种子海报卡片（issue #74 重设计）：参照媒体库 PosterCard 的「徽章贴图内、
+ * 文字放图外」——海报内只留实底徽章（左上促销、右上张数、左下剧集季/集），
+ * 标题/年份/清晰度/体积/站点等文字全部放在海报下方的实底文字区，
+ * 不再压在海报渐变上（浅色海报下白字会糊进封面，且此前完全看不出集数）。
  * 与媒体条目的 PosterCard（components/poster-card.tsx）是两套东西——这里的数据
  * 是 TorrentHit，徽章是促销信息，点击弹多图灯箱而非进详情页，故不共用卡片层，
  * 仅通过 PosterImage 共用海报图片底座（懒加载 / no-referrer / 失败回退）。
- * 点击卡片弹出多图灯箱（海报 + image_urls 里的截图等），多图时右上角
+ * 点击卡片弹出多图灯箱（海报 + image_urls 里的截图等），右上角
  * 显示张数徽标；hover 上的详情/下载链接 stopPropagation，不触发灯箱。
  */
 /**
@@ -2047,6 +2050,8 @@ function PosterResults({ hits }: { hits: TorrentHit[] }) {
  * 保证叠在明亮海报上依然清晰（不用 backdrop-blur——海报墙每张卡多个模糊
  * 合成层会放大滚动 GPU 压力）；免费最醒目（实绿底深字），
  * 因为「是否免费」是海报模式下用户最关心的下载决策依据。
+ * 左上只放促销（回答「值不值得下」）；全集信息挪到了左下季/集 chip
+ * （seasonEpisodeChip，回答「是哪些内容」），两类信息各归各位。
  */
 function posterPromoBadges(hit: TorrentHit): { text: string; cls: string }[] {
   const badges: { text: string; cls: string }[] = [];
@@ -2064,15 +2069,36 @@ function posterPromoBadges(hit: TorrentHit): { text: string; cls: string }[] {
   if (hit.hit_and_run) {
     badges.push({ text: "H&R", cls: "bg-[#f59e0b]/90 text-[#3a2600]" });
   }
-  // 全集徽标（海报适配实底变体）：与行内 COMPLETE_BADGE_CLS 同一判定口径
-  const complete = completeLabel(hit.attrs);
-  if (complete) {
-    badges.push({
-      text: complete,
-      cls: "bg-gradient-to-r from-[#4f8cff]/90 to-[#9d6bff]/90 text-white",
-    });
-  }
   return badges;
+}
+
+/** 数字列表 → 展示串：连续用区间（1-6），不连续用顿号（1、3）。 */
+function formatNumList(nums: number[]): string {
+  const sorted = [...nums].sort((a, b) => a - b);
+  const contiguous = sorted.every((n, i) => i === 0 || n === sorted[i - 1] + 1);
+  if (sorted.length > 1 && contiguous) return `${sorted[0]}-${sorted[sorted.length - 1]}`;
+  return sorted.join("、");
+}
+
+/**
+ * 海报卡左下角的剧集季/集 chip（issue #74：图览模式看不出具体集数）。
+ * 把解析出的季/集观测拼成一眼可读的一句话：「第2季 · 全12集」（全集包）/
+ * 「第2季 · 第5集」（单集）/「第1-6集」（区间）/「第1-3季」（多季包）。
+ * 电影或无任何季集信息返回 null，海报保持干净。
+ * pack=true（全集 / 整季包，与 completenessTier 的 3+ 档同口径）时用醒目
+ * 渐变底（与列表模式全集徽标 COMPLETE_BADGE_CLS 同视觉语言），
+ * 单集/区间用黑底弱化——海报墙上扫一眼就能分辨「一包带走」和「零散单集」。
+ */
+function seasonEpisodeChip(attrs: TorrentAttrs | null): { text: string; pack: boolean } | null {
+  if (!attrs || attrs.media_type === "movie") return null;
+  const season = attrs.seasons.length > 0 ? `第${formatNumList(attrs.seasons)}季` : null;
+  // 明确标注全集时集数展示成「全N集」，否则列出观测到的集
+  const episode =
+    completeLabel(attrs) ??
+    (attrs.episodes.length > 0 ? `第${formatNumList(attrs.episodes)}集` : null);
+  if (!season && !episode) return null;
+  const pack = attrs.complete === true || (!!season && attrs.episodes.length === 0);
+  return { text: [season, episode].filter(Boolean).join(" · "), pack };
 }
 
 // memo：与 TorrentRow 同理，流式进结果时已有卡片的 hit 引用不变，整卡跳过
@@ -2080,17 +2106,17 @@ const TorrentPosterCard = memo(function TorrentPosterCard({ hit }: { hit: Torren
   const [viewerOpen, setViewerOpen] = useState(false);
   const size = hit.size ?? formatBytes(hit.size_bytes);
   const name = parsedName(hit);
+  const seChip = seasonEpisodeChip(hit.attrs);
   // 灯箱图集：海报 + 全部图片（poster_url 通常是 image_urls 第一张，去重兜底）
   const gallery = Array.from(
     new Set([hit.poster_url, ...hit.image_urls].filter((u): u is string => !!u)),
   ).map(cachedImageUrl);
   return (
-    <li className="group relative overflow-hidden rounded-xl border border-white/[0.08] bg-[rgba(14,16,22,0.5)] transition-colors hover:border-white/[0.2]">
+    <li className="group relative overflow-hidden rounded-xl border border-white/[0.08] bg-[rgba(14,16,22,0.75)] transition-colors hover:border-white/[0.2]">
       <div
         role="button"
         tabIndex={0}
-        // 底部标题展示解析片名后，原始种子名/副标题靠这里的悬停提示查看
-        // （底部渐变层是 pointer-events-none，title 只能挂在这个容器上）
+        // 标题展示解析片名后，原始种子名/副标题靠悬停提示查看（图外文字区同）
         title={rawTitleTooltip(hit)}
         aria-label={`浏览「${hit.title}」的 ${gallery.length} 张图片`}
         onClick={() => setViewerOpen(true)}
@@ -2137,31 +2163,19 @@ const TorrentPosterCard = memo(function TorrentPosterCard({ hit }: { hit: Torren
             {gallery.length}
           </span>
         </div>
-        {/* 底部渐变 + 标题/元信息 */}
-        <div className="pointer-events-none absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/85 via-black/45 to-transparent px-2.5 pb-2 pt-8">
-          <p className="line-clamp-2 text-sub font-medium leading-4 text-white">
-            {name ? name.primary : hit.title}
-            {name && hit.attrs?.year != null && (
-              <span className="tnum ml-1.5 font-normal text-white/60">{hit.attrs.year}</span>
-            )}
-          </p>
-          <p className="tnum mt-1 text-micro text-white/70">
-            {size && <span className="mr-2">{size}</span>}
-            <span className="text-[#a7d9b6]">↑{hit.seeders}</span>
-            <span className="ml-1.5 text-[#e0c19f]">↓{hit.leechers}</span>
-          </p>
-          {/* 来源站点 + 发布时间：都是次要信息，同一行弱化展示。时间相对展示，
-              与列表模式统一（父级 pointer-events-none 让精确时刻的 title 失效）。 */}
-          <p className="mt-0.5 flex items-center gap-1.5 text-micro text-white/50">
-            <span className="min-w-0 truncate">{hit.site_name}</span>
-            {hit.upload_time && (
-              <>
-                <span className="shrink-0 opacity-60">·</span>
-                <span className="tnum shrink-0">{formatRelativeTime(hit.upload_time)}</span>
-              </>
-            )}
-          </p>
-        </div>
+        {/* 左下：剧集季/集 chip。实底不受海报明暗影响；全集/整季包用渐变底
+            醒目，单集/区间黑底弱化；电影不渲染，海报底部保持干净 */}
+        {seChip && (
+          <span
+            className={`absolute bottom-1.5 left-1.5 rounded-md px-1.5 py-0.5 text-micro font-semibold ${
+              seChip.pack
+                ? "bg-gradient-to-r from-[#4f8cff]/90 to-[#9d6bff]/90 text-white"
+                : "bg-black/70 text-[#b9d4ff]"
+            }`}
+          >
+            {seChip.text}
+          </span>
+        )}
         {/* hover：压暗 + 浮出操作（stopPropagation：点链接不触发灯箱）。
             touch-reveal：触摸设备没有 hover，操作按钮改为常驻——此时压暗层
             （group-hover:bg-black/35）不生效，按钮自带的深色底已足够在海报上
@@ -2189,6 +2203,38 @@ const TorrentPosterCard = memo(function TorrentPosterCard({ hit }: { hit: Torren
             />
           </div>
         )}
+      </div>
+
+      {/* 图外文字区（实底）：① 片名+年份 ② 清晰度·体积 ③ 站点·时间 + 右下角
+          做种/下载数。任何海报明暗都不影响可读性；解析失败时回退原始种子名 */}
+      <div title={rawTitleTooltip(hit)} className="px-2.5 pb-2.5 pt-2">
+        <p
+          className={`truncate text-sub font-medium ${
+            name ? "text-[var(--text)]" : "text-[var(--text-muted)]"
+          }`}
+        >
+          {name ? name.primary : hit.title}
+          {name && hit.attrs?.year != null && (
+            <span className="tnum ml-1.5 text-caption font-normal text-[var(--text-muted)]">
+              {hit.attrs.year}
+            </span>
+          )}
+        </p>
+        {(hit.attrs?.resolution || size) && (
+          <p className="tnum mt-0.5 truncate text-caption text-[var(--text-muted)]">
+            {[hit.attrs?.resolution, size].filter(Boolean).join(" · ")}
+          </p>
+        )}
+        <p className="mt-0.5 flex items-baseline gap-1.5 text-micro text-[var(--text-faint)]">
+          <span className="min-w-0 truncate">
+            {hit.site_name}
+            {hit.upload_time ? ` · ${formatRelativeTime(hit.upload_time)}` : ""}
+          </span>
+          <span className="tnum ml-auto shrink-0">
+            <span className="text-[#a7d9b6]">↑{hit.seeders}</span>
+            <span className="ml-1 text-[#e0c19f]">↓{hit.leechers}</span>
+          </span>
+        </p>
       </div>
 
       {viewerOpen && (
