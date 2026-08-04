@@ -5,8 +5,8 @@ Jellyfin 兼容层与未来网页端播放共用；jellyfin_device 是兼容层�
 播放器设备凭据表（device_id 唯一，重登录覆盖换发 token）。
 纯增表，向前兼容（docs/design/jellyfin-compat.md 8.2）。
 
-Revision ID: d8e1a4c9f607
-Revises: c7d0f3b8e596
+Revision ID: 6254ae56c723
+Revises: d8e1a4c9f607
 Create Date: 2026-08-03 14:00:00.000000
 
 """
@@ -19,8 +19,8 @@ import sqlalchemy as sa
 from alembic import op
 
 # revision identifiers, used by Alembic.
-revision: str = "d8e1a4c9f607"
-down_revision: str | None = "c7d0f3b8e596"
+revision: str = "6254ae56c723"
+down_revision: str | None = "d8e1a4c9f607"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
