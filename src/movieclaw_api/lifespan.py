@@ -116,10 +116,14 @@ def build_lifespan(settings: Settings):
         # 存量告警行再无任何路径去消退它，会永远挂在告警面板上（见函数注释）
         from movieclaw_api.services.app_update import (
             clear_legacy_update_notices,
+            prune_stale_overlays,
             record_baseline_version,
         )
 
         await clear_legacy_update_notices()
+        # 镜像升级后残留的陈旧 overlay（requires_runtime 已低于新镜像）就地清掉：
+        # entrypoint 永远不会再采用它们，不清的话状态页会一直显示「已安装但未在运行」
+        await prune_stale_overlays()
         # 跑镜像基线时记下版本号：回退列表据此向用户明示「回落基线 = 回到 v 几」
         await record_baseline_version()
         # 启动定时任务调度器：注册内置任务、从数据库重建 job 并开始调度。

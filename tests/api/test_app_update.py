@@ -7,6 +7,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import io
 import json
@@ -336,6 +337,79 @@ def test_status_exposes_inactive_overlay(updates_dir, tmp_path, monkeypatch):
     assert status.inactive_overlay_version == "0.3.0"
     assert "启动失败" in (status.inactive_overlay_reason or "")
     assert app_update._is_marked_bad("0.3.0") is True
+
+
+# ---------------------------------------------------------------------------
+# 陈旧 overlay 启动清场（镜像升级后 requires_runtime 低于新镜像）
+# ---------------------------------------------------------------------------
+
+
+def _write_overlay_dir(updates_dir: Path, version: str, requires: int) -> Path:
+    """只落 manifest 的最小版本目录（清场只看 manifest，不要求布局完整）。"""
+    vdir = updates_dir / "versions" / f"v{version}"
+    vdir.mkdir(parents=True, exist_ok=True)
+    manifest = {"schema": 1, "version": version, "requires_runtime": requires, "files": {}}
+    (vdir / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+    return vdir
+
+
+def test_prune_stale_overlays_cleans_leftovers_after_image_upgrade(
+    updates_dir, tmp_path, monkeypatch
+):
+    """镜像 runtime 前进后：旧 runtime 的版本连指针带标记一起清掉，备份保留。"""
+    app_update._apply_downloaded(_make_manifest(tmp_path / "d1", "0.2.0"), tmp_path / "d1")
+    app_update._apply_downloaded(_make_manifest(tmp_path / "d2", "0.3.0"), tmp_path / "d2")
+    state = updates_dir / "state"
+    state.mkdir(exist_ok=True)
+    (state / "bad-0.2.0").touch()
+    backup = updates_dir / "backup" / "movieclaw-v0.2.0-20260802-133527.db"
+    backup.parent.mkdir(parents=True, exist_ok=True)
+    backup.touch()
+    monkeypatch.setenv("MOVIECLAW_RUNTIME_VERSION", "3")  # 模拟升级后的新镜像
+
+    asyncio.run(app_update.prune_stale_overlays())
+
+    assert not (updates_dir / "current").is_symlink()
+    assert not (updates_dir / "previous").is_symlink()
+    assert list((updates_dir / "versions").iterdir()) == []
+    assert not (state / "bad-0.2.0").exists()
+    assert backup.exists()  # 备份是跨镜像升级的最后恢复点，清场不动它
+    assert app_update.build_status().inactive_overlay_version is None
+
+
+def test_prune_stale_overlays_keeps_matching_future_and_broken(updates_dir, monkeypatch):
+    """requires 等于/高于镜像 runtime 的不动（后者是镜像降级场景），清单损坏的也不碰。"""
+    matching = _write_overlay_dir(updates_dir, "0.4.0", requires=3)
+    future = _write_overlay_dir(updates_dir, "0.5.0", requires=4)
+    broken = updates_dir / "versions" / "v0.9.9"
+    broken.mkdir(parents=True)
+    (broken / "manifest.json").write_text("not json", encoding="utf-8")
+    app_update._atomic_symlink(future, updates_dir / "current")
+    monkeypatch.setenv("MOVIECLAW_RUNTIME_VERSION", "3")
+
+    asyncio.run(app_update.prune_stale_overlays())
+
+    assert matching.is_dir() and future.is_dir() and broken.is_dir()
+    assert (updates_dir / "current").is_symlink()
+
+
+def test_prune_stale_overlays_noop_outside_docker(updates_dir, monkeypatch):
+    """源码部署（无 runtime 环境变量）没有 overlay 机制，不做任何清理。"""
+    stale = _write_overlay_dir(updates_dir, "0.1.0", requires=1)
+    monkeypatch.delenv("MOVIECLAW_RUNTIME_VERSION")
+    asyncio.run(app_update.prune_stale_overlays())
+    assert stale.is_dir()
+
+
+def test_overlay_state_reason_distinguishes_runtime_direction(updates_dir, monkeypatch):
+    """runtime 落后 → 引导升级镜像；runtime 超前的残留 → 明说已停用，不再误导升级。"""
+    stale = _write_overlay_dir(updates_dir, "0.3.0", requires=1)
+    future = _write_overlay_dir(updates_dir, "9.9.9", requires=9)
+    monkeypatch.setenv("MOVIECLAW_RUNTIME_VERSION", "3")
+    _version, usable, reason = app_update._overlay_state(stale)
+    assert usable is False and "已停用" in reason and "需升级镜像" not in reason
+    _version, usable, reason = app_update._overlay_state(future)
+    assert usable is False and "需升级镜像" in reason
 
 
 # ---------------------------------------------------------------------------
