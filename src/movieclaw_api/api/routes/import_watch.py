@@ -77,11 +77,19 @@ class ImportWatchView(BaseModel):
         default_factory=dict,
         description="台账状态计数（imported/pending/failed/skipped/ignored → 条目数）",
     )
+    imported_files: int = Field(
+        default=0,
+        description="已入库条目累计入库的文件数（剧集一条目是一个季包，条目数说不清入了几集）",
+    )
     created_at: datetime
 
     @classmethod
     def from_model(
-        cls, row: ImportWatch, *, library_name: str | None, stats: dict[str, int] | None = None
+        cls,
+        row: ImportWatch,
+        *,
+        library_name: str | None,
+        stats: ingest.LedgerStats | None = None,
     ) -> ImportWatchView:
         created = row.created_at
         if created.tzinfo is None:
@@ -102,7 +110,8 @@ class ImportWatchView(BaseModel):
             kind=row.kind,  # type: ignore[arg-type]
             target_label=label,
             process_existing=row.process_existing,
-            stats=stats or {},
+            stats=stats.counts if stats else {},
+            imported_files=stats.imported_files if stats else 0,
             created_at=created,
         )
 
@@ -250,10 +259,13 @@ async def list_rule_entries(
     session: AsyncSession = Depends(get_session),
 ) -> ApiResponse[IngestEntriesView]:
     rule = await ImportWatchConfigService(session).get(rule_id)
-    counts = (await ingest.entry_stats(session, [rule])).get(rule_id, {})
+    ledger = (await ingest.entry_stats(session, [rule])).get(rule_id)
     rows = await ingest.list_entries(session, rule, status)
     return ok(
-        IngestEntriesView(counts=counts, entries=[IngestEntryView.from_model(r) for r in rows])
+        IngestEntriesView(
+            counts=ledger.counts if ledger else {},
+            entries=[IngestEntryView.from_model(r) for r in rows],
+        )
     )
 
 

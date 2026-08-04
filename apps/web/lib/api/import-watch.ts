@@ -35,6 +35,8 @@ export interface ImportWatchRule {
   process_existing: boolean;
   /** 台账状态计数（imported/pending/failed/skipped/ignored → 条目数） */
   stats: Record<string, number>;
+  /** 已入库条目累计入库的文件数（剧集一条目是一个季包，条目数说不清入了几集） */
+  imported_files: number;
   created_at: string;
 }
 
