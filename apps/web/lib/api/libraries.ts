@@ -54,6 +54,8 @@ export interface MediaLibrary {
   is_default: boolean;
   /** 收藏范围声明；空=未声明（只作为显式指定或默认库兜底的目标） */
   match_rules: MatchRule[];
+  /** 扫描后自动清理已确认丢失的库存记录（只删台账不动磁盘，不可恢复） */
+  auto_clear_missing: boolean;
   /** 库存统计（library_file 台账聚合） */
   stats: LibraryStats;
   /** 是否正在扫描 */
@@ -126,6 +128,8 @@ export interface LastScan {
   identified: number;
   unidentified: number;
   marked_missing: number;
+  /** 本轮自动清理出台账的丢失记录数（库开了自动清理才非 0） */
+  cleared_missing: number;
   /** 疑似写入中暂缓入账的文件数（稍后自动补扫） */
   deferred: number;
   /** 识别重试数：在位但待识别的文件重走识别链（不算新入账） */
@@ -279,6 +283,8 @@ export interface LibraryPayload {
   root_paths: string[];
   /** 收藏范围条件；缺省/空=不声明 */
   match_rules?: MatchRule[];
+  /** 扫描后自动清理已确认丢失的库存记录；不传=不改动（新建时默认关） */
+  auto_clear_missing?: boolean;
 }
 
 /** 收藏范围的可选项（后端唯一真相源：类型 chips 与区域预设）。 */

@@ -93,6 +93,24 @@ class LibraryFileRepository:
             await self._session.commit()
         return len(rows)
 
+    async def delete_by_ids(self, file_ids: list[int]) -> int:
+        """按 id 批量删除台账行（扫描的自动清理用），返回删除条数。
+
+        与 ``delete_missing`` 的区别只在选行方式：清理谁由调用方判定
+        （扫描要按"本轮遍历确认未回归"筛，那是它才知道的事实）。
+        同样**只删台账，绝不动磁盘**。
+        """
+        deleted = 0
+        for file_id in file_ids:
+            row = await self._session.get(LibraryFile, file_id)
+            if row is None:
+                continue
+            await self._session.delete(row)
+            deleted += 1
+        if deleted:
+            await self._session.commit()
+        return deleted
+
     async def find_by_size(self, library_id: int, size_bytes: int) -> list[LibraryFile]:
         """同库同尺寸的台账行——改名归并的候选池（尺寸是改名/移动的不变量）。"""
         result = await self._session.execute(

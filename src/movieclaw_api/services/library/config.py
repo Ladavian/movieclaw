@@ -215,6 +215,7 @@ class LibraryConfigService:
         kind: MediaKind,
         root_paths: list[str],
         match_rules: list | None = None,
+        auto_clear_missing: bool | None = None,
     ) -> Library:
         """新增一个库。该类型尚无默认库时自动成为默认。"""
         from movieclaw_api.services.library.routing import validate_match_rules
@@ -225,7 +226,11 @@ class LibraryConfigService:
         await self._assert_roots_clear_of_other_libraries(roots)
         await self._assert_name_available(name)
         row = await self._repo.create(
-            name=name.strip(), kind=kind.value, root_paths=roots, match_rules=rules
+            name=name.strip(),
+            kind=kind.value,
+            root_paths=roots,
+            match_rules=rules,
+            auto_clear_missing=bool(auto_clear_missing),
         )
         self._refresh_watcher()
         return row
@@ -237,8 +242,12 @@ class LibraryConfigService:
         name: str,
         root_paths: list[str],
         match_rules: list | None = None,
+        auto_clear_missing: bool | None = None,
     ) -> Library:
-        """更新名称/根路径/收藏范围。kind 创建后不可改（订阅按类型挂库）。"""
+        """更新名称/根路径/收藏范围。kind 创建后不可改（订阅按类型挂库）。
+
+        ``auto_clear_missing`` 为 None 时保持原值（见 LibraryRepository.update）。
+        """
         await self.get(library_id)
         from movieclaw_api.services.library.routing import validate_match_rules
 
@@ -248,7 +257,11 @@ class LibraryConfigService:
         await self._assert_roots_clear_of_other_libraries(roots, exclude_id=library_id)
         await self._assert_name_available(name, exclude_id=library_id)
         updated = await self._repo.update(
-            library_id, name=name.strip(), root_paths=roots, match_rules=rules
+            library_id,
+            name=name.strip(),
+            root_paths=roots,
+            match_rules=rules,
+            auto_clear_missing=auto_clear_missing,
         )
         assert updated is not None  # get() 已确认存在
         self._refresh_watcher()

@@ -186,6 +186,7 @@ def _last_scan_view(library_id: int) -> LastScanView | None:
         identified=summary.identified,
         unidentified=summary.unidentified,
         marked_missing=summary.marked_missing,
+        cleared_missing=summary.cleared_missing,
         deferred=summary.deferred,
         retried=summary.retried,
         cancelled=summary.cancelled,
@@ -613,6 +614,7 @@ async def create_library(
         kind=payload.kind,
         root_paths=payload.root_paths,
         match_rules=payload.match_rules,
+        auto_clear_missing=payload.auto_clear_missing,
     )
     # 建库即扫描：根路径下的存量文件立刻开始识别入账，不用用户再手动点一次
     assert row.id is not None
@@ -682,6 +684,7 @@ async def update_library(
         name=payload.name,
         root_paths=payload.root_paths,
         match_rules=payload.match_rules,
+        auto_clear_missing=payload.auto_clear_missing,
     )
     # 根路径变了就自动补扫：新目录的存量立刻入账，移除目录下的文件标记 missing
     if roots_changed:

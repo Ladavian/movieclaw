@@ -8,6 +8,7 @@
 
 from __future__ import annotations
 
+import shutil
 from pathlib import Path
 
 import httpx
@@ -876,6 +877,148 @@ async def test_reconcile_marks_missing_and_rescan_restores(db, tmp_path) -> None
             .one()
         )
         assert row.missing_since is None
+
+
+async def test_auto_clear_missing_off_keeps_ledger(db, tmp_path) -> None:
+    """默认（开关关）：扫描只标记不删——记录是「重新下载」与改名归并的依据。"""
+    root = _make_tv_library(tmp_path)
+    async with db.session() as session:
+        library = await LibraryRepository(session).create(
+            name="剧集库", kind="tv", root_paths=[str(root)]
+        )
+        assert library.auto_clear_missing is False  # 危险开关默认关
+    await scan_library(library.id)
+
+    (root / "测试剧集 (2024)" / "Season 01" / "测试剧集.S01E01.1080p.mkv").unlink()
+    summary = await scan_library(library.id)
+    assert summary.marked_missing == 1 and summary.cleared_missing == 0
+
+    async with db.session() as session:
+        rows = list((await session.execute(select(LibraryFile))).scalars().all())
+        assert len([r for r in rows if r.missing_since is not None]) == 1
+
+
+async def test_auto_clear_missing_removes_confirmed_lost(db, tmp_path) -> None:
+    """开了自动清理：扫完台账即与磁盘对齐，不用用户再手动清一次缺失。
+
+    同时验证在位文件一条不动——清理只针对"本轮遍历确认不在磁盘上"的行。
+    """
+    root = _make_tv_library(tmp_path)
+    async with db.session() as session:
+        library = await LibraryRepository(session).create(
+            name="剧集库", kind="tv", root_paths=[str(root)], auto_clear_missing=True
+        )
+    await scan_library(library.id)
+    async with db.session() as session:
+        before = len(list((await session.execute(select(LibraryFile))).scalars().all()))
+
+    victim = root / "测试剧集 (2024)" / "Season 01" / "测试剧集.S01E01.1080p.mkv"
+    victim.unlink()
+    summary = await scan_library(library.id)
+    assert summary.marked_missing == 1
+    assert summary.cleared_missing == 1  # 标记与清理在同一轮完成（"扫完就干净"）
+
+    async with db.session() as session:
+        rows = list((await session.execute(select(LibraryFile))).scalars().all())
+        assert len(rows) == before - 1  # file_count 与磁盘对齐
+        assert all(r.file_path != str(victim) for r in rows)
+        assert all(r.missing_since is None for r in rows)
+
+
+async def test_auto_clear_missing_skips_unreadable_dirs(db, tmp_path, monkeypatch) -> None:
+    """遍历吞了目录（权限/掉盘/网络挂载抖动）的一轮：整轮不清理。
+
+    读不动的目录不等于底下的文件不存在，此时的"没遍历到"不可信——标记
+    missing 无伤大雅（回归自动恢复），删记录则不可挽回。
+    """
+    root = _make_tv_library(tmp_path)
+    async with db.session() as session:
+        library = await LibraryRepository(session).create(
+            name="剧集库", kind="tv", root_paths=[str(root)], auto_clear_missing=True
+        )
+    await scan_library(library.id)
+
+    season = root / "测试剧集 (2024)" / "Season 01"
+    original_walk = scan_mod._walk_videos
+
+    def flaky_walk(walk_root, unreadable=None):
+        """整个季目录列不动：底下两集本轮都遍历不到。"""
+        for entry, is_disc in original_walk(walk_root, unreadable):
+            if not str(entry).startswith(str(season)):
+                yield entry, is_disc
+        if unreadable is not None:
+            unreadable.append(str(season))
+
+    monkeypatch.setattr(scan_mod, "_walk_videos", flaky_walk)
+    summary = await scan_library(library.id)
+    assert summary.marked_missing == 2  # 标记照旧（回归即恢复）
+    assert summary.cleared_missing == 0  # 但一条都不能删
+
+    async with db.session() as session:
+        rows = list((await session.execute(select(LibraryFile))).scalars().all())
+        assert len([r for r in rows if r.missing_since is not None]) == 2
+
+    # 目录恢复可读 → 文件回归，标记自动清除（没有任何东西被删掉）
+    monkeypatch.setattr(scan_mod, "_walk_videos", original_walk)
+    await scan_library(library.id)
+    async with db.session() as session:
+        rows = list((await session.execute(select(LibraryFile))).scalars().all())
+        assert all(r.missing_since is None for r in rows)
+
+
+async def test_auto_clear_missing_spares_emptied_root(db, tmp_path) -> None:
+    """挂载掉线的典型症状：挂载点还在、目录可读、底下空了。
+
+    这与"用户把这个根下的片子全删了"在磁盘上完全一样，只能二选一地误判——
+    宁可少清（记录留着，下轮再清）也不能清错（删了回不来）。
+    """
+    root = _make_tv_library(tmp_path)
+    async with db.session() as session:
+        library = await LibraryRepository(session).create(
+            name="剧集库", kind="tv", root_paths=[str(root)], auto_clear_missing=True
+        )
+    await scan_library(library.id)
+    async with db.session() as session:
+        before = len(list((await session.execute(select(LibraryFile))).scalars().all()))
+    assert before > 0
+
+    for child in list(root.iterdir()):  # 根还在、可读，但一个文件都没了
+        shutil.rmtree(child)
+    summary = await scan_library(library.id)
+    assert summary.marked_missing == before  # 标记照旧（回归即恢复）
+    assert summary.cleared_missing == 0  # 但一条都不清
+
+    async with db.session() as session:
+        rows = list((await session.execute(select(LibraryFile))).scalars().all())
+        assert len(rows) == before
+
+
+async def test_auto_clear_missing_spares_offline_root(db, tmp_path) -> None:
+    """掉盘/挂载失败的根整个跳过：它底下的记录一条都不清（也不标记）。"""
+    root_a = _make_tv_library(tmp_path)
+    root_b = tmp_path / "media" / "tv2"
+    (root_b / "另一部剧 (2024)" / "Season 01").mkdir(parents=True)
+    (root_b / "另一部剧 (2024)" / "Season 01" / "另一部剧.S01E01.mkv").write_bytes(b"b1")
+    async with db.session() as session:
+        library = await LibraryRepository(session).create(
+            name="剧集库",
+            kind="tv",
+            root_paths=[str(root_a), str(root_b)],
+            auto_clear_missing=True,
+        )
+    await scan_library(library.id)
+    async with db.session() as session:
+        before = len(list((await session.execute(select(LibraryFile))).scalars().all()))
+
+    # 扩展根整个不可达（模拟掉盘）：它下面的文件既不该被标记，更不该被清理
+    root_b.rename(tmp_path / "media" / "tv2-offline")
+    summary = await scan_library(library.id)
+    assert summary.marked_missing == 0 and summary.cleared_missing == 0
+    assert any("根路径不存在" in e for e in summary.errors)
+
+    async with db.session() as session:
+        rows = list((await session.execute(select(LibraryFile))).scalars().all())
+        assert len(rows) == before
 
 
 async def test_scan_relinks_renamed_file(db, tmp_path) -> None:

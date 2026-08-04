@@ -20,7 +20,10 @@ TMDB 网络故障恢复后重扫即可自动补识别；标记过 missing 的
 文件再次被发现时自动清除标记（已有身份锚原样保留，不重新识别）。扫描同时感知删除：在位根路径下、台账有
 但本轮没遍历到的文件标记 missing（挂载失败的根整个跳过、不误伤）——
 "扫描 = 把台账与磁盘对齐"，新增与消失一次看全。扫描绝不移动/重命名/
-删除任何存量文件，missing 只是标记、记录永远保留。
+删除任何存量文件；missing 默认只是标记、记录保留（它是「重新下载」与
+跨轮次改名归并的依据），库开了 ``auto_clear_missing`` 才在收尾把已确认
+丢失的记录清出台账（只删台账、且仅限本轮可信的扫描，见
+``_auto_clear_missing``）。
 
 完整性检测（库对目录用途不做任何假设——根路径完全可以同时是下载目录，
 新文件可能是一个写入中的半成品）：**新文件 mtime 距今不足静默窗口的
@@ -212,6 +215,7 @@ class ScanSummary:
     skipped_known: int = 0  # 已在台账、直接跳过
     skipped_ignored: int = 0  # 用户忽略过的文件，不再重走识别链
     marked_missing: int = 0  # 台账有但磁盘上已消失，标记 missing
+    cleared_missing: int = 0  # 已确认丢失、被自动清理出台账的行（库级开关，默认关）
     deferred: int = 0  # 疑似写入中（mtime 太新），本轮暂缓入账，稍后自动补扫
     retried: int = 0  # 识别重试：在位但待识别的台账行重走识别链（不算新入账）
     reviewed: int = 0  # 身份复核：识别器升级后重走识别链的已识别行
@@ -365,6 +369,9 @@ async def _scan(library_id: int, summary: ScanSummary, state: ScanState) -> Scan
         # 先盘点全部待处理文件（纯目录遍历、很快）：总数定下来，进度才有分母
         seen_paths: set[str] = set()
         scanned_roots: list[str] = []
+        # 遍历中列不动的目录（权限/IO/网络挂载抖动）：本轮的"没遍历到"因此
+        # 不可信，自动清理必须整轮让路（见 _auto_clear_missing）
+        unreadable_dirs: list[str] = []
         pending: list[tuple[Path, Path, bool]] = []  # (根, 文件, 是否原盘)
         for root in library.root_paths:
             root_path = Path(root)
@@ -372,7 +379,7 @@ async def _scan(library_id: int, summary: ScanSummary, state: ScanState) -> Scan
                 summary.errors.append(f"根路径不存在，已跳过：{root}")
                 continue
             scanned_roots.append(str(root_path))
-            for file, is_disc in _walk_videos(root_path):
+            for file, is_disc in _walk_videos(root_path, unreadable_dirs):
                 # 根路径互相嵌套时同一个文件会被遍历两次，去重后才是"每个文件
                 # 处理一次"：重复处理不只是白跑一趟识别链，第二趟还会拿着过期的
                 # 台账快照去插入已存在的路径
@@ -507,6 +514,23 @@ async def _scan(library_id: int, summary: ScanSummary, state: ScanState) -> Scan
             await repo.mark_missing(row.id, since=now)
             summary.marked_missing += 1
 
+        # 收尾清理：开了「自动清理丢失记录」的库，把已确认丢失的行清出台账，
+        # 让 file_count 与磁盘对齐（默认关；不可信的一轮整轮让路）
+        await _auto_clear_missing(
+            repo,
+            library,
+            summary,
+            known=list(known.values()),
+            scanned_roots=scanned_roots,
+            # 本轮真的遍历出文件的根：空根是"挂载掉了但挂载点还在"的典型
+            # 症状，自动清理不能把它当"用户把片子删光了"（见 _auto_clear_missing）
+            roots_with_files={str(root_path) for root_path, _, _ in pending},
+            unreadable_dirs=unreadable_dirs,
+        )
+        # 收尾后台账里仍标记丢失的条数：扫描结论要把"为什么 file_count 比
+        # 磁盘上的文件多"说清楚，并给出收口路径，否则用户只能自己猜
+        stale_missing = len(await repo.list_missing(library_id))
+
         # —— 介质规格补探 ——
         # 「扫描 = 把台账与磁盘对齐」，介质规格同样是磁盘真相的一部分。
         # 入账时每个新文件都探过一次，但**后装 ffprobe 的用户拿不到**：
@@ -522,6 +546,18 @@ async def _scan(library_id: int, summary: ScanSummary, state: ScanState) -> Scan
             "媒体库 #%s：%d 个文件已不在原位，已标记 missing（记录保留，文件回归自动恢复）",
             library_id,
             summary.marked_missing,
+        )
+    if stale_missing:
+        # 扫完还留着丢失记录是**有意为之**（记录是重新下载与改名归并的依据），
+        # 但用户看到的是"file_count 比磁盘上的文件多"。这里把原因和两条收口
+        # 路径一次说清，省掉"扫完为什么还不干净"的困惑
+        logger.info(
+            "媒体库 #%s：台账里仍有 %d 条丢失记录（文件回归会自动恢复，也是「重新下载」"
+            "的依据）。确认这些内容不再需要：在库详情「缺失」里清理，或执行 "
+            "`lib missing clear`；想让以后每次扫描自动清理，打开本库的"
+            "「自动清理丢失记录」开关",
+            library_id,
+            stale_missing,
         )
     if summary.deferred:
         logger.info(
@@ -549,7 +585,7 @@ async def _scan(library_id: int, summary: ScanSummary, state: ScanState) -> Scan
     logger.info(
         "媒体库 #%s 文件入账完成：新入账 %d（已识别 %d / 待识别 %d），识别重试 %d，"
         "身份复核 %d（存疑 %d），改名归并 %d，跳过已知 %d，跳过已忽略 %d，"
-        "标记丢失 %d，暂缓 %d，问题 %d",
+        "标记丢失 %d，清理丢失 %d，暂缓 %d，问题 %d",
         library_id,
         summary.scanned - summary.relinked,
         summary.identified,
@@ -561,6 +597,7 @@ async def _scan(library_id: int, summary: ScanSummary, state: ScanState) -> Scan
         summary.skipped_known,
         summary.skipped_ignored,
         summary.marked_missing,
+        summary.cleared_missing,
         summary.deferred,
         len(summary.errors),
     )
@@ -610,6 +647,93 @@ async def _scan(library_id: int, summary: ScanSummary, state: ScanState) -> Scan
     return summary
 
 
+async def _auto_clear_missing(
+    repo: LibraryFileRepository,
+    library: Library,
+    summary: ScanSummary,
+    *,
+    known: list[LibraryFile],
+    scanned_roots: list[str],
+    roots_with_files: set[str],
+    unreadable_dirs: list[str],
+) -> None:
+    """扫描收尾：把已确认丢失的库存记录清出台账（库级开关，默认关）。
+
+    用户手动删掉磁盘上的文件后，「扫完台账还没干净、得再手动清一次缺失」
+    是实打实的认知负担——开了 ``auto_clear_missing`` 的库在这里一次收口，
+    ``file_count`` 扫完即与磁盘对齐。
+
+    **默认关是有理由的**：missing 行不是垃圾数据，它是缺失清单「重新下载」
+    的输入、跨轮次改名归并的候选池（尺寸指纹匹配靠它），行上还带着不可
+    再生的介质规格与来源种子。清理不可恢复，得由用户明确表态。
+
+    清理的判据是「本轮扫描可不可信」，不是「丢了多久」——时间阈值既拦不住
+    真正的危险（半个目录读不动时，等一天再删还是删错），又与用户的诉求
+    正面冲突（删完文件立刻扫描，阈值让这一轮什么也清不掉，抱怨照旧）。
+    可信的定义：
+
+    - 遍历没有吞掉任何目录（``unreadable_dirs`` 为空）——读不动的目录底下
+      的文件会被误判丢失，这一轮整轮让路；
+    - 扫描没有被手动停止（用户的意图是"别扫了"，不是"顺便帮我删台账"）；
+    - 只清**在位根路径下**的行：根路径不存在时整根跳过（掉盘/挂载失败），
+      那些行本轮压根没被验证过，一条都不动；
+    - 台账里有记录、本轮却一个文件都没遍历出来的根不参与：网络挂载掉线时
+      挂载点往往还在、只是变成一个**空目录**，路径存在、目录可读、底下什么
+      都没有——与"用户把这个根下的片子全删了"在磁盘上长得一模一样。两者
+      只能二选一地误判，宁可少清（记录留着，下轮再清）也不能清错（删了
+      回不来）。
+
+    满足以上条件时，"台账有、磁盘上遍历不到"就是文件真的没了。改名/移动
+    在这之前已由 ``_try_relink`` 整行随迁，不会走到这里。
+    """
+    if not library.auto_clear_missing:
+        return
+    if unreadable_dirs:
+        logger.warning(
+            "媒体库 #%s：有 %d 个目录本轮读取失败（如 %s），自动清理丢失记录已跳过"
+            "——读不动的目录不等于文件不存在，误删无法恢复。请检查目录权限或挂载状态",
+            library.id,
+            len(unreadable_dirs),
+            unreadable_dirs[0],
+        )
+        return
+    if summary.cancelled:
+        logger.info("媒体库 #%s：扫描被手动停止，本轮不做丢失记录的自动清理", library.id)
+        return
+    prefixes = []
+    for root in scanned_roots:
+        prefix = f"{root.rstrip('/')}/"
+        if root in roots_with_files:
+            prefixes.append(prefix)
+            continue
+        if any(row.file_path.startswith(prefix) for row in known):
+            logger.warning(
+                "媒体库 #%s：根路径「%s」本轮一个文件都没扫到，但台账里有它的记录，"
+                "自动清理丢失记录已跳过这个根——网络挂载掉线时挂载点会变成空目录，"
+                "与「文件被删光」分不开。若确实是你自己清空了这个目录，"
+                "请在库详情「缺失」里手动清理",
+                library.id,
+                root,
+            )
+    doomed = [
+        row.id
+        for row in known
+        if row.id is not None
+        and row.library_id == library.id
+        and row.missing_since is not None
+        and any(row.file_path.startswith(prefix) for prefix in prefixes)
+    ]
+    if not doomed:
+        return
+    summary.cleared_missing = await repo.delete_by_ids(doomed)
+    logger.warning(
+        "媒体库 #%s：已清理 %d 条确认丢失的库存记录（本库开启了「自动清理丢失记录」）。"
+        "磁盘文件未被动过；台账记录不可恢复，这些内容如需补回请重新下载",
+        library.id,
+        summary.cleared_missing,
+    )
+
+
 def _is_disc_dir(directory: Path) -> bool:
     """原盘目录判定：蓝光（BDMV）或 DVD（VIDEO_TS）结构。"""
     return (directory / "BDMV").is_dir() or (directory / "VIDEO_TS").is_dir()
@@ -648,11 +772,16 @@ def _disc_total_size(disc_dir: Path) -> int:
     return total
 
 
-def _walk_videos(root: Path):
+def _walk_videos(root: Path, unreadable: list[str] | None = None):
     """深度遍历，产出 (路径, 是否原盘目录)。
 
     原盘目录（BDMV/VIDEO_TS 结构）整体作为**一个条目**产出、不再下钻——
     盘内的几十个流文件不是独立影片。普通目录剪掉忽略/隐藏目录后继续下钻。
+
+    ``unreadable``：调用方传入的收集器，列不动的目录（权限/IO/网络挂载抖动）
+    会把路径记进来。读不动的目录只能跳过——但**跳过不等于目录是空的**，
+    它底下的文件会因为"本轮没遍历到"被判丢失。标记 missing 时这无伤大雅
+    （回归自动恢复），自动清理必须知情：这一轮的"没遍历到"不可信。
     """
     stack = [root]
     while stack:
@@ -660,6 +789,8 @@ def _walk_videos(root: Path):
         try:
             entries = sorted(current.iterdir())
         except OSError:
+            if unreadable is not None:
+                unreadable.append(str(current))
             continue
         for entry in entries:
             name = entry.name
@@ -1794,7 +1925,8 @@ RECONCILE_INTERVAL_SECONDS = 6 * 3600
     interval_seconds=RECONCILE_INTERVAL_SECONDS,
     description=(
         "定期把媒体库台账与磁盘对齐：新文件增量入账，消失的文件标记 missing"
-        "（不删记录）。兜底目录监听覆盖不到的场景。"
+        "（默认只标记不删记录；开了「自动清理丢失记录」的库会把已确认丢失的"
+        "记录清出台账）。兜底目录监听覆盖不到的场景。"
     ),
 )
 async def reconcile_libraries() -> None:
