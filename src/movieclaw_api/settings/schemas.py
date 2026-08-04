@@ -474,3 +474,38 @@ async def save_search_tabs(tabs: list[SearchTab]) -> list[SearchTab]:
     normalized = normalize_search_tabs(tabs)
     await get_setting_store().set(SearchPreferencesSetting(tabs=normalized))
     return normalized
+
+
+# ---------------------------------------------------------------------------
+# Jellyfin 兼容播放接口（docs/design/jellyfin-compat.md）
+# ---------------------------------------------------------------------------
+
+
+@register_setting(namespace="jellyfin.compat", title="Jellyfin 兼容播放接口")
+class JellyfinCompatSetting(SettingSchema):
+    """Jellyfin 兼容层配置。默认开启（2026-08-03 用户决策，设计文档 8.4）。
+
+    ``server_id`` 首启自动生成并持久化——它是播放器识别"这台服务器"的
+    身份锚，换了会导致所有已配对客户端要求重新登录，永不轻易重置。
+    """
+
+    enabled: bool = Field(default=True, description="是否对外提供 Jellyfin 兼容接口")
+    server_id: str = Field(default="", description="服务器 ID（32 位 hex，首启自动生成）")
+    published_server_url: str = Field(
+        default="",
+        description=(
+            "对外发布地址（如 http://192.168.1.10:3000）；"
+            "Docker 桥接部署下自动发现的唯一可靠答案，空=自动探测"
+        ),
+    )
+    server_name: str = Field(default="MovieClaw", description="对播放器展示的服务器名")
+
+
+async def get_jellyfin_compat() -> JellyfinCompatSetting:
+    """读取 Jellyfin 兼容层配置；首次读取时生成并固化 server_id。"""
+    store = get_setting_store()
+    setting = await store.get(JellyfinCompatSetting)
+    if not setting.server_id:
+        setting.server_id = secrets.token_hex(16)
+        await store.set(setting)
+    return setting

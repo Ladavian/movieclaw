@@ -17,12 +17,14 @@ from movieclaw_db.models.download_hint import DownloadHint
 from movieclaw_db.models.downloader_client import ClientType, DownloaderClient
 from movieclaw_db.models.import_watch import ImportWatch
 from movieclaw_db.models.ingest_entry import IngestEntry, IngestStatus
+from movieclaw_db.models.jellyfin_device import JellyfinDevice
 from movieclaw_db.models.library import Library
 from movieclaw_db.models.library_file import FileSource, LibraryFile
 from movieclaw_db.models.llm_provider import LlmProvider
 from movieclaw_db.models.media_item import MediaItem, MediaSeason
 from movieclaw_db.models.media_metadata import MediaEpisode, MediaMetadata
 from movieclaw_db.models.person import MediaItemPerson, Person
+from movieclaw_db.models.playback_state import PlaybackState
 from movieclaw_db.models.rule_set import RuleSet
 from movieclaw_db.models.scheduled_task import (
     ScheduledTask,
@@ -71,6 +73,7 @@ __all__ = [
     "ImportWatch",
     "IngestEntry",
     "IngestStatus",
+    "JellyfinDevice",
     "Library",
     "LibraryFile",
     "LlmProvider",
@@ -79,6 +82,7 @@ __all__ = [
     "MediaItem",
     "MediaMetadata",
     "Person",
+    "PlaybackState",
     "MediaSeason",
     "RuleSet",
     "Subscription",

@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path, PurePath
 from typing import Annotated, Literal
 
-from fastapi import APIRouter, BackgroundTasks, Depends, Query
+from fastapi import APIRouter, BackgroundTasks, Depends, Query, Request, Response
 from fastapi.responses import FileResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
@@ -123,6 +123,34 @@ from movieclaw_media.genres import COUNTRY_NAMES, MOVIE_GENRES, REGION_PRESETS, 
 from movieclaw_media.models import MediaKind
 
 router = APIRouter(prefix="/libraries", tags=["libraries"])
+
+
+@router.get(
+    "/{library_id}/cover",
+    summary="库封面拼贴（氛围光货架，服务端渲染）",
+    operation_id="libraries.cover",
+    openapi_extra={"x-cli-hidden": True},
+)
+async def get_library_cover(library_id: int, request: Request) -> Response:
+    """服务端渲染的库封面（与 Jellyfin 兼容层同一张图，docs/design/jellyfin-compat.md 5.6）。
+
+    ETag=素材指纹：库内容不变时浏览器 304 秒回；变了自动重渲。前端直接
+    <img> 引用，替代原先客户端 CSS 拼装的货架（渲染更快且双端一致）。
+    """
+    from movieclaw_api.services.library.cover import ensure_library_cover
+
+    result = await ensure_library_cover(library_id)
+    if result is None:
+        raise NotFoundException("该库还没有可用的封面素材（无海报资产）")
+    path, key = result
+    etag = f'"{key}"'
+    if request.headers.get("If-None-Match") == etag:
+        return Response(status_code=304, headers={"ETag": etag})
+    return FileResponse(
+        path,
+        media_type="image/jpeg",
+        headers={"ETag": etag, "Cache-Control": "no-cache"},
+    )
 
 
 def _scan_progress_view(library_id: int) -> ScanProgressView | None:

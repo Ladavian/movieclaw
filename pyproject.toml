@@ -14,6 +14,8 @@ authors = [
 ]
 dependencies = [
   "fastapi>=0.116.0,<1.0.0",
+  # 库封面拼贴（氛围光货架，双端共用）与 Jellyfin 图片缩放（docs/design/jellyfin-compat.md 5.6）
+  "pillow>=10.4.0,<12.0.0",
   "pydantic-settings>=2.10.0,<3.0.0",
   "uvicorn[standard]>=0.35.0,<1.0.0",
   # Discord Gateway 收消息用 websocket 客户端。此前经 uvicorn[standard] 传递

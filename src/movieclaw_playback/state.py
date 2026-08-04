@@ -1,0 +1,115 @@
+"""观看状态存取——playback_state 表的领域服务。
+
+键是 (media_item_id, season, episode) 数字对（电影 (0,0) 哨兵）。
+所有写入走 upsert：状态行按需创建，缺行即"从未播过"。
+"""
+
+from __future__ import annotations
+
+from collections.abc import Iterable
+from datetime import datetime
+
+from sqlalchemy import select
+from sqlmodel.ext.asyncio.session import AsyncSession
+
+from movieclaw_db.models import PlaybackState
+from movieclaw_db.models.base import utcnow
+from movieclaw_playback.progress import resolve_mark_played, resolve_progress
+
+Unit = tuple[int, int, int]  # (media_item_id, season, episode)
+
+
+async def get_states(
+    session: AsyncSession, media_item_ids: Iterable[int]
+) -> dict[Unit, PlaybackState]:
+    """批量取一组条目的全部状态行，按 (item, season, episode) 索引。"""
+    ids = list(set(media_item_ids))
+    if not ids:
+        return {}
+    rows = (
+        await session.execute(
+            select(PlaybackState).where(PlaybackState.media_item_id.in_(ids))
+        )
+    ).scalars()
+    return {(r.media_item_id, r.season_number, r.episode_number): r for r in rows}
+
+
+async def _get_or_create(session: AsyncSession, unit: Unit) -> PlaybackState:
+    row = (
+        await session.execute(
+            select(PlaybackState).where(
+                PlaybackState.media_item_id == unit[0],
+                PlaybackState.season_number == unit[1],
+                PlaybackState.episode_number == unit[2],
+            )
+        )
+    ).scalar_one_or_none()
+    if row is None:
+        row = PlaybackState(
+            media_item_id=unit[0], season_number=unit[1], episode_number=unit[2]
+        )
+        session.add(row)
+    return row
+
+
+async def record_playback_start(session: AsyncSession, unit: Unit) -> None:
+    """开始播放：play_count +1、刷新最近播放时间（scrobble 语义的计数点）。"""
+    row = await _get_or_create(session, unit)
+    row.play_count += 1
+    row.last_played_at = utcnow()
+    row.updated_at = utcnow()
+
+
+async def record_playback_progress(
+    session: AsyncSession, unit: Unit, *, position_ms: int | None, runtime_ms: int | None
+) -> PlaybackState:
+    """进度上报（Progress 与 Stopped 同入口）：按阈值三分支落库。"""
+    row = await _get_or_create(session, unit)
+    outcome = resolve_progress(position_ms, runtime_ms, currently_played=row.played)
+    row.position_ms = outcome.position_ms
+    row.played = outcome.played
+    row.last_played_at = utcnow()
+    row.updated_at = utcnow()
+    return row
+
+
+async def mark_played(
+    session: AsyncSession, units: list[Unit], *, date_played: datetime | None = None
+) -> PlaybackState | None:
+    """标记已看（可级联多单元，如整剧/整季）。返回第一个单元的状态行。"""
+    first: PlaybackState | None = None
+    for unit in units:
+        row = await _get_or_create(session, unit)
+        row.played = True
+        row.position_ms = 0
+        row.play_count, row.last_played_at = resolve_mark_played(
+            play_count=row.play_count,
+            date_played=date_played,
+            last_played_at=row.last_played_at,
+        )
+        row.updated_at = utcnow()
+        first = first or row
+    return first
+
+
+async def mark_unplayed(session: AsyncSession, units: list[Unit]) -> PlaybackState | None:
+    """取消已看：全部清零（对齐 BaseItem.ResetPlayedState，不是减一）。"""
+    first: PlaybackState | None = None
+    for unit in units:
+        row = await _get_or_create(session, unit)
+        row.played = False
+        row.position_ms = 0
+        row.play_count = 0
+        row.last_played_at = None
+        row.updated_at = utcnow()
+        first = first or row
+    return first
+
+
+async def set_favorite(
+    session: AsyncSession, unit: Unit, *, favorite: bool
+) -> PlaybackState:
+    row = await _get_or_create(session, unit)
+    row.is_favorite = favorite
+    row.updated_at = utcnow()
+    return row

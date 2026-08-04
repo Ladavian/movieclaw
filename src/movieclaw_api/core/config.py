@@ -45,6 +45,14 @@ class Settings(BaseSettings):
     media_dir: str = Field(default="./data/uploads", alias="MEDIA_DIR")
 
     # ------------------------------------------------------------------
+    # Jellyfin 兼容层（docs/design/jellyfin-compat.md）
+    # ------------------------------------------------------------------
+    # 自动发现应答里探测兜底时使用的对外 HTTP 端口。单容器部署对外唯一端口
+    # 是前端的 3000（Jellyfin 命名空间由 Next rewrites 反代到后端）；裸机开发
+    # 直连后端时按需覆盖。配置了 published_server_url 时本值不参与。
+    jellyfin_public_port: int = Field(default=3000, alias="JELLYFIN_PUBLIC_PORT")
+
+    # ------------------------------------------------------------------
     # 刮削元数据资产（自足媒体库，docs/design/metadata.md 第 6 节）
     # ------------------------------------------------------------------
     # 刮削管线下载的海报/剧照等图片资产目录（事实源，前端经 /images/assets
