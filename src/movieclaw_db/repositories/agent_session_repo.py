@@ -74,6 +74,34 @@ class AgentSessionRepository:
         self._session.add(row)
         await self._session.commit()
 
+    async def resync_after_truncate(
+        self,
+        session_id: str,
+        *,
+        leaf_uuid: str | None,
+        entry_count: int,
+        last_prompt: str | None,
+    ) -> None:
+        """会话被截断后按文件重新校准索引（行缺失时静默跳过，同 touch_after_append）。
+
+        与 touch_after_append 的区别在两处「减法」上：``last_prompt`` 允许被
+        置空（最后一轮可能刚被删掉），会话被截成空壳时连标题一并清掉——标题
+        本就是首条提问的预览，那条提问已经不在了，留着就是个对不上号的名字，
+        清空后下一条消息会重新给它命名（见 recorder.record_user_input）。
+        用户自己改过的标题同样会被清掉：会话内容已被清空，沿用旧名反而误导。
+        """
+        row = await self.get(session_id)
+        if row is None:
+            return
+        row.leaf_uuid = leaf_uuid
+        row.entry_count = entry_count
+        row.last_prompt = last_prompt
+        if entry_count == 0:
+            row.title = None
+        row.updated_at = utcnow()
+        self._session.add(row)
+        await self._session.commit()
+
     async def mark_running(self, session_id: str, run_id: str) -> None:
         """运行开始：记录运行编号并起跳第一拍心跳。"""
         row = await self.get(session_id)

@@ -80,8 +80,12 @@ class AgentSessionRecorder:
                 name=f"agent-session-heartbeat-{self._session_id}",
             )
 
-    async def record_user_input(self, text: str) -> None:
-        """落盘本轮用户输入，并刷新标题（仅首条）与最后提示预览。"""
+    async def record_user_input(self, text: str) -> str:
+        """落盘本轮用户输入，刷新标题（仅首条）与最后提示预览，返回 entry uuid。
+
+        uuid 要回给前端：本轮的「改写重问」需要它当截断锚点，而刚发起的这一轮
+        还没经历过回放，前端手里除此之外没有任何指向这条转录记录的把手。
+        """
         entry = self._store.append(self._session_id, ChatMessage(role="user", content=text))
         self._entry_count += 1
         preview = text.strip()[:PREVIEW_MAX_CHARS]
@@ -93,6 +97,7 @@ class AgentSessionRecorder:
                 last_prompt=preview,
                 title=preview,
             )
+        return entry.uuid
 
     async def on_message(self, message: ChatMessage, response: ChatResponse | None) -> None:
         """runner 定稿消息回调：assistant 带响应元数据，tool 结果不带。"""

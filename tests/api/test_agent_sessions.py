@@ -19,6 +19,7 @@ from tests.api.test_agent import _StreamProtocol, configure_provider
 from movieclaw_agent import SUMMARY_PREFIX, CompactionResult
 from movieclaw_agent.events import AgentEvent
 from movieclaw_api.core.config import get_settings
+from movieclaw_api.exceptions import BadRequestException, NotFoundException
 from movieclaw_api.services.agent_sessions import (
     SESSION_FORMAT_VERSION,
     AgentSessionStore,
@@ -129,6 +130,58 @@ def test_summarize_and_scan_all(tmp_path) -> None:
     (tmp_path / "broken.jsonl").write_text("", encoding="utf-8")
     summaries = store.scan_all()
     assert [s.session_id for s in summaries] == [sid]
+
+
+def test_truncate_from_drops_turn_and_everything_after(tmp_path) -> None:
+    """改写重问：从第二轮提问处截断，文件只剩第一轮，后续追加接回新链尾。"""
+    store = AgentSessionStore(tmp_path)
+    sid = store.create().session_id
+    first = store.append(sid, ChatMessage(role="user", content="第一轮"))
+    answer = store.append(sid, ChatMessage(role="assistant", content="第一轮答复"))
+    second = store.append(sid, ChatMessage(role="user", content="第二轮"))
+    store.append(sid, ChatMessage(role="assistant", content="第二轮答复"))
+
+    assert store.truncate_from(sid, second.uuid) == 2
+
+    _, entries = store.read(sid)
+    assert [e.uuid for e in entries] == [first.uuid, answer.uuid]
+    # 上下文里不再有被丢弃的往返
+    assert [m.text() for m in store.build_history(sid)] == ["第一轮", "第一轮答复"]
+    # 链尾回到截断点之前：新一轮的 parent 指向保留下来的最后一条
+    rewritten = store.append(sid, ChatMessage(role="user", content="第二轮（改写后）"))
+    assert rewritten.parent_uuid == answer.uuid
+    summary = store.summarize(sid)
+    assert summary.entry_count == 3
+    assert summary.last_prompt == "第二轮（改写后）"
+
+
+def test_truncate_from_rejects_non_user_anchor(tmp_path) -> None:
+    """只能从用户提问处切：从 assistant 中间切会留下没有回执的 tool_call。"""
+    store = AgentSessionStore(tmp_path)
+    sid = store.create().session_id
+    store.append(sid, ChatMessage(role="user", content="执行任务"))
+    assistant = store.append(sid, _assistant_with_tools())
+
+    with pytest.raises(BadRequestException):
+        store.truncate_from(sid, assistant.uuid)
+    with pytest.raises(NotFoundException):
+        store.truncate_from(sid, "不存在的uuid")
+    # 失败不改动文件
+    assert len(store.read(sid)[1]) == 2
+
+
+def test_truncate_from_first_turn_empties_session(tmp_path) -> None:
+    """从首轮切 = 清空会话：只剩头行，链尾回到 None。"""
+    store = AgentSessionStore(tmp_path)
+    sid = store.create().session_id
+    first = store.append(sid, ChatMessage(role="user", content="唯一一轮"))
+    store.append(sid, ChatMessage(role="assistant", content="答复"))
+
+    assert store.truncate_from(sid, first.uuid) == 2
+    header, entries = store.read(sid)
+    assert header.session_id == sid
+    assert entries == []
+    assert store.append(sid, ChatMessage(role="user", content="重新开始")).parent_uuid is None
 
 
 def _compaction_result() -> CompactionResult:
@@ -483,6 +536,117 @@ def test_rename_session_updates_index_title(client) -> None:
     assert client.patch(
         f"/api/v1/agent/sessions/{session_id}", json={"title": "   "}
     ).status_code == 422
+
+
+def _user_entry_uuids(client, session_id: str) -> list[str]:
+    """会话里各轮用户提问的 entry uuid（前端回放时拿到的就是它）。"""
+    detail = client.get(f"/api/v1/agent/sessions/{session_id}").json()["data"]
+    return [
+        e["uuid"]
+        for e in detail["entries"]
+        if e["type"] == "message" and e["message"]["role"] == "user"
+    ]
+
+
+def test_truncate_drops_turn_and_later_context(client, monkeypatch) -> None:
+    """改写重问：截断后被丢弃的往返既不在回放里，也不再进入下一轮的模型上下文。"""
+    captured: dict = {}
+
+    class _CaptureProtocol(_StreamProtocol):
+        async def chat_stream(self, request, model_id):
+            captured["texts"] = [m.text() for m in request.messages]
+            async for e in super().chat_stream(request, model_id):
+                yield e
+
+    monkeypatch.setitem(PROTOCOLS, "openai_chat", _CaptureProtocol)
+    client.put(
+        "/api/v1/llm/provider",
+        json={"provider_type": "bailian", "api_key": "sk-truncate", "default_model": "qwen3.7-max"},
+    )
+
+    session_id, _ = _run_turn(client, {"input": "第一轮"})
+    _wait_not_running(client, session_id)
+    _run_turn(client, {"input": "第二轮", "session_id": session_id})
+    _wait_not_running(client, session_id)
+
+    second_uuid = _user_entry_uuids(client, session_id)[1]
+    r = client.post(
+        f"/api/v1/agent/sessions/{session_id}/truncate", json={"entry_uuid": second_uuid}
+    )
+    assert r.status_code == 200
+    assert r.json()["data"] == {"removed_entries": 2, "entry_count": 2}
+
+    # 索引与回放都回到第一轮结束处
+    item = client.get(f"/api/v1/agent/sessions/{session_id}").json()["data"]["session"]
+    assert item["entry_count"] == 2
+    assert item["last_prompt"] == "第一轮"
+    assert item["title"] == "第一轮"  # 首轮仍在，标题不动
+    detail = client.get(f"/api/v1/agent/sessions/{session_id}").json()["data"]
+    assert [e["message"]["role"] for e in detail["entries"]] == ["user", "assistant"]
+
+    # 改写后重发：上下文接在第一轮之后，被丢弃的「第二轮」不再出现
+    _run_turn(client, {"input": "第二轮（改写后）", "session_id": session_id})
+    assert "第二轮" not in captured["texts"]
+    assert captured["texts"][-1] == "第二轮（改写后）"
+
+
+def test_truncate_first_turn_clears_stale_title(client) -> None:
+    """从首轮切会把会话清空，标题一并清掉——留着就是个对不上号的名字。"""
+    configure_provider(client)
+    session_id, _ = _run_turn(client, {"input": "写错了的第一句"})
+    _wait_not_running(client, session_id)
+
+    first_uuid = _user_entry_uuids(client, session_id)[0]
+    r = client.post(
+        f"/api/v1/agent/sessions/{session_id}/truncate", json={"entry_uuid": first_uuid}
+    )
+    assert r.json()["data"]["entry_count"] == 0
+
+    item = client.get(f"/api/v1/agent/sessions/{session_id}").json()["data"]["session"]
+    assert item["title"] is None
+    assert item["last_prompt"] is None
+    # 下一条消息重新给会话命名
+    _run_turn(client, {"input": "改好的第一句", "session_id": session_id})
+    _wait_not_running(client, session_id)
+    item = client.get(f"/api/v1/agent/sessions/{session_id}").json()["data"]["session"]
+    assert item["title"] == "改好的第一句"
+
+
+def test_truncate_rejects_unknown_target(client) -> None:
+    configure_provider(client)
+    session_id, _ = _run_turn(client, {"input": "只有一轮"})
+    _wait_not_running(client, session_id)
+
+    assert (
+        client.post("/api/v1/agent/sessions/missing/truncate", json={"entry_uuid": "x"}).status_code
+        == 404
+    )
+    assert (
+        client.post(
+            f"/api/v1/agent/sessions/{session_id}/truncate", json={"entry_uuid": "不存在"}
+        ).status_code
+        == 404
+    )
+    # assistant 回答不是合法的截断锚点
+    detail = client.get(f"/api/v1/agent/sessions/{session_id}").json()["data"]
+    assistant_uuid = detail["entries"][1]["uuid"]
+    assert (
+        client.post(
+            f"/api/v1/agent/sessions/{session_id}/truncate", json={"entry_uuid": assistant_uuid}
+        ).status_code
+        == 400
+    )
+
+
+def test_start_returns_entry_uuid_for_fresh_turn(client) -> None:
+    """新发起的一轮也要拿到锚点：它还没经过回放，前端只有这一个把手。"""
+    configure_provider(client)
+    started = client.post("/api/v1/agent/start", json={"input": "刚发的这一轮"})
+    data = started.json()["data"]
+    with client.stream("GET", f"/api/v1/agent/runs/{data['run_id']}/stream") as r:
+        r.read()
+    _wait_not_running(client, data["session_id"])
+    assert data["entry_uuid"] == _user_entry_uuids(client, data["session_id"])[0]
 
 
 def test_delete_session_removes_file_and_index(client) -> None:

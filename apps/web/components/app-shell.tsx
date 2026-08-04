@@ -280,10 +280,16 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       /* —— 移动端骨架：单栏 + 顶栏，侧栏收进覆盖式抽屉 ——
          高度用 100dvh 而非 100vh：移动浏览器的地址栏会收放，100vh 取的是
          「地址栏收起后」的大视口，底部输入区会被推到屏幕外；dvh 跟随实际
-         可视高度，是移动端唯一正确的满屏单位。 */
+         可视高度，是移动端唯一正确的满屏单位。
+         再减 --keyboard-inset：dvh 不认软键盘（iOS 弹键盘不改布局视口），
+         外壳得自己按键盘占高收缩，否则贴底的输入行落在键盘底下
+         （见 components/viewport-keyboard.tsx）。无键盘时该值为 0。 */
       /* data-topbar：主区要不要为全局顶栏空出那 52px，取决于这一行有没有被
          页面自己的 PageNav 认领（对应 globals.css 的 .app-shell[data-topbar] 规则）。 */
-      <div className="app-shell relative z-10 h-[100dvh] w-full" data-topbar={showMobileTopBar}>
+      <div
+        className="app-shell relative z-10 h-[calc(100dvh-var(--keyboard-inset))] w-full"
+        data-topbar={showMobileTopBar}
+      >
         {showMobileTopBar && (
           <MobileTopBar
             onMenu={openDrawer}
@@ -303,8 +309,10 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       /* 浮起圆角卡片布局（对齐参考站 liquid-glass-oss）：外层留 padding、两栏留间隙，
         背景大图在卡片四周与中缝透出，面板作为浮于图上的玻璃卡片。
         app-shell 类名是给命令面板的「主界面后推」纵深效果用的锚点（见 globals.css 的
-        body.cmdk-open .app-shell）：面板打开时整个外壳轻微缩放后退，浮层则漂在其上。 */
-      <div className="app-shell relative z-10 flex h-[100dvh] w-full gap-3.5 p-3.5">
+        body.cmdk-open .app-shell）：面板打开时整个外壳轻微缩放后退，浮层则漂在其上。
+        高度同样减 --keyboard-inset：iPad 竖屏走的就是这一支布局，弹起软键盘时
+        一样要把外壳收缩到键盘之上（桌面端该值恒为 0）。 */
+      <div className="app-shell relative z-10 flex h-[calc(100dvh-var(--keyboard-inset))] w-full gap-3.5 p-3.5">
         {/* —— 左栏：浮起的玻璃侧栏卡片 ——
           宽度随折叠态动画（仅工作台可折叠；设置模式的分区菜单始终全宽）。 */}
         <aside

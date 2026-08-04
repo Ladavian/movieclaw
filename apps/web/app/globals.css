@@ -136,6 +136,14 @@
 
      只在 iOS 的独立 App 形态下补偿，见下方媒体查询；其余场景恒为 0。 */
   --vp-overshoot: 0px;
+
+  /* —— 软键盘占高 ——
+     iOS 弹软键盘不改布局视口（100dvh 纹丝不动），满屏高的外壳因此有一大截
+     被压在键盘底下，贴底的输入行整个看不见。这个变量由
+     components/viewport-keyboard.tsx 按「布局视口 - 可视视口」实时写入，
+     外壳高度减掉它（见 app-shell.tsx），键盘弹出时整个界面收缩到键盘之上。
+     没有键盘时恒为 0，桌面端永不改动。 */
+  --keyboard-inset: 0px;
 }
 
 /* display-mode: standalone 限定「加到主屏后独立打开」（浏览器内访问不受影响）；
@@ -165,8 +173,8 @@ body {
    * 已知代价：文档因此多出一截可滚动区域，overflow: hidden 挡得住用户滚动、
    * 挡不住 iOS 自己滚——软键盘弹出时系统会滚动窗口去露出聚焦的输入框，
    * 收起后不还原，整页上移错位。这不能靠删掉本行来治（曾这么干过，黑条
-   * 随即复现），由 components/viewport-scroll-reset.tsx 在键盘收起后把窗口
-   * 滚回原点。两处是一对，改动任一侧前先看懂另一侧。
+   * 随即复现），由 components/viewport-keyboard.tsx 把窗口滚回原点。
+   * 两处是一对，改动任一侧前先看懂另一侧。
    */
   min-height: calc(100% + var(--vp-overshoot));
 }
