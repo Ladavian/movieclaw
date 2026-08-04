@@ -3,9 +3,10 @@
 import { memo, useEffect, useMemo, useRef, useState } from "react";
 
 import { Composer } from "@/components/composer";
+import { CopyButton, REVEAL_CLASS, useTapReveal } from "@/components/copy-button";
 import { HighlightedCode } from "@/components/highlighted-code";
 import { LlmSetupNotice, useLlmConfigured } from "@/components/llm-gate";
-import { CheckIcon, ChevronRightIcon, CopyIcon } from "@/components/icons";
+import { ChevronRightIcon } from "@/components/icons";
 import { Markdown } from "@/components/markdown";
 import type { CodeLang } from "@/lib/shiki";
 import {
@@ -191,11 +192,7 @@ const TurnView = memo(function TurnView({ turn }: { turn: AgentTurn }) {
   return (
     <div className="group/turn space-y-3">
       {/* 用户消息：右侧玻璃气泡 */}
-      <div className="flex justify-end">
-        <div className="max-w-[80%] whitespace-pre-wrap break-words rounded-2xl bg-[var(--glass-fill-active)] px-4 py-3 text-body leading-6 text-[var(--text)]">
-          {turn.input}
-        </div>
-      </div>
+      <UserBubble text={turn.input} />
 
       {/* Agent 回应：整栏正文，不挂头像、不套气泡（ChatGPT / Claude 同款版式） */}
       <div className="min-w-0 space-y-2.5">
@@ -228,6 +225,39 @@ const TurnView = memo(function TurnView({ turn }: { turn: AgentTurn }) {
     </div>
   );
 });
+
+/**
+ * 用户提问气泡 + 浮现的复制键。
+ *
+ * 单独拆成组件是为了把「点开/收起」的 state 关在这一条消息里——留在 TurnView
+ * 里的话，点一下气泡会连带重渲染同一轮那一大段 Markdown 正文。
+ *
+ * 复制键落在气泡左侧而不是下方：下方要么常占一行高度（气泡与回答之间凭空
+ * 多出一条空隙），要么浮现时把下文顶一下。左侧是右对齐气泡天然空出来的地方，
+ * 不占额外高度、也不会推动任何内容。
+ *
+ * flex-row-reverse：DOM 顺序保持「先正文、后操作」（读屏与 Tab 顺序更自然），
+ * 视觉上仍是气泡贴右、复制键在它左边。
+ */
+function UserBubble({ text }: { text: string }) {
+  const { revealProps, toggle } = useTapReveal();
+  return (
+    <div className="group/copy flex flex-row-reverse items-end justify-start" {...revealProps}>
+      {/* 触摸端点气泡浮现复制键（桌面端靠 hover，这一下点击是多余但无害的）。
+          onClick 挂在气泡而非整行上：右对齐留出的空白不该也是热区。 */}
+      <div
+        onClick={toggle}
+        className="max-w-[80%] whitespace-pre-wrap break-words rounded-2xl bg-[var(--glass-fill-active)] px-4 py-3 text-body leading-6 text-[var(--text)]"
+      >
+        {text}
+      </div>
+      <CopyButton
+        text={text}
+        className={`${REVEAL_CLASS} touch-target mb-1 mr-1 shrink-0 p-1 text-[var(--text-faint)] hover:text-[var(--text)]`}
+      />
+    </div>
+  );
+}
 
 /* —— 轮次页脚：进度与耗时 —— */
 
@@ -301,7 +331,13 @@ function TurnFooter({ turn }: { turn: AgentTurn }) {
           {duration}
         </span>
       )}
-      {answer && <CopyAnswerButton text={answer} />}
+      {answer && (
+        <CopyButton
+          text={answer}
+          label="复制"
+          className="px-1 py-0.5 opacity-0 transition-opacity hover:text-[var(--text-muted)] focus-visible:opacity-100 group-hover/turn:opacity-100 max-md:opacity-100"
+        />
+      )}
     </div>
   );
 }
@@ -324,30 +360,6 @@ function ProgressRing() {
         strokeLinecap="round"
       />
     </svg>
-  );
-}
-
-/** 复制回答：悬停浮现（触屏没有 hover，移动端常驻）。 */
-function CopyAnswerButton({ text }: { text: string }) {
-  const [copied, setCopied] = useState(false);
-  useEffect(() => {
-    if (!copied) return;
-    const timer = window.setTimeout(() => setCopied(false), 1600);
-    return () => window.clearTimeout(timer);
-  }, [copied]);
-
-  return (
-    <button
-      type="button"
-      aria-label="复制回答"
-      onClick={() => {
-        void navigator.clipboard?.writeText(text).then(() => setCopied(true));
-      }}
-      className="flex items-center gap-1 rounded-md px-1 py-0.5 opacity-0 transition-opacity hover:text-[var(--text-muted)] focus-visible:opacity-100 group-hover/turn:opacity-100 max-md:opacity-100"
-    >
-      {copied ? <CheckIcon className="size-3.5" /> : <CopyIcon className="size-3.5" />}
-      {copied ? "已复制" : "复制"}
-    </button>
   );
 }
 

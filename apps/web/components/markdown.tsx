@@ -1,8 +1,10 @@
 "use client";
 
-import { memo } from "react";
+import { type ReactNode, isValidElement, memo } from "react";
 import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
+
+import { CopyButton, REVEAL_CLASS, useTapReveal } from "@/components/copy-button";
 
 /**
  * AI 回复正文的 Markdown 渲染器。
@@ -26,7 +28,38 @@ const components: Components = {
       {children}
     </a>
   ),
+  pre: ({ children }) => <CodeBlock>{children}</CodeBlock>,
 };
+
+/** 递归取出一棵 React 子树里的纯文本——代码块要复制的是原始代码，
+ *  而 react-markdown 交到手里的已经是 <code> 元素树。 */
+function plainText(node: ReactNode): string {
+  if (typeof node === "string") return node;
+  if (typeof node === "number") return String(node);
+  if (Array.isArray(node)) return node.map(plainText).join("");
+  if (isValidElement<{ children?: ReactNode }>(node)) return plainText(node.props.children);
+  return "";
+}
+
+/**
+ * 代码块：右上角浮出复制按钮。
+ *
+ * 代码块里多半是命令或配置，手指划选是移动端最难用的操作之一，一个复制键
+ * 省掉整段折腾。按钮定位在包裹层而不是 <pre> 内部——<pre> 自己是横向滚动
+ * 容器（见 globals.css 的 .markdown pre），放里面会跟着代码一起滚走。
+ */
+function CodeBlock({ children }: { children?: ReactNode }) {
+  const { revealProps, toggle } = useTapReveal();
+  return (
+    <div className="group/copy relative" onClick={toggle} {...revealProps}>
+      <pre>{children}</pre>
+      <CopyButton
+        text={plainText(children)}
+        className={`${REVEAL_CLASS} absolute right-1.5 top-1.5 border border-white/[0.08] bg-[rgba(28,28,32,0.9)] p-1.5 text-[var(--text-faint)] backdrop-blur-sm hover:text-[var(--text)]`}
+      />
+    </div>
+  );
+}
 
 export const Markdown = memo(function Markdown({
   text,
