@@ -90,6 +90,7 @@ import shutil
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import NamedTuple
 
 from sqlalchemy import update
 from sqlmodel import select
@@ -1088,17 +1089,39 @@ def _is_entry_of(entry_path: str, source_path: str) -> bool:
     return str(Path(entry_path).parent) == source_path.rstrip("/")
 
 
-async def entry_stats(session, rules: list[ImportWatch]) -> dict[int, dict[str, int]]:
-    """各规则的台账状态计数（规则卡片摘要行的数据源）。"""
-    rows = (await session.execute(select(IngestEntry.entry_path, IngestEntry.status))).all()
-    stats: dict[int, dict[str, int]] = {}
+class LedgerStats(NamedTuple):
+    """一条规则的台账汇总（规则卡片摘要行的数据源）。"""
+
+    counts: dict[str, int]
+    """状态 → 条目数（imported/pending/failed/skipped/ignored）。"""
+    imported_files: int
+    """已入库条目累计入库的文件数。"""
+
+
+async def entry_stats(session, rules: list[ImportWatch]) -> dict[int, LedgerStats]:
+    """各规则的台账汇总：状态 → 条目数，外加已入库的文件总数。
+
+    条目 = 源目录顶层项（一次下载任务的产物），剧集的一个条目往往是整个
+    季包。只报条目数时「已入库 5」会被读成"入库了 5 集/5 部"，配上文件数
+    才说得清实际入库规模（电影通常一条目一文件，两数相同时前端不重复展示）。
+    """
+    rows = (
+        await session.execute(
+            select(IngestEntry.entry_path, IngestEntry.status, IngestEntry.imported_count)
+        )
+    ).all()
+    stats: dict[int, LedgerStats] = {}
     for rule in rules:
         assert rule.id is not None
         counts = {s.value: 0 for s in IngestStatus}
-        for path, status in rows:
-            if _is_entry_of(path, rule.source_path) and status in counts:
-                counts[status] += 1
-        stats[rule.id] = counts
+        imported_files = 0
+        for path, status, imported_count in rows:
+            if not _is_entry_of(path, rule.source_path) or status not in counts:
+                continue
+            counts[status] += 1
+            if status == IngestStatus.IMPORTED:
+                imported_files += imported_count or 0
+        stats[rule.id] = LedgerStats(counts=counts, imported_files=imported_files)
     return stats
 
 

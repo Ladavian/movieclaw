@@ -668,3 +668,42 @@ async def test_rule_validation(db, tmp_path):
         await service.create(source_path=str(watch), strategy="copy", library_id=library_id)
         with pytest.raises(BadRequestException):
             await service.create(source_path=str(watch), strategy="hardlink", library_id=library_id)
+
+
+@pytest.mark.asyncio
+async def test_entry_stats_counts_entries_and_imported_files(db, tmp_path):
+    """摘要行两口径：状态 → 条目数，外加已入库文件总数（剧集季包一条目多集）。
+
+    只认源目录顶层直系条目：嵌套子路径与其他源目录的行不串数；
+    文件数只累计已入库条目（pending 行的 imported_count 不算）。
+    """
+    watch, other = tmp_path / "watch", tmp_path / "other"
+    async with db.session() as session:
+        rule = ImportWatch(source_path=str(watch), strategy="hardlink", kind="tv")
+        other_rule = ImportWatch(source_path=str(other), strategy="hardlink", kind="movie")
+        session.add(rule)
+        session.add(other_rule)
+        for path, status, files in (
+            (watch / "剧A.S01", "imported", 8),
+            (watch / "剧A.S02", "imported", 2),
+            (watch / "认不出的目录", "pending", 0),
+            (watch / "剧A.S01" / "nested", "imported", 99),  # 嵌套路径不属于本规则
+            (other / "电影B", "imported", 1),
+        ):
+            session.add(
+                IngestEntry(
+                    entry_path=str(path), fingerprint="fp", status=status, imported_count=files
+                )
+            )
+        await session.commit()
+        await session.refresh(rule)
+        await session.refresh(other_rule)
+
+        stats = await ingest_mod.entry_stats(session, [rule, other_rule])
+
+    ledger = stats[rule.id]
+    assert ledger.counts["imported"] == 2
+    assert ledger.counts["pending"] == 1
+    assert ledger.imported_files == 10  # 8 + 2：嵌套行与 pending 行都不计
+    assert stats[other_rule.id].counts["imported"] == 1
+    assert stats[other_rule.id].imported_files == 1

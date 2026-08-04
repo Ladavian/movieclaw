@@ -224,7 +224,13 @@ def _overlay_state(vdir: Path) -> tuple[str, bool, str]:
         return "", False, "更新清单损坏"
     runtime = _runtime_version()
     if runtime is not None and requires != runtime:
-        return version, False, f"需要 runtime {requires}（当前镜像为 {runtime}），需升级镜像"
+        if requires > runtime:
+            reason = f"需要 runtime {requires}（当前镜像为 {runtime}），需升级镜像"
+        else:
+            # requires < runtime 只可能是升级镜像前装的残留（安装时二者必相等，
+            # 见 start_update 的前置校验），启动清场 prune_stale_overlays 会删掉它
+            reason = f"为旧镜像构建（runtime {requires}，当前镜像为 {runtime}），已停用"
+        return version, False, reason
     if _is_marked_bad(version):
         return version, False, "曾连续启动失败，已被自动回落保护"
     return version, True, ""
@@ -1654,3 +1660,72 @@ async def record_baseline_version() -> None:
         return
     state.baseline_version = __version__
     await save_app_update_state(state)
+
+
+# ---------------------------------------------------------------------------
+# 启动清场：镜像升级后残留的陈旧 overlay
+# ---------------------------------------------------------------------------
+
+
+def _prune_stale_overlays(updates: Path, runtime: int) -> list[str]:
+    """删除 requires_runtime 低于 ``runtime`` 的 overlay，返回清掉的版本号。
+
+    安装时 requires_runtime 必等于当时镜像的 runtime（见 start_update 的
+    前置校验），所以「低于」只可能是升级镜像前装的残留：entrypoint 已回落
+    基线且永远不会再采用它们，留着只会让状态页长期显示「已安装但未在运行」。
+    指针、版本目录、bad/failures 标记一并清理；数据库备份**不动**——它们
+    仍是跨镜像升级的最后恢复点，交由保留数清理按既有策略收敛。requires
+    高于 runtime 的版本保留：那是镜像被降级的场景，升回新镜像即可生效，
+    状态页的「需升级镜像」提示对它是准确的。
+    """
+    versions_dir = updates / "versions"
+    stale: dict[str, str] = {}  # 目录名 → 清单里的版本号
+    if versions_dir.is_dir():
+        for vdir in sorted(versions_dir.iterdir()):
+            manifest_path = vdir / _MANIFEST_NAME
+            if not vdir.is_dir() or not manifest_path.is_file():
+                continue
+            try:
+                manifest = json.loads(manifest_path.read_bytes())
+                version = str(manifest["version"])
+                requires = int(manifest["requires_runtime"])
+            except Exception:
+                continue  # 清单损坏是另一类问题（保留数清理会收敛），不在此误删
+            if requires < runtime:
+                stale[vdir.name] = version
+    if not stale:
+        return []
+    # 先摘指针再删目录：中途失败也不会留下指向半删除目录的链接
+    for link in (updates / "current", updates / "previous"):
+        if link.is_symlink() and Path(os.readlink(link)).name in stale:
+            link.unlink(missing_ok=True)
+    for name in stale:
+        shutil.rmtree(versions_dir / name, ignore_errors=True)
+    # bad/failures 标记跟着目录走（与 _prune_versions 同一口径）
+    state_dir = updates / "state"
+    if state_dir.is_dir():
+        for marker in list(state_dir.glob("bad-*")) + list(state_dir.glob("failures-*")):
+            if f"v{marker.name.split('-', 1)[1]}" in stale:
+                marker.unlink(missing_ok=True)
+    return sorted(stale.values())
+
+
+async def prune_stale_overlays() -> None:
+    """清理镜像升级后已无法生效的残留 overlay（lifespan 启动时调用，幂等）。
+
+    非 Docker 部署没有 overlay 机制，直接跳过；清理失败只记日志，绝不阻断启动。
+    """
+    runtime = _runtime_version()
+    if runtime is None:
+        return
+    try:
+        removed = await asyncio.to_thread(_prune_stale_overlays, _updates_dir(), runtime)
+    except Exception:
+        logger.warning("清理陈旧更新版本失败（不影响启动）", exc_info=True)
+        return
+    if removed:
+        logger.info(
+            "已清理镜像升级前残留的更新版本 %s（当前镜像 runtime=%d，它们已无法生效）",
+            "、".join(f"v{v}" for v in removed),
+            runtime,
+        )

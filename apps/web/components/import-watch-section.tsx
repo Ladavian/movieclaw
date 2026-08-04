@@ -272,6 +272,12 @@ function RuleCard({
             >
               <span className={t.tone}>
                 {t.label} {stats[t.status]}
+                {/* 剧集一条目是一个季包，「已入库 5」会被读成 5 集/5 部；
+                    文件数与条目数不同时补上，说清实际入库规模 */}
+                {t.status === "imported" &&
+                  rule.imported_files > 0 &&
+                  rule.imported_files !== stats.imported &&
+                  `（${rule.imported_files} 个文件）`}
               </span>
             </button>
           ))}
