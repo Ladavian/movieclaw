@@ -50,6 +50,16 @@ _KINDS = ("movie", "tv")
 _KIND_LABELS = {"movie": "电影", "tv": "剧集"}
 
 
+def _routable_cause(lib: Library) -> str:
+    """库进入自动路由候选的成因（同盘检测报错文案用）：默认库 / 声明了收藏范围。"""
+    causes = []
+    if lib.is_default:
+        causes.append(f"{_KIND_LABELS.get(lib.kind, lib.kind)}默认库")
+    if lib.match_rules:
+        causes.append("声明了收藏范围")
+    return "、".join(causes)
+
+
 def rule_target_label(rule: ImportWatch, library_name: str | None) -> str:
     """规则目标的展示名：库名 /「自动路由（电影/剧集）」/「自定义目录 …」
     （日志与接口共用）。"""
@@ -239,11 +249,12 @@ class ImportWatchConfigService:
                 .scalars()
                 .all()
             )
-            # auto 目录的可能目标不止"声明库+默认库"：订阅认领的内容沿用
-            # 订阅**定格**的库，而定格可以是用户手选的任意同类型库——
-            # 硬链同盘检测必须覆盖全部有根路径的同类型库，漏一个都会在
-            # 未来某次搬运时才暴露跨盘失败
-            hardlink_targets = [lib for lib in candidates if lib.primary_root]
+            # 硬链同盘检测只覆盖**路由可达**的库（声明收藏范围的库 + 默认库，
+            # 与 route() 及设计文档 2.3 同一口径）：无声明且非默认的库（典型如
+            # 跨盘的 strm 归档库）路由永远不会选中，不该有资格否决规则创建
+            # （issue #79）。已知漏网：订阅可手选任意同类型库定格、事后跨盘——
+            # 该场景由订阅链路体检（transfer_disk 按定格库检测）与搬运时的
+            # EXDEV 中文报错兜底，勿再扩回全量检测重新引入误伤
             routable = [
                 lib
                 for lib in candidates
@@ -254,6 +265,7 @@ class ImportWatchConfigService:
                     f"当前没有任何可路由的{_KIND_LABELS[kind]}库（需要有根路径的默认库"
                     "或声明了收藏范围的库），请先到「媒体库」创建"
                 )
+            hardlink_targets = routable
 
         def _overlaps(a: str, b: str) -> bool:
             return a == b or a.startswith(b + "/") or b.startswith(a + "/")
@@ -296,7 +308,7 @@ class ImportWatchConfigService:
         # 逐库检测——路由到哪个库都可能，任何一个不同盘将来都会搬运失败；
         # 自定义目录规则对 target 检测
         if strategy == "hardlink":
-            offenders: list[str] = []
+            offenders: list[Library] = []
             try:
                 source_dev = os.stat(source).st_dev
             except OSError:
@@ -308,7 +320,7 @@ class ImportWatchConfigService:
                     except OSError:
                         continue
                     if root_dev != source_dev:
-                        offenders.append(lib.name)
+                        offenders.append(lib)
                 if target is not None:
                     try:
                         if os.stat(target).st_dev != source_dev:
@@ -318,11 +330,21 @@ class ImportWatchConfigService:
                             )
                     except OSError:
                         pass  # 目录未就绪：同上跳过
-            if offenders:
-                names = "」「".join(offenders)
+            if offenders and library_id is not None:
+                names = "」「".join(lib.name for lib in offenders)
                 raise BadRequestException(
                     f"源目录与媒体库「{names}」的主根不在同一文件系统，"
                     "硬链接无法工作；请把策略改为「复制」，或把它们放到同一存储卷"
+                )
+            if offenders:
+                # auto 规则：报错讲明每个库**为什么在候选里**——用户仍会撞上的
+                # 场景是"跨盘归档库恰好是默认库/声明了收藏范围"，只有讲清成因
+                # 他才知道出路是调整该库的设置，而不只是换复制策略
+                labeled = "".join(f"「{lib.name}」（{_routable_cause(lib)}）" for lib in offenders)
+                raise BadRequestException(
+                    f"源目录与媒体库{labeled}的主根不在同一文件系统——"
+                    "自动路由可能选中这些库，硬链接会失败；请把策略改为「复制」、"
+                    "调整存储布局，或调整这些库的收藏范围/默认库设置"
                 )
         return source, kind, target
 
