@@ -816,6 +816,18 @@ class ChapterView(BaseModel):
     )
 
 
+class FileOriginView(BaseModel):
+    """文件来源快照（docs/design/library-duplicate-files.md §2）：这个文件是怎么进库的。"""
+
+    kind: str = Field(description="subscription / manual_download / watch_import / scan")
+    label: str = Field(
+        description="一句话：订阅《九门》自动投递 / 手动下载 / 监听目录自动识别入库 / 存量扫描发现"
+    )
+    detail: str | None = Field(
+        default=None, description="第二行：站点 · 种子标题 · 下载器 · 搬运方式"
+    )
+
+
 class LibraryFileView(BaseModel):
     """条目详情页的一个物理文件（一个版本 / 一集）。"""
 
@@ -853,6 +865,10 @@ class LibraryFileView(BaseModel):
     trash_note: str | None = Field(
         default=None,
         description="待回收原因（中文整句，含触发方），文件区直接展示",
+    )
+    origin: FileOriginView = Field(description="来源快照：这个文件是怎么进库的")
+    kept_at: datetime | None = Field(
+        default=None, description="用户在重复文件页点过「都留着」的时间；null=未标记"
     )
     audio_streams: list[AudioStreamView] | None = Field(
         default=None, description="音轨列表；null=尚未探测（ffprobe 缺失或文件不可达）"
@@ -1817,3 +1833,120 @@ class TrashedBatchResultView(BaseModel):
     done: int = Field(description="成功处理的文件数")
     failed: list[TrashedBatchFailureView] = Field(default_factory=list)
     remaining: int = Field(default=0, description="按筛选清理时超出单次上限、尚未处理的文件数")
+
+
+# ---------------------------------------------------------------------------
+# 重复文件（docs/design/library-duplicate-files.md §3–§4）：两堆，两种决定
+# ---------------------------------------------------------------------------
+
+
+class DuplicateFileView(BaseModel):
+    """一个多文件单元里的一个文件。"""
+
+    id: int
+    file_name: str
+    file_path: str = Field(description="绝对路径（悬停显示；成员视图不返回本接口）")
+    quality_label: str = Field(description="版本签名的质量部分：「分辨率 片源[ HDR]」")
+    size_bytes: int
+    bit_rate: int | None
+    resolution: str | None
+    media_source: str | None
+    hdr: str | None
+    video_codec: str | None
+    audio_label: str | None = Field(default=None, description="首条音轨「编码 声道」")
+    origin: FileOriginView
+    version_key: str = Field(description="版本签名：质量标签|来源 label（整季留这个版本时传回）")
+    suggested: bool = Field(description="系统建议保留的那个（只是建议）")
+    suggest_reason: str | None = Field(
+        default=None, description="建议依据：档位最高 / 档位无法比较，按实测码率建议 / 同档，…"
+    )
+    kept_at: datetime | None = Field(default=None, description="用户「都留着」过；null=未标记")
+
+
+class DuplicateUnitView(BaseModel):
+    """一个单元（电影 = 条目；剧集 = 某季某集）。"""
+
+    season_number: int
+    episode_number: int
+    bucket: Literal["identical", "versions"]
+    files: list[DuplicateFileView]
+
+
+class DuplicateVersionView(BaseModel):
+    """同构季的一个版本行：这版本覆盖哪些集、多大、从哪来。"""
+
+    key: str
+    quality_label: str
+    origin_label: str
+    episodes: list[int]
+    bytes: int
+    suggested: bool
+
+
+class DuplicateSeasonView(BaseModel):
+    """一个条目的一季在某一堆里的块（一季两种都有时两堆各一块）。电影恰好一季一集。"""
+
+    season_number: int
+    bucket: Literal["identical", "versions"]
+    uniform: bool = Field(description="同构：各集版本签名一致，可整季按版本决定")
+    versions: list[DuplicateVersionView] = Field(default_factory=list)
+    units: list[DuplicateUnitView]
+
+
+class DuplicateItemView(BaseModel):
+    library: TrashedLibraryRefView
+    media_item: TrashedItemRefView
+    seasons: list[DuplicateSeasonView]
+
+
+class DuplicateBucketStats(BaseModel):
+    units: int
+    files: int = Field(description="会被清掉的文件数（非建议保留、非都留着）")
+    bytes: int
+
+
+class DuplicateFilesData(BaseModel):
+    """重复文件列表：两堆摘要 + 本页条目（按条目分页）。"""
+
+    identical: DuplicateBucketStats
+    versions: DuplicateBucketStats
+    upgrading_units: int = Field(description="洗版验证在途、暂不显示的单元数")
+    keep_old_items: int = Field(description="规则组「保留共存」、不显示的条目数")
+    total_items: int
+    items: list[DuplicateItemView]
+
+
+class DuplicateResolvePayload(BaseModel):
+    """一个单元 / 一季的决定：三选一，正好给一个。
+
+    三个字段而不是一个联合类型的 ``keep``：联合类型在 OpenAPI 生成的 CLI 里会被
+    压成单一标量（实测生成出 ``--keep int``），三种决定里只剩一种表达得出来。
+    拆开之后 JSON 与命令行都自解释：``--keep-file-id`` / ``--keep-version`` /
+    ``--keep-all``。
+    """
+
+    media_item_id: int = Field(description="条目 id")
+    season_number: int = Field(default=0, description="季号；电影为 0（哨兵）")
+    episode_number: int | None = Field(
+        default=None, description="集号；省略 = 整季（电影传 0 或省略）"
+    )
+    keep_file_id: int | None = Field(
+        default=None, description="留这个：保留该文件，单元内其余移入回收站"
+    )
+    keep_version: str | None = Field(
+        default=None,
+        description=(
+            "整季留这个版本：版本签名（列表接口的 version_key，形如"
+            "「1080p Blu-ray|监听目录自动识别入库」）；没有该版本的集保留建议保留者"
+        ),
+    )
+    keep_all: bool = Field(
+        default=False, description="都留着：这些版本都要，单元不再列为重复（不动文件）"
+    )
+
+
+class DuplicateResolveAllPayload(BaseModel):
+    bucket: Literal["identical", "versions"] = Field(
+        description="要清理的那一堆：identical 一模一样 / versions 不同版本（按建议保留）"
+    )
+    library_id: int | None = Field(default=None, description="只清某个库；省略 = 全部库")
