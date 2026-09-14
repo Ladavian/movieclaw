@@ -1309,9 +1309,27 @@ tryAutoplay → attemptAutoplay`。seek 落在片长处元素当场 `ended`（�
 之后仍等那条挂着的请求回来才落地——它不放弃在途的加载器，那是浏览器的事，装置
 里只断言「提交在跟随后 5~7 秒内发出」。
 
-### 19.8 没做到的
+### 19.8 第十四轮：伪横屏里进度条根本拖不动（2026-09-14）
+
+矩阵加了「伪横屏下拖动」这一档，并且改用**真触摸**（`scripts/perf/e2e_player_feel.py`
+里伪横屏那段一直用的是 `page.mouse`，鼠标没有平移手势，这条永远验不到）。
+结果：按下 50ms 后 `pointercancel`，一次 seek 都没发，圆点一动不动。
+
+根因是级联层：组件上写的 `touch-none` 落在 Tailwind 的 `@layer utilities` 里，而
+`globals.css` 里 `input { touch-action: manipulation }` 是不分层的规则——**不分层的
+永远压过分层的，与特异性无关**。算出来的 `touch-action` 是 `manipulation`，允许
+平移。竖屏里沿条拖是横向、页面横向没得滚，才碰巧没事；伪横屏容器转了 90°，沿条
+就是物理竖直方向，浏览器把它当翻页手势收走。iPhone 横屏看片正是这条路。
+
+修：那条全局规则搬进 `@layer base`——`globals.css` 里 `button { cursor: pointer }`
+早就为同一个原因这么写了（那段注释说得很清楚）。修后计算值 `none`，伪横屏
+沿条拖动、按住再拖都正常发 seek；全矩阵 28/28。没有给 `.player-scrub` 单开
+一条特例：按标签选的基础规则本来就该在 base 层，特例只会把下一个 `touch-none`
+再坑一次（站内还有四处拖动把手在用它）。
+
+### 19.9 没做到的
 
 iOS 那半边（AVPlayer 取消 seek → WebKit 提前发 `timeupdate`）仍是推断。矩阵跑在
 Chromium 的直出档上，转码会话（hls.js）与会话相对制那条路装置里没有——它要
 真 ffmpeg。修后真机再看：慢拖停住再松、快甩立刻松、拖到一半停几次再松、拖到
-片尾、按住不动几秒再松。
+片尾、按住不动几秒再松、**横屏里拖**。
