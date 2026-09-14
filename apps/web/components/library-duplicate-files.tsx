@@ -30,9 +30,12 @@ import {
 import { formatBytes } from "@/lib/format";
 import { imageUrl } from "@/lib/image-proxy";
 import {
+  type SharedFacts,
   TIER_ACTION_LABELS,
+  commonNamePrefix,
   episodeLabel,
   fileNote,
+  compactSummary,
   groupSummary,
   hiddenNote,
   isScanning,
@@ -42,6 +45,9 @@ import {
   resolveResultText,
   scanNote,
   seasonHeadline,
+  sharedFacts,
+  sharedLine,
+  sharedVersionOrigin,
   suggestedOf,
   tierFacts,
   versionCoverage,
@@ -53,9 +59,43 @@ const PAGE_SIZE = 20;
 /** 后端一次批量最多处理的文件数（与 api/routes/library_duplicates.BATCH_LIMIT 同） */
 const BATCH_LIMIT = 500;
 
-/** 文件行 / 版本行的四列：名字或规格 / 规格或覆盖 / 来源 / 动作。手机上叠成一列。 */
+/**
+ * 文件行 / 版本行的四格：名字或规格 / 规格或覆盖 / 来源 / 动作。
+ *
+ * 宽屏是四列一张表，重复的规格上下对齐反而好扫。窄屏叠成一列就成了灾难——四行
+ * 文字里往往只有一个词不同（见 §9.6）。窄屏改成两行：
+ *
+ *     三体 S01E16 - 2160p H.265 AAC ADWeb.mp4          ← 名字独占整行，完整不截断
+ *     建议保留 · 同档，最近入库              [留这个]   ← 说明与动作同一行
+ *
+ * **名字必须独占整行**：动作区的宽度是变的（有没有标签差一截），挤在同一行会让
+ * 同一个单元里两行文件名截断在不同位置——而这一页的全部意义就是横向比对两个名字，
+ * 对不齐直接毁掉了这件事。整行给名字之后它多数时候根本不用截断，比对最省力。
+ */
+/**
+ * 宽屏最后一列**写死宽度**而不是 `auto`：动作区的内容是变的（带不带「建议保留」
+ * 胶囊差一截），`auto` 会让有胶囊的那一行把前三列挤窄——同一个单元里两行的规格
+ * 与文件名于是截断在不同位置，横向比对当场作废。写死之后每一列都上下对齐成真正
+ * 的一张表。11rem 按最宽的一组（胶囊 + 「整季留这个」）留的。
+ */
 const ROW_GRID =
-  "grid items-center gap-x-4 gap-y-1 max-md:grid-cols-1 md:grid-cols-[minmax(0,1.5fr)_minmax(0,1.1fr)_minmax(0,1fr)_auto]";
+  "grid gap-x-4 gap-y-1 max-md:grid-cols-[minmax(0,1fr)_auto] max-md:items-end md:grid-cols-[minmax(0,1.5fr)_minmax(0,1.1fr)_minmax(0,1fr)_11rem] md:items-center";
+/** 文件行：名字整行；规格整行（共有时隐藏）；来源 / 说明与动作并排收尾 */
+const CELL_FILENAME = "max-md:order-1 max-md:col-span-2";
+const CELL_SPEC = "max-md:order-2 max-md:col-span-2";
+// 两格都**钉死列号**：来源格在共有时会被整格隐藏，光靠 grid 自动流，动作格就会
+// 掉进第一列——同一个单元里两行的「留这个」于是差了一截，而这一版做的所有事就是
+// 为了让它们对齐
+const CELL_ORIGIN = "max-md:order-3 max-md:col-start-1";
+const CELL_ACTION = "max-md:order-4 max-md:col-start-2 max-md:justify-self-end";
+/**
+ * 版本行：规格短（`1080p · Blu-ray`），与动作并排占第一行就够，覆盖与来源排在
+ * 下面——所以它的次序与文件行不同（文件行的名字要独占整行，动作只能排到第二行）。
+ */
+const CELL_VERSION = "max-md:order-1";
+const CELL_VERSION_ACTION = "max-md:order-2 max-md:col-start-2 max-md:justify-self-end";
+const CELL_VERSION_COVER = "max-md:order-3 max-md:col-span-2";
+const CELL_VERSION_ORIGIN = "max-md:order-4 max-md:col-span-2";
 
 /** 三档的配色：只有「可以放心清理」用主色实心按钮，另两档都在动"有区别"的文件 */
 const TIER_TONE: Record<DuplicateTier, string> = {
@@ -124,6 +164,15 @@ export function LibraryDuplicateFiles({
 
   // 明细层：选了某一档，或者从条目详情页带 ?item= 进来（只看那一个条目）
   const detail = focus.tier !== null || filter.itemId !== null;
+
+  // 分档胶囊行在窄屏要横滚，选中的那枚可能落在屏外——进来第一眼看不到自己在哪
+  // 一档，胶囊行就白做了。切换时把选中项滚进视野（block:nearest 保证不牵动整页）
+  const chipRowRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    chipRowRef.current
+      ?.querySelector('[aria-pressed="true"]')
+      ?.scrollIntoView({ block: "nearest", inline: "center" });
+  }, [focus]);
 
   const reloadSeq = useRef(0);
   const reload = useCallback(() => {
@@ -458,47 +507,82 @@ export function LibraryDuplicateFiles({
       ) : (
         <section className="mx-6 mt-5 max-md:mx-4" aria-label={focusGroup?.label ?? "重复文件"}>
           <div className="mb-2.5 flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1.5 px-0.5">
-            <div className="flex min-w-0 items-baseline gap-2.5">
-              {focus.tier !== null && (
-                <button
-                  type="button"
-                  onClick={() => setFocus(NO_FOCUS)}
-                  className="shrink-0 rounded-full px-2 py-0.5 text-caption text-[var(--text-muted)] transition hover:bg-white/[0.06] hover:text-[var(--text)]"
-                >
-                  ‹ 返回摘要
-                </button>
-              )}
-              <h2 className="truncate text-ui font-semibold text-[var(--text)]">
-                {focusGroup?.label ?? (itemTitle ? `《${itemTitle}》的重复文件` : "重复文件")}
+            {/*
+              分档导航：第一枚是回摘要，其余三枚直接换档。第一版这里只有一个
+              「‹ 返回摘要」，它和标题抢同一行，而且是个**单向出口**——在这一档做完
+              想去下一档，得先回摘要再点一次。做完一档接着做下一档才是这里最常见的
+              下一步，所以让它一次点到位；选中的那枚胶囊同时就是标题。
+            */}
+            {focus.tier !== null ? (
+              <div ref={chipRowRef} className="flex w-full items-center gap-1.5 overflow-x-auto pb-0.5">
+                <Chip active={false} onClick={() => setFocus(NO_FOCUS)}>
+                  ‹ 摘要
+                </Chip>
+                <span aria-hidden className="h-4 w-px shrink-0 bg-white/[0.12]" />
+                {data.tiers.map((t) => (
+                  <Chip
+                    key={t.key}
+                    active={focus.tier === t.key && focus.reviewKind === null}
+                    onClick={() => setFocus({ tier: t.key as DuplicateTier, reviewKind: null })}
+                  >
+                    {t.label}
+                    {t.units > 0 && <span className="tabular-nums opacity-70">{t.units}</span>}
+                  </Chip>
+                ))}
+                {focus.reviewKind !== null && focusGroup && (
+                  <Chip active onClick={() => setFocus({ tier: "review", reviewKind: null })}>
+                    {focusGroup.label} <XIcon className="size-3" />
+                  </Chip>
+                )}
+              </div>
+            ) : (
+              <h2 className="text-ui font-semibold text-[var(--text)] md:truncate">
+                {itemTitle ? `《${itemTitle}》的重复文件` : "重复文件"}
               </h2>
-              {focusGroup && (
-                <span className="text-caption font-normal text-[var(--text-faint)] tabular-nums">
-                  {groupSummary(focusGroup)}
-                </span>
-              )}
-            </div>
+            )}
+            {focusGroup && (
+              <span className="text-caption font-normal text-[var(--text-faint)] tabular-nums max-md:w-full">
+                {groupSummary(focusGroup)}
+              </span>
+            )}
             {focus.tier !== null && focusGroup !== null && focusGroup.files > 0 && (
-              <div className="flex items-center gap-1.5">
+              <div className="flex items-center gap-1.5 max-md:w-full">
                 {focus.tier === "review" && (
-                  <ActionButton disabled={busy} onClick={() => keepGroup(focus.tier!, focus.reviewKind, focusGroup)}>
+                  <ActionButton
+                    disabled={busy}
+                    variant="ghost"
+                    onClick={() => keepGroup(focus.tier!, focus.reviewKind, focusGroup)}
+                  >
                     整组都留着
                   </ActionButton>
                 )}
-                <button
-                  type="button"
-                  disabled={busy}
-                  onClick={() => cleanGroup(focus.tier!, focus.reviewKind, focusGroup)}
-                  className={`flex h-8 items-center rounded-full border px-3 text-caption font-medium transition disabled:opacity-40 ${
-                    focus.tier === "safe"
-                      ? "border-[var(--accent)] bg-[var(--accent)] text-[#0a0b10] hover:opacity-90"
-                      : "border-white/[0.15] text-[var(--text)] hover:bg-white/[0.08]"
-                  }`}
-                >
-                  {TIER_ACTION_LABELS[focus.tier]} · {focusGroup.files}
-                </button>
+                {/* 「规格不全」不给成批清理，理由见摘要卡上同一处注释 */}
+                {focus.reviewKind !== "unknown" && (
+                  <ActionButton
+                    disabled={busy}
+                    variant={focus.tier === "safe" ? "primary" : "danger"}
+                    className="max-md:flex-1"
+                    onClick={() => cleanGroup(focus.tier!, focus.reviewKind, focusGroup)}
+                  >
+                    {TIER_ACTION_LABELS[focus.tier]} · {focusGroup.files}
+                  </ActionButton>
+                )}
               </div>
             )}
-            {focusGroup?.hint && <p className="basis-full text-caption text-[var(--text-faint)]">{focusGroup.hint}</p>}
+            {/*
+              说明只在"你正要动手"的地方出现一次：三档的那句在摘要卡上讲过，窄屏
+              这里不再重复；取舍分组的那句摘要卡上没讲（四段叠起来是一面墙），
+              所以点进某一组时要显示出来。
+            */}
+            {focusGroup?.hint && (
+              <p
+                className={`basis-full text-caption text-[var(--text-faint)] ${
+                  focus.reviewKind === null ? "max-md:hidden" : ""
+                }`}
+              >
+                {focusGroup.hint}
+              </p>
+            )}
           </div>
 
           {data.items.length === 0 ? (
@@ -644,44 +728,65 @@ function TierSummary({
                     逐个看
                   </ActionButton>
                   {key !== "review" && (
-                    <button
-                      type="button"
+                    // 「可以放心清理」是这一页唯一"做了不会丢东西"的批量动作，主操作；
+                    // 「建议清理」动的是**有区别**的文件，依据只是机器的建议——危险档
+                    <ActionButton
                       disabled={busy}
+                      variant={key === "safe" ? "primary" : "danger"}
                       onClick={() => onClean(key, null, tier)}
-                      className={`flex h-7 items-center rounded-full border px-3 text-caption font-medium transition disabled:opacity-40 ${
-                        key === "safe"
-                          ? "border-[var(--accent)] bg-[var(--accent)] text-[#0a0b10] hover:opacity-90"
-                          : "border-white/[0.15] text-[var(--text)] hover:bg-white/[0.08]"
-                      }`}
                     >
                       {TIER_ACTION_LABELS[key]} · {tier.files}
-                    </button>
+                    </ActionButton>
                   )}
                 </div>
               )}
               <p className="basis-full text-caption text-[var(--text-faint)]">{tier.hint}</p>
             </div>
 
-            {/* 「需要你决定」再按取舍类型分组：同一种取舍一次回答一批 */}
+            {/*
+              「需要你决定」再按取舍类型分组：同一种取舍一次回答一批。
+
+              一组两行——名字与分量一行、动作一行。第一版把三个按钮与文字挤在同
+              一行（按钮 `shrink-0`、文字 `flex-1`），窄屏上按钮吃掉大半宽度，
+              名字、计数、说明全被挤成一根一百来像素宽的文字柱，右边一大片空白。
+              说明也不在这里讲了：这张卡上三档各有一句，再叠四段就是一面墙；它挪
+              到点进这一组之后的明细层顶上——你正要动手的时候才需要读它。
+            */}
             {key === "review" && data.review_groups.length > 0 && (
-              <div className="mt-2.5 flex flex-col gap-1.5 border-t border-white/[0.06] pt-2.5">
+              <div className="mt-2.5 flex flex-col gap-2.5 border-t border-white/[0.06] pt-2.5">
                 {data.review_groups.map((group) => (
-                  <div key={group.key} className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
-                    <div className="flex min-w-0 flex-1 flex-wrap items-baseline gap-x-2">
-                      <span className="text-sub text-[var(--text)]">{group.label}</span>
-                      <span className="text-caption text-[var(--text-faint)] tabular-nums">{groupSummary(group)}</span>
-                      <span className="basis-full text-caption text-[var(--text-faint)]">{group.hint}</span>
-                    </div>
-                    <div className="flex shrink-0 items-center gap-1.5">
+                  <div key={group.key} className="flex flex-wrap items-baseline gap-x-3 gap-y-1.5">
+                    <span className="min-w-0 flex-1 text-sub text-[var(--text)]">{group.label}</span>
+                    <span className="shrink-0 text-caption text-[var(--text-faint)] tabular-nums">
+                      {compactSummary(group)}
+                    </span>
+                    <div className="flex basis-full items-center gap-1.5">
+                      {/* 逐个看 = 这一组的正路（玻璃按钮）；都留着 = 关掉它，不动文件（幽灵） */}
                       <ActionButton disabled={busy} onClick={() => onOpen("review", group.key as DuplicateReviewKind)}>
                         逐个看
                       </ActionButton>
-                      <ActionButton disabled={busy} onClick={() => onKeepAll("review", group.key as DuplicateReviewKind, group)}>
+                      <ActionButton
+                        disabled={busy}
+                        variant="ghost"
+                        onClick={() => onKeepAll("review", group.key as DuplicateReviewKind, group)}
+                      >
                         都留着
                       </ActionButton>
-                      <ActionButton disabled={busy} onClick={() => onClean("review", group.key as DuplicateReviewKind, group)}>
-                        按建议清 · {group.files}
-                      </ActionButton>
+                      {/*
+                        「规格不全」这一组**不给成批清理**：它的定义就是"机器没有
+                        比较的依据"，紧挨着一句"比不出来"再放一个「按建议清 · 2974」，
+                        按下去就是拿一个机器自己声明做不出的判断去删掉近三千个文件。
+                        三态铁律在这里的落点——无从判定就交给人，逐个看或都留着。
+                      */}
+                      {group.key !== "unknown" && (
+                        <ActionButton
+                          disabled={busy}
+                          variant="danger"
+                          onClick={() => onClean("review", group.key as DuplicateReviewKind, group)}
+                        >
+                          按建议清 · {group.files}
+                        </ActionButton>
+                      )}
                     </div>
                   </div>
                 ))}
@@ -726,6 +831,8 @@ function SeasonBlock({
   const headline = seasonHeadline(season, media.kind);
   const showVersions = season.uniform && !expanded;
   const suggestedVersion = season.versions.find((v) => v.suggested) ?? null;
+  // 几个版本行来源相同时（同一轮扫描发现的多个包），窄屏上不必每行都印一遍
+  const commonOrigin = sharedVersionOrigin(season.versions);
 
   return (
     <div className="mb-2.5 overflow-hidden rounded-2xl border border-white/[0.08] bg-white/[0.02]">
@@ -749,11 +856,17 @@ function SeasonBlock({
               </>
             )}
           </span>
+          {/* 几个版本行来源相同时，窄屏上在块头说一次，行里就不再各印一遍 */}
+          {commonOrigin && showVersions && (
+            <span className="basis-full text-caption text-[var(--text-faint)] md:hidden">
+              {commonOrigin}
+            </span>
+          )}
         </div>
         {season.uniform && (
-          <button type="button" onClick={onToggleExpanded} className="shrink-0 rounded-full px-2.5 py-1 text-caption text-[var(--text-muted)] hover:bg-white/[0.06] hover:text-[var(--text)]">
+          <ActionButton variant="ghost" className="shrink-0" onClick={onToggleExpanded}>
             {expanded ? "收起各集" : "展开各集"}
-          </button>
+          </ActionButton>
         )}
       </div>
 
@@ -762,18 +875,25 @@ function SeasonBlock({
           {season.versions.map((version) => (
             <div key={version.key} className={`px-4 py-2.5 text-sub ${ROW_GRID}`}>
               <QualityLine
+                className={CELL_VERSION}
                 segments={version.quality_label.split(" ").map((text, i) => ({
                   text,
                   diff: suggestedVersion !== null && !version.suggested && suggestedVersion.quality_label.split(" ")[i] !== text,
                 }))}
               />
-              <span className="text-[var(--text-muted)] tabular-nums">
+              <span className={`text-[var(--text-muted)] tabular-nums ${CELL_VERSION_COVER}`}>
                 <b className="font-semibold text-[var(--text)]">{versionCoverage(version).split(" · ")[0]}</b>
                 {" · "}
                 {versionCoverage(version).split(" · ")[1]}
               </span>
-              <span className="truncate text-[var(--text-muted)]">{version.origin_label}</span>
-              <div className="flex items-center justify-end gap-1.5 max-md:justify-start">
+              <span
+                className={`truncate text-[var(--text-muted)] ${CELL_VERSION_ORIGIN} ${
+                  commonOrigin ? "max-md:hidden" : ""
+                }`}
+              >
+                {version.origin_label}
+              </span>
+              <div className={`flex items-center justify-end gap-1.5 ${CELL_VERSION_ACTION}`}>
                 {version.suggested && <Tag tone="keep">建议保留</Tag>}
                 <ActionButton disabled={busy} onClick={() => onKeepVersion(version)}>
                   整季留这个
@@ -784,55 +904,126 @@ function SeasonBlock({
         </div>
       ) : (
         <div className="max-h-[520px] overflow-y-auto">
-          {season.units.map((unit) => (
-            <div key={`${unit.season_number}-${unit.episode_number}`}>
-              {isTv && (
-                <div className="border-b border-white/[0.06] bg-white/[0.012] px-4 py-1 text-micro tracking-wide text-[var(--text-faint)]">
-                  {episodeLabel(unit.episode_number)}
+          {season.units.map((unit) => {
+            // 这一集几个文件都一样的规格 / 来源在这里说一次，文件行里就不再各印一遍
+            const shared = sharedFacts(unit.files);
+            const common = sharedLine(unit.files);
+            const prefix = commonNamePrefix(unit.files);
+            return (
+              <div key={`${unit.season_number}-${unit.episode_number}`}>
+                {(isTv || common) && (
+                  <div
+                    className={`border-b border-white/[0.06] bg-white/[0.012] px-4 py-1 text-micro tracking-wide text-[var(--text-faint)] ${
+                      isTv ? "" : "md:hidden"
+                    }`}
+                  >
+                    {isTv && episodeLabel(unit.episode_number)}
+                    {common && (
+                      <span className="md:hidden">
+                        {isTv && " · "}
+                        {common}
+                      </span>
+                    )}
+                  </div>
+                )}
+                <div className="divide-y divide-white/[0.06]">
+                  {unit.files.map((file) => (
+                    <FileRow
+                      key={file.id}
+                      unit={unit}
+                      file={file}
+                      shared={shared}
+                      namePrefix={prefix}
+                      busy={busy}
+                      onKeep={() => onKeepFile(unit, file)}
+                    />
+                  ))}
                 </div>
-              )}
-              <div className="divide-y divide-white/[0.06]">
-                {unit.files.map((file) => (
-                  <FileRow key={file.id} unit={unit} file={file} busy={busy} onKeep={() => onKeepFile(unit, file)} />
-                ))}
               </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       )}
 
-      <div className="flex justify-end border-t border-white/[0.06] bg-black/[0.15] px-4 py-1.5">
-        <button
-          type="button"
-          disabled={busy}
-          onClick={onKeepAll}
-          className="rounded-full px-2.5 py-1 text-caption text-[var(--text-muted)] transition hover:bg-white/[0.06] hover:text-[var(--text)] disabled:opacity-40"
-        >
+      <div className="flex justify-end border-t border-white/[0.06] bg-black/[0.15] px-4 py-1">
+        <ActionButton disabled={busy} variant="ghost" onClick={onKeepAll}>
           {isTv ? "整季都留着" : "都留着"}
-        </button>
+        </ActionButton>
       </div>
     </div>
   );
 }
 
-/** 文件行：文件名 / 规格（与建议保留者不同的维度加亮）/ 来源 / 建议保留标签 + 留这个。 */
-function FileRow({ unit, file, busy, onKeep }: { unit: DuplicateUnit; file: DuplicateFile; busy: boolean; onKeep: () => void }) {
+/**
+ * 文件行：文件名 / 规格（与建议保留者不同的维度加亮）/ 来源 / 建议保留标签 + 留这个。
+ *
+ * 窄屏上做两件减法：单元里几个文件**共有**的规格与来源整格隐藏（已经在单元头上
+ * 说过一次），文件名的**公共前缀**淡显并允许截断、差异的尾巴永远完整——窄到
+ * 一半宽度也还看得出两个文件差在哪。宽屏是四列对齐的表，一格不动。
+ */
+function FileRow({
+  unit,
+  file,
+  shared,
+  namePrefix,
+  busy,
+  onKeep,
+}: {
+  unit: DuplicateUnit;
+  file: DuplicateFile;
+  shared: SharedFacts;
+  namePrefix: string;
+  busy: boolean;
+  onKeep: () => void;
+}) {
   const reference = suggestedOf(unit);
   const note = fileNote(file);
   const live = unit.files.filter((f) => !f.kept_at).length;
+  const tail = namePrefix ? file.file_name.slice(namePrefix.length) : file.file_name;
   return (
-    <div className={`px-4 py-2 text-sub ${ROW_GRID} ${file.kept_at ? "opacity-55" : ""}`}>
+    <div
+      className={`px-4 py-2 text-sub ${ROW_GRID} ${file.kept_at ? "opacity-55" : ""} ${
+        // 窄屏不显示「建议保留」胶囊（说明行里已经写着），改用一道内嵌色条标出它——
+        // 不占一格宽度，两行名字才能截断在同一个位置
+        file.suggested ? "max-md:shadow-[inset_2px_0_0_0_rgba(74,222,128,0.45)]" : ""
+      }`}
+    >
       <Tooltip content={<span className="tnum break-all font-mono text-caption leading-5">{file.file_path}</span>} maxWidth={520}>
-        <span className="block truncate font-mono text-caption text-[var(--text)]">{file.file_name}</span>
+        <span className={`flex min-w-0 items-baseline font-mono text-caption text-[var(--text)] ${CELL_FILENAME}`}>
+          {/*
+            whitespace-pre-wrap：差异的尾巴常常以空格开头（`…AAC` + ` ADWeb.mp4`），
+            HTML 默认会把它折掉，两段拼起来就成了 `AACADWeb.mp4`——一个磁盘上并不
+            存在的名字。保留空白又要允许长名换行，只有 pre-wrap 两样都给。
+          */}
+          {namePrefix && (
+            <span className="whitespace-pre-wrap text-[var(--text-faint)] max-md:break-all md:truncate">
+              {namePrefix}
+            </span>
+          )}
+          <span
+            className={`whitespace-pre-wrap ${
+              namePrefix ? "shrink-0 max-md:break-all" : "max-md:break-all md:truncate"
+            }`}
+          >
+            {tail}
+          </span>
+        </span>
       </Tooltip>
-      <QualityLine segments={qualitySegments(file, reference)} />
-      <span className="min-w-0 truncate text-[var(--text-muted)]">
-        {file.origin.label}
+      <QualityLine
+        segments={qualitySegments(file, reference)}
+        className={`${CELL_SPEC} ${shared.quality ? "max-md:hidden" : ""}`}
+      />
+      <span
+        className={`min-w-0 truncate text-[var(--text-muted)] ${CELL_ORIGIN} ${
+          shared.origin && !note ? "max-md:hidden" : ""
+        }`}
+      >
+        <span className={shared.origin ? "max-md:hidden" : ""}>{file.origin.label}</span>
         {note && <span className="block truncate text-caption text-[var(--text-faint)]">{note}</span>}
       </span>
-      <div className="flex items-center justify-end gap-1.5 max-md:justify-start">
-        {file.suggested && <Tag tone="keep">建议保留</Tag>}
-        {file.kept_at && <Tag tone="kept">你留下的</Tag>}
+      <div className={`flex items-center justify-end gap-1.5 ${CELL_ACTION}`}>
+        {file.suggested && <Tag tone="keep" mobileHidden>建议保留</Tag>}
+        {file.kept_at && <Tag tone="kept" mobileHidden>你留下的</Tag>}
         {(live > 1 || unit.files.length > 1) && (
           <ActionButton disabled={busy} onClick={onKeep}>
             留这个
@@ -843,9 +1034,15 @@ function FileRow({ unit, file, busy, onKeep }: { unit: DuplicateUnit; file: Dupl
   );
 }
 
-function QualityLine({ segments }: { segments: { text: string; diff: boolean }[] }) {
+function QualityLine({
+  segments,
+  className = "",
+}: {
+  segments: { text: string; diff: boolean }[];
+  className?: string;
+}) {
   return (
-    <span className="truncate text-[var(--text-muted)] tabular-nums">
+    <span className={`truncate text-[var(--text-muted)] tabular-nums ${className}`}>
       {segments.map((seg, i) => (
         <span key={`${seg.text}-${i}`}>
           {i > 0 && <span aria-hidden> · </span>}
@@ -858,10 +1055,21 @@ function QualityLine({ segments }: { segments: { text: string; diff: boolean }[]
   );
 }
 
-function Tag({ tone, children }: { tone: "keep" | "kept"; children: React.ReactNode }) {
+/** `mobileHidden`：窄屏上说明行已经写了同一句话，胶囊就是纯重复，还会挤窄名字列 */
+function Tag({
+  tone,
+  mobileHidden = false,
+  children,
+}: {
+  tone: "keep" | "kept";
+  mobileHidden?: boolean;
+  children: React.ReactNode;
+}) {
   return (
     <span
       className={`inline-block whitespace-nowrap rounded-full border px-1.5 text-micro leading-[18px] ${
+        mobileHidden ? "max-md:hidden" : ""
+      } ${
         tone === "keep" ? "border-[rgba(74,222,128,0.4)] text-[var(--ok)]" : "border-[rgba(232,201,138,0.45)] text-[#e8c98a]"
       }`}
     >
@@ -870,13 +1078,55 @@ function Tag({ tone, children }: { tone: "keep" | "kept"; children: React.ReactN
   );
 }
 
-function ActionButton({ disabled, onClick, children }: { disabled?: boolean; onClick: () => void; children: React.ReactNode }) {
+/**
+ * 这一页的动作按钮：三档轻重，一眼分得出。
+ *
+ * 第一版所有动作都是「细描边药丸 + 小字」，和上面那排分档胶囊几乎同一套样式——
+ * 于是一整页读起来像一片过滤标签，没人看得出哪个会动文件。现在照全站既有的按钮
+ * 体系分三档（globals.css 里 `.btn-accent` / `.btn-glass` 与 `--danger-solid`
+ * 的注释就是这套语言的出处）：
+ *
+ * - `primary`（亮银实心 `.btn-accent`）：这张卡请你做的那件事，而且做了不会丢
+ *   东西。一张卡至多一个——"满屏都是重点就等于没有重点"；
+ * - `default`（玻璃药丸 `.btn-glass`）：正经动作，深色底上一眼认得出是按钮；
+ * - `ghost`（淡描边、无底、灰字）：关掉 / 跳过这一组，不动文件，不该抢眼；
+ * - `danger`（实心红 + 白字）：**会把文件移进回收站、而依据只是"建议"** 的那些。
+ *   实心红配白字是全站危险操作按钮的既定配色（白字 5.8:1），不是状态色。
+ *
+ * 高度 h-8 也是刻意的：分档胶囊是 h-7，按钮比它高一档，隔着一行也分得清。
+ */
+type ActionVariant = "primary" | "default" | "ghost" | "danger";
+
+const ACTION_VARIANTS: Record<ActionVariant, string> = {
+  primary: "btn-accent",
+  default: "btn-glass",
+  // 幽灵档也**留一圈描边**：三个并排时它要比玻璃档弱，但不能弱到又变回一段纯
+  // 文字——"不太像按钮"正是这一版要修的毛病。轮廓人人有，轻重靠底色与字亮度分
+  ghost:
+    "border border-white/[0.07] text-[var(--text-muted)] hover:border-white/[0.14] hover:bg-white/[0.06] hover:text-[var(--text)]",
+  danger:
+    "border border-transparent bg-[var(--danger-solid)] text-white hover:bg-[var(--danger-solid-hover)]",
+};
+
+function ActionButton({
+  disabled,
+  onClick,
+  variant = "default",
+  className = "",
+  children,
+}: {
+  disabled?: boolean;
+  onClick: () => void;
+  variant?: ActionVariant;
+  className?: string;
+  children: React.ReactNode;
+}) {
   return (
     <button
       type="button"
       disabled={disabled}
       onClick={onClick}
-      className="whitespace-nowrap rounded-full border border-white/[0.15] px-2.5 py-0.5 text-caption font-medium text-[var(--text)] transition hover:bg-white/[0.08] disabled:opacity-40"
+      className={`inline-flex h-8 items-center justify-center gap-1.5 whitespace-nowrap rounded-full px-3 text-caption font-medium transition disabled:cursor-default disabled:opacity-40 ${ACTION_VARIANTS[variant]} ${className}`}
     >
       {children}
     </button>

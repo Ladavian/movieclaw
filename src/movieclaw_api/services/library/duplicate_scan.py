@@ -76,17 +76,19 @@ TIER_HINTS: dict[str, str] = {
     "suggested": "每组里有一个档位明显更高，其余是它的低配版。清理前可以逐条看一眼清单。",
     "review": "各有各的好，机器不替你决定。同一种取舍的放在一组，一次回答一批。",
 }
-#: ``review`` 档的取舍类型：用户面对它时真正在犹豫的那件事
+#: ``review`` 档的取舍类型：用户面对它时真正在犹豫的那件事。
+#: 名字只留主干、解释一律交给 ``REVIEW_KIND_HINTS``——它在摘要卡上和计数、三个
+#: 按钮抢同一行，名字里再塞一个括号补语，窄屏上整行就塌成一根文字柱
 REVIEW_KIND_LABELS: dict[str, str] = {
-    "resolution": "分辨率不同，档位分不出高下",
+    "resolution": "分辨率不同",
     "hdr": "HDR 与 SDR 并存",
-    "unknown": "规格不全，比不出来",
-    "same_tier": "同档不同版本（不同发布组 / 不同码率）",
+    "unknown": "规格不全",
+    "same_tier": "同档不同版本",
 }
 REVIEW_KIND_HINTS: dict[str, str] = {
     "resolution": "一个分辨率高、一个片源更好，阶梯上各占一头。要画质还是要体积，只有你知道。",
     "hdr": "HDR 版本在不支持的设备上颜色会发灰，很多人两个都留着。",
-    "unknown": "这些文件的分辨率或片源没探测到，机器没有比较的依据。",
+    "unknown": "这些文件的分辨率或片源没探测到，机器没有比较的依据，也就给不出可以成批执行的建议。",
     "same_tier": "规格完全同档，差的是发布组、字幕或压制。挑一个熟悉的组，或者都留着。",
 }
 #: 分档在页面上的先后：先做没风险的，再做要花心思的
@@ -111,10 +113,14 @@ def classify(unit: DupUnit) -> tuple[Tier, str | None]:
     判据只有一条线：**机器有没有把握**。「一模一样」是物理上确认过的没区别；
     「档位最高」是阶梯真的分出了高下；其余都是同档里按次级信号（码率、来源、
     命名）挑了一个——那种"建议"不足以支撑批量清理，必须由人看一眼。
+
+    「档位最高」还要求阶梯**比全了**（``suggest_partial`` 为假）：单元里有文件
+    的规格没探到时，那一位对整个单元失效，哪怕在剩下的位上胜出，没探到的那一位
+    也随时可能把结论翻过来——够不上"成批清理"的把握。
     """
     if unit.bucket == "identical":
         return "safe", None
-    if unit.suggested.suggest_basis == "ladder":
+    if unit.suggested.suggest_basis == "ladder" and not unit.suggested.suggest_partial:
         return "suggested", None
     return "review", _review_kind(unit.files)
 
