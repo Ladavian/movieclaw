@@ -21,7 +21,7 @@ from movieclaw_api.services.playback.ffmpeg_args import TranscodeCommand
 from movieclaw_api.services.playback.session import get_session_manager, reset_session_manager
 from movieclaw_db.engine import get_database
 from movieclaw_db.models import FileSource, LibraryFile, MediaItem
-from movieclaw_jellyfin.ids import item_guid, media_source_guid
+from movieclaw_jellyfin.ids import item_guid, library_guid, media_source_guid
 
 FAKE_FFMPEG = """
 import sys, time, pathlib
@@ -283,3 +283,33 @@ def test_legacy_disc_row_without_ledger_record_reads_disc_at_playback_time(
         headers={"Range": "bytes=0-3", "Authorization": AUTH_HEADER},
     )
     assert resp.status_code == 206
+
+
+def test_disc_rows_render_in_list_paths(client: TestClient, seeded: dict, media_root: Path) -> None:
+    """列表路径（Items/Latest、Items）也要能渲染原盘行。
+
+    列表 DTO 在 session 关闭后才构建，文件行只装 ``_list_load_columns``
+    白名单里的列；``_apply_leaf_media_fields`` 对每个原盘叶子都要读
+    ``disc_playlist``，漏进白名单就是一次惰性加载 → DetachedInstanceError，
+    整条「最近添加」500。
+    """
+    discs = _seed_discs(client, seeded, media_root)
+    auth = _auth(client)
+
+    latest = client.get("/Items/Latest", params={**auth, "limit": 20})
+    assert latest.status_code == 200, latest.text
+    by_id = {i["Id"]: i for i in latest.json()}
+
+    single = by_id[item_guid(discs["single"]["item"])]
+    assert single["Container"] == "m2ts"
+    # 多剪辑没有单文件容器可报；存量行无台账清单、浏览态不读盘，保持 bluray
+    assert "Container" not in by_id[item_guid(discs["multi"]["item"])]
+    assert by_id[item_guid(discs["legacy"]["item"])]["Container"] == "bluray"
+
+    items = client.get(
+        "/Items",
+        params={**auth, "parentId": library_guid(seeded["movie_lib"]), "recursive": "true"},
+    )
+    assert items.status_code == 200, items.text
+    rows = {i["Id"]: i for i in items.json()["Items"]}
+    assert rows[item_guid(discs["single"]["item"])]["Container"] == "m2ts"

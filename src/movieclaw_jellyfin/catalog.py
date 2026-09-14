@@ -264,6 +264,10 @@ def _list_load_columns(
         LibraryFile.file_path,
         LibraryFile.container,
         LibraryFile.resolution,
+        # 原盘叶子的 Container 要按台账清单改写（单剪辑伪装 m2ts、多剪辑不报），
+        # 每个叶子 DTO 都会读；不进白名单就是 session 关闭后的惰性加载 →
+        # DetachedInstanceError，一行原盘能让整条列表 500。非原盘行恒为 NULL
+        LibraryFile.disc_playlist,
     ]
     if options.has("ParentId"):
         file_columns.append(LibraryFile.library_id)
