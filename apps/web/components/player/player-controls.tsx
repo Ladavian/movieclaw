@@ -9,6 +9,7 @@ import { QUALITY_OPTIONS } from "@/lib/player/quality";
 import {
   SCRUB_INPUT_STEP_MS,
   acceptsNativeScrubValue,
+  isScrubPointer,
   scrubCommitTarget,
   scrubInputValue,
 } from "@/lib/player/scrub-follow";
@@ -343,6 +344,7 @@ export function PlayerControls(props: PlayerControlsProps) {
       onScrubCancel();
       // disabled 之后 pointerup 不会再来（见上），按着的状态也要在这儿放开
       onScrubbingChange(false);
+      activePointerIdRef.current = null;
     }
   }, [durationMs, onScrubCancel, onScrubbingChange]);
   const [menu, setMenu] = useState<"none" | "audio" | "subtitles" | "settings">("none");
@@ -391,6 +393,11 @@ export function PlayerControls(props: PlayerControlsProps) {
    */
   const pointerDragRef = useRef(false);
   /**
+   * 正在拖的那根指针的 id；null = 没在拖。抬起 / 取消 / 移动只认它：触屏上
+   * 第二根手指落到条上时，它的 pointerup 也会派发到 input（裁决见 isScrubPointer）。
+   */
+  const activePointerIdRef = useRef<number | null>(null);
+  /**
    * 这次拖动里合帧最近一次刷到屏幕上的落点；按下时清空。
    *
    * 触屏抬手提交的就是它（scrubCommitTarget）。**不能改读 `dragging`**：那是
@@ -417,6 +424,15 @@ export function PlayerControls(props: PlayerControlsProps) {
   /** 量一次指针位置并排一帧。拖动与悬停共用，因为两者量的是同一条轨道 */
   const trackPointer = useCallback(
     (event: React.PointerEvent<HTMLElement>) => {
+      if (
+        !isScrubPointer({
+          activePointerId: activePointerIdRef.current,
+          pointerId: event.pointerId,
+          isPrimary: event.isPrimary,
+        })
+      ) {
+        return;
+      }
       const { offset, length } = pointerOffsetX(
         event,
         event.currentTarget.getBoundingClientRect(),
@@ -773,6 +789,10 @@ export function PlayerControls(props: PlayerControlsProps) {
                 return;
               }
               setDragging(next);
+              // 键盘拖动同样是「正按着」：按住 PageUp / End 连跳时控制条不能在
+              // 手还按着键的时候收起——收起之后条是透明的，用户对着看不见的
+              // 进度条在跳（真浏览器复现：按住 4.5 秒就没了）。抬键 / 失焦放开。
+              onScrubbingChange(true);
             }}
             // 拖拽不走 range 的原生行为，用指针事件自己算：iOS 只有按中
             // **原生把手**才进入连续拖拽，而那个把手被缩到 1px 藏起来了
@@ -789,6 +809,7 @@ export function PlayerControls(props: PlayerControlsProps) {
               // 触摸/笔的主接触点 button 恒为 0，这条不会误伤它们。
               if (!durationMs || e.button !== 0 || !e.isPrimary) return;
               pointerDragRef.current = true;
+              activePointerIdRef.current = e.pointerId;
               flushedPointerMsRef.current = null;
               onScrubbingChange(true);
               e.currentTarget.setPointerCapture(e.pointerId);
@@ -805,6 +826,10 @@ export function PlayerControls(props: PlayerControlsProps) {
             }}
             // 移动不在这里处理：事件会冒泡到外层那一格，由 trackPointer 合帧
             onPointerUp={(e) => {
+              // 不是正在拖的那根指针（第二根手指误碰、按下就被挡掉的右键）：
+              // 与这次拖动无关，不能当成松手
+              if (activePointerIdRef.current === null || e.pointerId !== activePointerIdRef.current) return;
+              activePointerIdRef.current = null;
               // 合帧意味着最后一次移动可能还压在这一帧里没落地。鼠标抬手提交
               // 的落点必须是**指针最后所在处**，不能是上一帧那个——快速拖动时
               // 一帧的位移在两小时的片子上就是好几分钟。触屏反过来要用屏幕上
@@ -837,7 +862,9 @@ export function PlayerControls(props: PlayerControlsProps) {
             // 完整拖拽把它清掉才「自己好了」。
             // 取消的手势**不提交** seek：用户没松手确认过这个位置，退回
             // positionMs 才是真值。
-            onPointerCancel={() => {
+            onPointerCancel={(e) => {
+              if (activePointerIdRef.current === null || e.pointerId !== activePointerIdRef.current) return;
+              activePointerIdRef.current = null;
               cancelPointerFrame();
               pointerDragRef.current = false;
               onScrubbingChange(false);
@@ -848,13 +875,26 @@ export function PlayerControls(props: PlayerControlsProps) {
               onScrubCancel();
               setDragging(null);
             }}
+            // keyup / blur 这两条只属于**键盘拖动**（Home / End / PageUp 改 range
+            // 的值走 onChange 进 dragging）。指针正按着时一律不理：鼠标按下
+            // 就把焦点给了 input，拖动中碰一下键盘（空格暂停、随手一个 Shift）
+            // keyup 就落在这里，把指针路径上的 dragging 当成键盘调整提交掉、
+            // 再清空——拖动当场作废，圆点停在半路，真松手时什么也不发；焦点
+            // 被别处抢走（弹层、快捷键开菜单）时 blur 同理（2026-09-14 真浏览器
+            // 复现）。
             onKeyUp={() => {
+              if (pointerDragRef.current) return;
               if (dragging !== null) onSeek(dragging);
               setDragging(null);
+              onScrubbingChange(false);
             }}
-            // 键盘拖动（方向键改 range 的值走 onChange）对称的一条：焦点离开
-            // 时那次键盘调整已经结束，没等到 keyup 就不能让它继续遮着 positionMs
-            onBlur={() => setDragging(null)}
+            // 键盘拖动对称的一条：焦点离开时那次键盘调整已经结束，没等到 keyup
+            // 就不能让它继续遮着 positionMs
+            onBlur={() => {
+              if (pointerDragRef.current) return;
+              setDragging(null);
+              onScrubbingChange(false);
+            }}
             // 触屏把命中带加高到 44px（Apple HIG 的最小触控目标）：视觉上还是
             // 那条细线，但手指按在线的上下 20px 内都算按中了——竖屏上「滑不准、
             // 按不中」的直接解法。桌面维持 20px，不跟鼠标抢悬停区。
